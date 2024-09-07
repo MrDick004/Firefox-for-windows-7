@@ -1,0 +1,53 @@
+
+
+diff --git a/dom/geolocation/Geolocation.cpp b/dom/geolocation/Geolocation.cpp
+index 5fc58a2eca1d2..dc8a8b7d98afa 100644
+--- a/dom/geolocation/Geolocation.cpp
++++ b/dom/geolocation/Geolocation.cpp
+@@ -1434,14 +1434,7 @@ void Geolocation::NotifyAllowedRequest(nsGeolocationRequest* aRequest) {
+ 
+ /* static */ geolocation::SystemGeolocationPermissionBehavior
+ Geolocation::GetLocationOSPermission() {
+-  auto permission = geolocation::GetGeolocationPermissionBehavior();
+-
+-  if (!StaticPrefs::geo_prompt_open_system_prefs() &&
+-      permission == geolocation::SystemGeolocationPermissionBehavior::
+-                        GeckoWillPromptUser) {
+-    return geolocation::SystemGeolocationPermissionBehavior::NoPrompt;
+-  }
+-  return permission;
++  return geolocation::GetGeolocationPermissionBehavior();
+ }
+ 
+ void Geolocation::RequestIfPermitted(nsGeolocationRequest* request) {
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 5afb2d2be58b8..06f6b6a98a8ab 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -5761,13 +5761,6 @@
+   mirror: always
+ #endif
+ 
+-# If true, open system preferences for the user when geolocation is requested
+-# by the user but OS geolocation permission is not available.
+-- name: geo.prompt.open_system_prefs
+-  type: bool
+-  value: true
+-  mirror: always
+-
+ #---------------------------------------------------------------------------
+ # Prefs starting with "gfx."
+ #---------------------------------------------------------------------------
+diff --git a/testing/profiles/mochitest/user.js b/testing/profiles/mochitest/user.js
+index f87958f8ea015..bbd8fc3170208 100644
+--- a/testing/profiles/mochitest/user.js
++++ b/testing/profiles/mochitest/user.js
+@@ -31,8 +31,3 @@ user_pref("app.update.disabledForTesting", true);
+ // Therefore, in the mochitest, as the frequently in common browser tests can be
+ // super higher than the real user, we disable this feature.
+ user_pref("places.history.floodingPrevention.enabled", false);
+-
+-// If we are on a platform where we can detect that we don't have OS geolocation
+-// permission, and we can open it and wait for the user to give permission, then
+-// don't do that.
+-user_pref("geo.prompt.open_system_prefs", false);

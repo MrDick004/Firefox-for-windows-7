@@ -1,0 +1,1854 @@
+
+
+diff --git a/widget/moz.build b/widget/moz.build
+index 997687ee11d64..5687a5a4fc216 100644
+--- a/widget/moz.build
++++ b/widget/moz.build
+@@ -80,6 +80,8 @@ elif toolkit == "gtk":
+ elif toolkit == "windows":
+     XPIDL_SOURCES += [
+         "nsIJumpListBuilder.idl",
++        "nsILegacyJumpListBuilder.idl",
++        "nsILegacyJumpListItem.idl",
+         "nsIPrintSettingsWin.idl",
+         "nsITaskbarOverlayIconController.idl",
+         "nsITaskbarPreview.idl",
+diff --git a/widget/nsILegacyJumpListBuilder.idl b/widget/nsILegacyJumpListBuilder.idl
+new file mode 100644
+index 0000000000000..999e658707133
+--- /dev/null
++++ b/widget/nsILegacyJumpListBuilder.idl
+@@ -0,0 +1,161 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "nsISupports.idl"
++
++interface nsIArray;
++
++[scriptable, function, uuid(5131a62a-e99f-4631-9138-751f8aad1ae4)]
++interface nsILegacyJumpListCommittedCallback : nsISupports
++{
++  void done(in boolean result);
++};
++
++[scriptable, uuid(1FE6A9CD-2B18-4dd5-A176-C2B32FA4F683)]
++interface nsILegacyJumpListBuilder : nsISupports
++{
++  /**
++   * JumpLists
++   *
++   * Jump lists are built and then applied. Modifying an applied jump list is not
++   * permitted. Callers should begin the creation of a new jump list using
++   * initListBuild, add sub lists using addListToBuild, then commit the jump list
++   * using commitListBuild. Lists are built in real-time during the sequence of
++   * build calls, make sure to check for errors on each individual step.
++   *
++   * The default number of allowed items in a jump list is ten. Users can change
++   * the number through system preferences. User may also pin items to jump lists,
++   * which take up additional slots. Applications do not have control over the
++   * number of items allowed in jump lists; excess items added are dropped by the
++   * system. Item insertion priority is defined as first to last added.
++   *
++   * Users may remove items from jump lists after they are commited. The system
++   * tracks removed items between commits. A list of these items is returned by
++   * a call to initListBuild. nsILegacyJumpListBuilder does not filter entries added that
++   * have been removed since the last commit. To prevent repeatedly adding entries
++   * users have removed, applications are encoraged to track removed items
++   * internally.
++   *
++   * Each list is made up of an array of nsILegacyJumpListItem representing items
++   * such as shortcuts, links, and separators. See nsILegacyJumpListItem for information
++   * on adding additional jump list types.
++   */
++
++  /**
++   * List Types
++   */
++
++  /**
++   * Task List
++   *
++   * Tasks are common actions performed by users within the application. A task
++   * can be represented by an application shortcut and associated command line
++   * parameters or a URI. Task lists should generally be static lists that do not
++   * change often, if at all - similar to an application menu.
++   *
++   * Tasks are given the highest priority of all lists when space is limited.
++   */
++  const short JUMPLIST_CATEGORY_TASKS = 0;
++
++  /**
++   * Recent or Frequent list
++   *
++   * Recent and frequent lists are based on Window's recent document lists. The
++   * lists are generated automatically by Windows. Applications that use recent
++   * or frequent lists should keep document use tracking up to date by calling
++   * the SHAddToRecentDocs shell api.
++   */
++  const short JUMPLIST_CATEGORY_RECENT       = 1;
++  const short JUMPLIST_CATEGORY_FREQUENT     = 2;
++
++  /**
++   * Custom Lists
++   *
++   * Custom lists can be made up of tasks, links, and separators. The title of
++   * of the list is passed through the optional string parameter of addBuildList.
++   */
++  const short JUMPLIST_CATEGORY_CUSTOMLIST   = 3;
++
++  /**
++   * Indicates whether jump list taskbar features are supported by the current
++   * host.
++   */
++  readonly attribute short available;
++
++  /**
++   * JumpList management
++   *
++   * @throw NS_ERROR_NOT_AVAILABLE on all calls if taskbar functionality
++   * is not supported by the operating system.
++   */
++
++  /**
++   * Indicates if a commit has already occurred in this session.
++   */
++  readonly attribute boolean isListCommitted;
++
++  /**
++   * The maximum number of jump list items the current desktop can support.
++   */
++  readonly attribute short maxListItems;
++
++  /**
++   * Initializes a jump list build and returns a promise with the list of
++   * items the user removed since the last time a jump list was committed.
++   * Removed items can become state after initListBuild is called, lists
++   * should be built in single-shot fasion.
++   *
++   * @returns a promise with the list of items that were removed by the user
++   * since the last commit.
++   */
++  [implicit_jscontext]
++  Promise initListBuild();
++
++  /**
++   * Adds a list and if required, a set of items for the list.
++   *
++   * @param aCatType
++   *        The type of list to add.
++   * @param items
++   *        An array of nsILegacyJumpListItem items to add to the list.
++   * @param catName
++   *        For custom lists, the title of the list.
++   *
++   * @returns true if the operation completed successfully.
++   *
++   * @throw NS_ERROR_INVALID_ARG if incorrect parameters are passed for
++   * a particular category or item type.
++   * @throw NS_ERROR_ILLEGAL_VALUE if an item is added that was removed
++   * since the last commit.
++   * @throw NS_ERROR_UNEXPECTED on internal errors.
++   */
++  boolean addListToBuild(in short aCatType, [optional] in nsIArray items, [optional] in AString catName);
++
++  /**
++   * Aborts and clears the current jump list build.
++   */
++  void abortListBuild();
++
++  /**
++   * Commits the current jump list build to the Taskbar.
++   *
++   * @param callback
++   *        Receives one argument, which is true if the operation completed
++   *        successfully, otherwise it is false.
++   */
++  void commitListBuild([optional] in nsILegacyJumpListCommittedCallback callback);
++
++  /**
++   * Deletes any currently applied taskbar jump list for this application.
++   * Common uses would be the enabling of a privacy mode and uninstallation.
++   *
++   * @returns true if the operation completed successfully.
++   *
++   * @throw NS_ERROR_UNEXPECTED on internal errors.
++   */
++  boolean deleteActiveList();
++
++  void setAppUserModelID(in AString aAppUserModelId);
++};
+diff --git a/widget/nsILegacyJumpListItem.idl b/widget/nsILegacyJumpListItem.idl
+new file mode 100644
+index 0000000000000..29011215ac0ae
+--- /dev/null
++++ b/widget/nsILegacyJumpListItem.idl
+@@ -0,0 +1,120 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "nsISupports.idl"
++
++interface nsIURI;
++interface nsILocalHandlerApp;
++interface nsIMutableArray;
++
++/**
++ * Implements Win7 Taskbar jump list item interfaces.
++ *
++ * Note to consumers: it's reasonable to expect we'll need support for other types
++ * of jump list items (an audio file, an email message, etc.). To add types,
++ * create the specific interface here, add an implementation class to WinJumpListItem,
++ * and add support to addListBuild & removed items processing.
++ *
++ */
++
++[scriptable, uuid(ACB8FB3C-E1B0-4044-8A50-E52C3E7C1057)]
++interface nsILegacyJumpListItem : nsISupports
++{
++  const short JUMPLIST_ITEM_EMPTY      = 0; // Empty list item
++  const short JUMPLIST_ITEM_SEPARATOR  = 1; // Separator
++  const short JUMPLIST_ITEM_LINK       = 2; // Web link item
++  const short JUMPLIST_ITEM_SHORTCUT   = 3; // Application shortcut
++
++  /**
++   * Retrieves the jump list item type.
++   */
++  readonly attribute short type;
++
++  /**
++   * Compare this item to another.
++   *
++   * Compares the type and other properties specific to this item's
++   * type.
++   *
++   * separator: type
++   * link: type, uri, title
++   * shortcut: type, handler app
++   */
++  boolean equals(in nsILegacyJumpListItem item);
++};
++
++/**
++ * A menu separator.
++ */
++
++[scriptable, uuid(69A2D5C5-14DC-47da-925D-869E0BD64D27)]
++interface nsILegacyJumpListSeparator : nsILegacyJumpListItem
++{
++  /* nothing needed here */
++};
++
++/**
++ * A URI link jump list item.
++ *
++ * Note the application must be the registered protocol
++ * handler for the protocol of the link.
++ */
++
++[scriptable, uuid(76EA47B1-C797-49b3-9F18-5E740A688524)]
++interface nsILegacyJumpListLink : nsILegacyJumpListItem
++{
++  /**
++   * Set or get the uri for this link item.
++   */
++  attribute nsIURI uri;
++
++  /**
++   * Set or get the title for a link item.
++   */
++  attribute AString uriTitle;
++};
++
++/**
++ * A generic application shortcut with command line support.
++ */
++
++[scriptable, uuid(CBE3A37C-BCE1-4fec-80A5-5FFBC7F33EEA)]
++interface nsILegacyJumpListShortcut : nsILegacyJumpListItem
++{
++  /**
++   * Set or get the handler app for this shortcut item.
++   *
++   * The handler app may also be used along with iconIndex to generate an icon
++   * for the jump list item.
++   *
++   * @throw NS_ERROR_FILE_NOT_FOUND if the handler app can
++   * not be found on  the system.
++   *
++   * @see faviconPageUri
++   */
++  attribute nsILocalHandlerApp app;
++
++  /**
++   * Set or get the icon displayed with the jump list item.
++   *
++   * Indicates the resource index of the icon contained within the handler
++   * executable which may be used as the jump list icon.
++   *
++   * @see faviconPageUri
++   */
++  attribute long iconIndex;
++
++  /**
++   * Set or get the URI of a page whose favicon may be used as the icon.
++   *
++   * When a jump list build occurs, the favicon to be used for the item is
++   * obtained using the following steps:
++   * - First, attempt to use the asynchronously retrieved and scaled favicon
++   * associated with the faviconPageUri.
++   * - If faviconPageUri is null, or if retrieving the favicon fails, fall
++   * back to using the handler executable and iconIndex.
++   */
++  attribute nsIURI faviconPageUri;
++};
+diff --git a/widget/nsWidgetsCID.h b/widget/nsWidgetsCID.h
+index 54677bb2ec945..95c425f75e173 100644
+--- a/widget/nsWidgetsCID.h
++++ b/widget/nsWidgetsCID.h
+@@ -230,6 +230,46 @@
+     }                                                \
+   }
+ 
++// {73A5946F-608D-454f-9D33-0B8F8C7294B6}
++#define NS_WIN_LEGACYJUMPLISTBUILDER_CID            \
++  {                                                 \
++    0x73a5946f, 0x608d, 0x454f, {                   \
++      0x9d, 0x33, 0xb, 0x8f, 0x8c, 0x72, 0x94, 0xb6 \
++    }                                               \
++  }
++
++// {2B9A1F2C-27CE-45b6-8D4E-755D0E34F8DB}
++#define NS_WIN_LEGACYJUMPLISTITEM_CID                \
++  {                                                  \
++    0x2b9a1f2c, 0x27ce, 0x45b6, {                    \
++      0x8d, 0x4e, 0x75, 0x5d, 0x0e, 0x34, 0xf8, 0xdb \
++    }                                                \
++  }
++
++// {21F1F13B-F75A-42ad-867A-D91AD694447E}
++#define NS_WIN_LEGACYJUMPLISTSEPARATOR_CID           \
++  {                                                  \
++    0x21f1f13b, 0xf75a, 0x42ad, {                    \
++      0x86, 0x7a, 0xd9, 0x1a, 0xd6, 0x94, 0x44, 0x7e \
++    }                                                \
++  }
++
++// {F72C5DC4-5A12-47be-BE28-AB105F33B08F}
++#define NS_WIN_LEGACYJUMPLISTLINK_CID                \
++  {                                                  \
++    0xf72c5dc4, 0x5a12, 0x47be, {                    \
++      0xbe, 0x28, 0xab, 0x10, 0x5f, 0x33, 0xb0, 0x8f \
++    }                                                \
++  }
++
++// {B16656B2-5187-498f-ABF4-56346126BFDB}
++#define NS_WIN_LEGACYJUMPLISTSHORTCUT_CID            \
++  {                                                  \
++    0xb16656b2, 0x5187, 0x498f, {                    \
++      0xab, 0xf4, 0x56, 0x34, 0x61, 0x26, 0xbf, 0xdb \
++    }                                                \
++  }
++
+ // {e9096367-ddd9-45e4-b762-49c0c18b7119}
+ #define NS_MACWEBAPPUTILS_CID                        \
+   {                                                  \
+diff --git a/widget/windows/LegacyJumpListBuilder.cpp b/widget/windows/LegacyJumpListBuilder.cpp
+new file mode 100644
+index 0000000000000..fbfe10f64b126
+--- /dev/null
++++ b/widget/windows/LegacyJumpListBuilder.cpp
+@@ -0,0 +1,647 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "LegacyJumpListBuilder.h"
++
++#include "nsError.h"
++#include "nsCOMPtr.h"
++#include "nsServiceManagerUtils.h"
++#include "nsString.h"
++#include "nsArrayUtils.h"
++#include "nsWidgetsCID.h"
++#include "WinTaskbar.h"
++#include "nsDirectoryServiceUtils.h"
++#include "mozilla/Preferences.h"
++#include "nsStringStream.h"
++#include "nsThreadUtils.h"
++#include "mozilla/LazyIdleThread.h"
++#include "nsIObserverService.h"
++#include "mozilla/ScopeExit.h"
++#include "mozilla/Unused.h"
++#include "mozilla/dom/Promise.h"
++#include "mozilla/mscom/ApartmentRegion.h"
++#include "mozilla/mscom/EnsureMTA.h"
++
++#include <shellapi.h>
++#include "WinUtils.h"
++
++using mozilla::dom::Promise;
++
++// The amount of time, in milliseconds, that our IO thread will stay alive after
++// the last event it processes.
++#define DEFAULT_THREAD_TIMEOUT_MS 30000
++
++namespace mozilla {
++namespace widget {
++
++// defined in WinTaskbar.cpp
++extern const wchar_t* gMozillaJumpListIDGeneric;
++
++Atomic<bool> LegacyJumpListBuilder::sBuildingList(false);
++const char kPrefTaskbarEnabled[] = "browser.taskbar.lists.enabled";
++
++NS_IMPL_ISUPPORTS(LegacyJumpListBuilder, nsILegacyJumpListBuilder, nsIObserver)
++#define TOPIC_PROFILE_BEFORE_CHANGE "profile-before-change"
++#define TOPIC_CLEAR_PRIVATE_DATA "clear-private-data"
++
++namespace detail {
++
++class DoneCommitListBuildCallback final : public nsIRunnable {
++  NS_DECL_THREADSAFE_ISUPPORTS
++
++ public:
++  DoneCommitListBuildCallback(nsILegacyJumpListCommittedCallback* aCallback,
++                              LegacyJumpListBuilder* aBuilder)
++      : mCallback(aCallback), mBuilder(aBuilder), mResult(false) {}
++
++  NS_IMETHOD Run() override {
++    MOZ_ASSERT(NS_IsMainThread());
++    if (mCallback) {
++      Unused << mCallback->Done(mResult);
++    }
++    // Ensure we are releasing on the main thread.
++    Destroy();
++    return NS_OK;
++  }
++
++  void SetResult(bool aResult) { mResult = aResult; }
++
++ private:
++  ~DoneCommitListBuildCallback() {
++    // Destructor does not always call on the main thread.
++    MOZ_ASSERT(!mCallback);
++    MOZ_ASSERT(!mBuilder);
++  }
++
++  void Destroy() {
++    MOZ_ASSERT(NS_IsMainThread());
++    mCallback = nullptr;
++    mBuilder = nullptr;
++  }
++
++  // These two references MUST be released on the main thread.
++  RefPtr<nsILegacyJumpListCommittedCallback> mCallback;
++  RefPtr<LegacyJumpListBuilder> mBuilder;
++  bool mResult;
++};
++
++NS_IMPL_ISUPPORTS(DoneCommitListBuildCallback, nsIRunnable);
++
++}  // namespace detail
++
++LegacyJumpListBuilder::LegacyJumpListBuilder()
++    : mMaxItems(0),
++      mHasCommit(false),
++      mMonitor("LegacyJumpListBuilderMonitor") {
++  MOZ_ASSERT(NS_IsMainThread());
++
++  // Instantiate mJumpListMgr in the multithreaded apartment so that proxied
++  // calls on that object do not need to interact with the main thread's message
++  // pump.
++  mscom::EnsureMTA([&]() {
++    RefPtr<ICustomDestinationList> jumpListMgr;
++    HRESULT hr = ::CoCreateInstance(
++        CLSID_DestinationList, nullptr, CLSCTX_INPROC_SERVER,
++        IID_ICustomDestinationList, getter_AddRefs(jumpListMgr));
++    if (FAILED(hr)) {
++      return;
++    }
++
++    ReentrantMonitorAutoEnter lock(mMonitor);
++    // Since we are accessing mJumpListMgr across different threads
++    // (ie, different apartments), mJumpListMgr must be an agile reference.
++    mJumpListMgr = mscom::AgileReference(jumpListMgr);
++  });
++
++  if (!mJumpListMgr) {
++    return;
++  }
++
++  // Make a lazy thread for any IO
++  mIOThread = new LazyIdleThread(DEFAULT_THREAD_TIMEOUT_MS, "Jump List",
++                                 LazyIdleThread::ManualShutdown);
++  Preferences::AddStrongObserver(this, kPrefTaskbarEnabled);
++
++  nsCOMPtr<nsIObserverService> observerService =
++      do_GetService("@mozilla.org/observer-service;1");
++  if (observerService) {
++    observerService->AddObserver(this, TOPIC_PROFILE_BEFORE_CHANGE, false);
++    observerService->AddObserver(this, TOPIC_CLEAR_PRIVATE_DATA, false);
++  }
++}
++
++LegacyJumpListBuilder::~LegacyJumpListBuilder() {
++  Preferences::RemoveObserver(this, kPrefTaskbarEnabled);
++}
++
++NS_IMETHODIMP LegacyJumpListBuilder::SetAppUserModelID(
++    const nsAString& aAppUserModelId) {
++  ReentrantMonitorAutoEnter lock(mMonitor);
++  if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
++
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  if (!jumpListMgr) {
++    return NS_ERROR_NOT_AVAILABLE;
++  }
++
++  mAppUserModelId.Assign(aAppUserModelId);
++  // MSIX packages explicitly do not support setting the appid from within
++  // the app, as it is set in the package manifest instead.
++  if (!mozilla::widget::WinUtils::HasPackageIdentity()) {
++    jumpListMgr->SetAppID(mAppUserModelId.get());
++  }
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListBuilder::GetAvailable(int16_t* aAvailable) {
++  *aAvailable = false;
++
++  ReentrantMonitorAutoEnter lock(mMonitor);
++  if (mJumpListMgr) *aAvailable = true;
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListBuilder::GetIsListCommitted(bool* aCommit) {
++  *aCommit = mHasCommit;
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListBuilder::GetMaxListItems(int16_t* aMaxItems) {
++  ReentrantMonitorAutoEnter lock(mMonitor);
++  if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
++
++  *aMaxItems = 0;
++
++  if (sBuildingList) {
++    *aMaxItems = mMaxItems;
++    return NS_OK;
++  }
++
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  if (!jumpListMgr) {
++    return NS_ERROR_UNEXPECTED;
++  }
++
++  IObjectArray* objArray;
++  if (SUCCEEDED(jumpListMgr->BeginList(&mMaxItems, IID_PPV_ARGS(&objArray)))) {
++    *aMaxItems = mMaxItems;
++
++    if (objArray) objArray->Release();
++
++    jumpListMgr->AbortList();
++  }
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListBuilder::InitListBuild(JSContext* aCx,
++                                                   Promise** aPromise) {
++  ReentrantMonitorAutoEnter lock(mMonitor);
++  if (!mJumpListMgr) {
++    return NS_ERROR_NOT_AVAILABLE;
++  }
++
++  nsIGlobalObject* globalObject = xpc::CurrentNativeGlobal(aCx);
++  if (NS_WARN_IF(!globalObject)) {
++    return NS_ERROR_FAILURE;
++  }
++
++  ErrorResult result;
++  RefPtr<Promise> promise = Promise::Create(globalObject, result);
++  if (NS_WARN_IF(result.Failed())) {
++    return result.StealNSResult();
++  }
++
++  nsCOMPtr<nsIRunnable> runnable =
++      NewRunnableMethod<StoreCopyPassByRRef<RefPtr<Promise>>>(
++          "InitListBuild", this, &LegacyJumpListBuilder::DoInitListBuild,
++          promise);
++  nsresult rv = mIOThread->Dispatch(runnable, NS_DISPATCH_NORMAL);
++  if (NS_WARN_IF(NS_FAILED(rv))) {
++    return rv;
++  }
++
++  promise.forget(aPromise);
++  return NS_OK;
++}
++
++void LegacyJumpListBuilder::DoInitListBuild(RefPtr<Promise>&& aPromise) {
++  // Since we're invoking COM interfaces to talk to the shell on a background
++  // thread, we need to be running inside a multithreaded apartment.
++  mscom::MTARegion mta;
++  MOZ_ASSERT(mta.IsValid());
++
++  ReentrantMonitorAutoEnter lock(mMonitor);
++  MOZ_ASSERT(mJumpListMgr);
++
++  if (sBuildingList) {
++    AbortListBuild();
++  }
++
++  HRESULT hr = E_UNEXPECTED;
++  auto errorHandler = MakeScopeExit([&aPromise, &hr]() {
++    if (SUCCEEDED(hr)) {
++      return;
++    }
++
++    NS_DispatchToMainThread(NS_NewRunnableFunction(
++        "InitListBuildReject", [promise = std::move(aPromise)]() {
++          promise->MaybeReject(NS_ERROR_FAILURE);
++        }));
++  });
++
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  if (!jumpListMgr) {
++    return;
++  }
++
++  nsTArray<nsString> urisToRemove;
++  RefPtr<IObjectArray> objArray;
++  hr = jumpListMgr->BeginList(
++      &mMaxItems,
++      IID_PPV_ARGS(static_cast<IObjectArray**>(getter_AddRefs(objArray))));
++  if (FAILED(hr)) {
++    return;
++  }
++
++  // The returned objArray of removed items are for manually removed items.
++  // This does not return items which are removed because they were previously
++  // part of the jump list but are no longer part of the jump list.
++  sBuildingList = true;
++  RemoveIconCacheAndGetJumplistShortcutURIs(objArray, urisToRemove);
++
++  NS_DispatchToMainThread(NS_NewRunnableFunction(
++      "InitListBuildResolve", [urisToRemove = std::move(urisToRemove),
++                               promise = std::move(aPromise)]() {
++        promise->MaybeResolve(urisToRemove);
++      }));
++}
++
++// Ensures that we have no old ICO files left in the jump list cache
++nsresult LegacyJumpListBuilder::RemoveIconCacheForAllItems() {
++  // Construct the path of our jump list cache
++  nsCOMPtr<nsIFile> jumpListCacheDir;
++  nsresult rv =
++      NS_GetSpecialDirectory("ProfLDS", getter_AddRefs(jumpListCacheDir));
++  NS_ENSURE_SUCCESS(rv, rv);
++  rv = jumpListCacheDir->AppendNative(
++      nsDependentCString(mozilla::widget::FaviconHelper::kJumpListCacheDir));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsCOMPtr<nsIDirectoryEnumerator> entries;
++  rv = jumpListCacheDir->GetDirectoryEntries(getter_AddRefs(entries));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  // Loop through each directory entry and remove all ICO files found
++  do {
++    nsCOMPtr<nsIFile> currFile;
++    if (NS_FAILED(entries->GetNextFile(getter_AddRefs(currFile))) || !currFile)
++      break;
++
++    nsAutoString path;
++    if (NS_FAILED(currFile->GetPath(path))) continue;
++
++    if (StringTail(path, 4).LowerCaseEqualsASCII(".ico")) {
++      // Check if the cached ICO file exists
++      bool exists;
++      if (NS_FAILED(currFile->Exists(&exists)) || !exists) continue;
++
++      // We found an ICO file that exists, so we should remove it
++      currFile->Remove(false);
++    }
++  } while (true);
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListBuilder::AddListToBuild(int16_t aCatType,
++                                                    nsIArray* items,
++                                                    const nsAString& catName,
++                                                    bool* _retval) {
++  nsresult rv;
++
++  *_retval = false;
++
++  ReentrantMonitorAutoEnter lock(mMonitor);
++  if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
++
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  if (!jumpListMgr) {
++    return NS_ERROR_UNEXPECTED;
++  }
++
++  switch (aCatType) {
++    case nsILegacyJumpListBuilder::JUMPLIST_CATEGORY_TASKS: {
++      NS_ENSURE_ARG_POINTER(items);
++
++      HRESULT hr;
++      RefPtr<IObjectCollection> collection;
++      hr = CoCreateInstance(CLSID_EnumerableObjectCollection, nullptr,
++                            CLSCTX_INPROC_SERVER, IID_IObjectCollection,
++                            getter_AddRefs(collection));
++      if (FAILED(hr)) return NS_ERROR_UNEXPECTED;
++
++      // Build the list
++      uint32_t length;
++      items->GetLength(&length);
++      for (uint32_t i = 0; i < length; ++i) {
++        nsCOMPtr<nsILegacyJumpListItem> item = do_QueryElementAt(items, i);
++        if (!item) continue;
++        // Check for separators
++        if (IsSeparator(item)) {
++          RefPtr<IShellLinkW> link;
++          rv = LegacyJumpListSeparator::GetSeparator(link);
++          if (NS_FAILED(rv)) return rv;
++          collection->AddObject(link);
++          continue;
++        }
++        // These should all be ShellLinks
++        RefPtr<IShellLinkW> link;
++        rv = LegacyJumpListShortcut::GetShellLink(item, link, mIOThread);
++        if (NS_FAILED(rv)) return rv;
++        collection->AddObject(link);
++      }
++
++      // We need IObjectArray to submit
++      RefPtr<IObjectArray> pArray;
++      hr = collection->QueryInterface(IID_IObjectArray, getter_AddRefs(pArray));
++      if (FAILED(hr)) return NS_ERROR_UNEXPECTED;
++
++      // Add the tasks
++      hr = jumpListMgr->AddUserTasks(pArray);
++      if (SUCCEEDED(hr)) *_retval = true;
++      return NS_OK;
++    } break;
++    case nsILegacyJumpListBuilder::JUMPLIST_CATEGORY_RECENT: {
++      if (SUCCEEDED(jumpListMgr->AppendKnownCategory(KDC_RECENT)))
++        *_retval = true;
++      return NS_OK;
++    } break;
++    case nsILegacyJumpListBuilder::JUMPLIST_CATEGORY_FREQUENT: {
++      if (SUCCEEDED(jumpListMgr->AppendKnownCategory(KDC_FREQUENT)))
++        *_retval = true;
++      return NS_OK;
++    } break;
++    case nsILegacyJumpListBuilder::JUMPLIST_CATEGORY_CUSTOMLIST: {
++      NS_ENSURE_ARG_POINTER(items);
++
++      if (catName.IsEmpty()) return NS_ERROR_INVALID_ARG;
++
++      HRESULT hr;
++      RefPtr<IObjectCollection> collection;
++      hr = CoCreateInstance(CLSID_EnumerableObjectCollection, nullptr,
++                            CLSCTX_INPROC_SERVER, IID_IObjectCollection,
++                            getter_AddRefs(collection));
++      if (FAILED(hr)) return NS_ERROR_UNEXPECTED;
++
++      uint32_t length;
++      items->GetLength(&length);
++      for (uint32_t i = 0; i < length; ++i) {
++        nsCOMPtr<nsILegacyJumpListItem> item = do_QueryElementAt(items, i);
++        if (!item) continue;
++        int16_t type;
++        if (NS_FAILED(item->GetType(&type))) continue;
++        switch (type) {
++          case nsILegacyJumpListItem::JUMPLIST_ITEM_SEPARATOR: {
++            RefPtr<IShellLinkW> shellItem;
++            rv = LegacyJumpListSeparator::GetSeparator(shellItem);
++            if (NS_FAILED(rv)) return rv;
++            collection->AddObject(shellItem);
++          } break;
++          case nsILegacyJumpListItem::JUMPLIST_ITEM_LINK: {
++            RefPtr<IShellItem2> shellItem;
++            rv = LegacyJumpListLink::GetShellItem(item, shellItem);
++            if (NS_FAILED(rv)) return rv;
++            collection->AddObject(shellItem);
++          } break;
++          case nsILegacyJumpListItem::JUMPLIST_ITEM_SHORTCUT: {
++            RefPtr<IShellLinkW> shellItem;
++            rv = LegacyJumpListShortcut::GetShellLink(item, shellItem,
++                                                      mIOThread);
++            if (NS_FAILED(rv)) return rv;
++            collection->AddObject(shellItem);
++          } break;
++        }
++      }
++
++      // We need IObjectArray to submit
++      RefPtr<IObjectArray> pArray;
++      hr = collection->QueryInterface(IID_IObjectArray, (LPVOID*)&pArray);
++      if (FAILED(hr)) return NS_ERROR_UNEXPECTED;
++
++      // Add the tasks
++      hr = jumpListMgr->AppendCategory(
++          reinterpret_cast<const wchar_t*>(catName.BeginReading()), pArray);
++      if (SUCCEEDED(hr)) *_retval = true;
++
++      // Get rid of the old icons
++      nsCOMPtr<nsIRunnable> event =
++          new mozilla::widget::AsyncDeleteAllFaviconsFromDisk(true);
++      mIOThread->Dispatch(event, NS_DISPATCH_NORMAL);
++
++      return NS_OK;
++    } break;
++  }
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListBuilder::AbortListBuild() {
++  ReentrantMonitorAutoEnter lock(mMonitor);
++  if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
++
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  if (!jumpListMgr) {
++    return NS_ERROR_UNEXPECTED;
++  }
++
++  jumpListMgr->AbortList();
++  sBuildingList = false;
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListBuilder::CommitListBuild(
++    nsILegacyJumpListCommittedCallback* aCallback) {
++  ReentrantMonitorAutoEnter lock(mMonitor);
++  if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
++
++  // Also holds a strong reference to this to prevent use-after-free.
++  RefPtr<detail::DoneCommitListBuildCallback> callback =
++      new detail::DoneCommitListBuildCallback(aCallback, this);
++
++  // The builder has a strong reference in the callback already, so we do not
++  // need to do it for this runnable again.
++  RefPtr<nsIRunnable> event =
++      NewNonOwningRunnableMethod<RefPtr<detail::DoneCommitListBuildCallback>>(
++          "LegacyJumpListBuilder::DoCommitListBuild", this,
++          &LegacyJumpListBuilder::DoCommitListBuild, std::move(callback));
++  Unused << mIOThread->Dispatch(event, NS_DISPATCH_NORMAL);
++
++  return NS_OK;
++}
++
++void LegacyJumpListBuilder::DoCommitListBuild(
++    RefPtr<detail::DoneCommitListBuildCallback> aCallback) {
++  // Since we're invoking COM interfaces to talk to the shell on a background
++  // thread, we need to be running inside a multithreaded apartment.
++  mscom::MTARegion mta;
++  MOZ_ASSERT(mta.IsValid());
++
++  ReentrantMonitorAutoEnter lock(mMonitor);
++  MOZ_ASSERT(mJumpListMgr);
++  MOZ_ASSERT(aCallback);
++
++  HRESULT hr = E_UNEXPECTED;
++  auto onExit = MakeScopeExit([&hr, &aCallback]() {
++    // XXX We might want some specific error data here.
++    aCallback->SetResult(SUCCEEDED(hr));
++    Unused << NS_DispatchToMainThread(aCallback);
++  });
++
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  if (!jumpListMgr) {
++    return;
++  }
++
++  hr = jumpListMgr->CommitList();
++  sBuildingList = false;
++
++  if (SUCCEEDED(hr)) {
++    mHasCommit = true;
++  }
++}
++
++NS_IMETHODIMP LegacyJumpListBuilder::DeleteActiveList(bool* _retval) {
++  *_retval = false;
++
++  ReentrantMonitorAutoEnter lock(mMonitor);
++  if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
++
++  if (sBuildingList) {
++    AbortListBuild();
++  }
++
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  if (!jumpListMgr) {
++    return NS_ERROR_UNEXPECTED;
++  }
++
++  if (SUCCEEDED(jumpListMgr->DeleteList(mAppUserModelId.get()))) {
++    *_retval = true;
++  }
++
++  return NS_OK;
++}
++
++/* internal */
++
++bool LegacyJumpListBuilder::IsSeparator(nsCOMPtr<nsILegacyJumpListItem>& item) {
++  int16_t type;
++  item->GetType(&type);
++  if (NS_FAILED(item->GetType(&type))) return false;
++
++  if (type == nsILegacyJumpListItem::JUMPLIST_ITEM_SEPARATOR) return true;
++  return false;
++}
++
++// RemoveIconCacheAndGetJumplistShortcutURIs - does multiple things to
++// avoid unnecessary extra XPCOM incantations. For each object in the input
++// array,  if it's an IShellLinkW, this deletes the cached icon and adds the
++// url param to a list of URLs to be removed from the places database.
++void LegacyJumpListBuilder::RemoveIconCacheAndGetJumplistShortcutURIs(
++    IObjectArray* aObjArray, nsTArray<nsString>& aURISpecs) {
++  MOZ_ASSERT(!NS_IsMainThread());
++
++  // Early return here just in case some versions of Windows don't populate this
++  if (!aObjArray) {
++    return;
++  }
++
++  uint32_t count = 0;
++  aObjArray->GetCount(&count);
++
++  for (uint32_t idx = 0; idx < count; idx++) {
++    RefPtr<IShellLinkW> pLink;
++
++    if (FAILED(aObjArray->GetAt(idx, IID_IShellLinkW,
++                                static_cast<void**>(getter_AddRefs(pLink))))) {
++      continue;
++    }
++
++    wchar_t buf[MAX_PATH];
++    HRESULT hres = pLink->GetArguments(buf, MAX_PATH);
++    if (SUCCEEDED(hres)) {
++      LPWSTR* arglist;
++      int32_t numArgs;
++
++      arglist = ::CommandLineToArgvW(buf, &numArgs);
++      if (arglist && numArgs > 0) {
++        nsString spec(arglist[0]);
++        aURISpecs.AppendElement(std::move(spec));
++        ::LocalFree(arglist);
++      }
++    }
++
++    int iconIdx = 0;
++    hres = pLink->GetIconLocation(buf, MAX_PATH, &iconIdx);
++    if (SUCCEEDED(hres)) {
++      nsDependentString spec(buf);
++      DeleteIconFromDisk(spec);
++    }
++  }
++}
++
++void LegacyJumpListBuilder::DeleteIconFromDisk(const nsAString& aPath) {
++  MOZ_ASSERT(!NS_IsMainThread());
++
++  // Check that we aren't deleting some arbitrary file that is not an icon
++  if (StringTail(aPath, 4).LowerCaseEqualsASCII(".ico")) {
++    // Construct the parent path of the passed in path
++    nsCOMPtr<nsIFile> icoFile;
++    nsresult rv = NS_NewLocalFile(aPath, true, getter_AddRefs(icoFile));
++    if (NS_WARN_IF(NS_FAILED(rv))) {
++      return;
++    }
++
++    icoFile->Remove(false);
++  }
++}
++
++NS_IMETHODIMP LegacyJumpListBuilder::Observe(nsISupports* aSubject,
++                                             const char* aTopic,
++                                             const char16_t* aData) {
++  NS_ENSURE_ARG_POINTER(aTopic);
++  if (strcmp(aTopic, TOPIC_PROFILE_BEFORE_CHANGE) == 0) {
++    nsCOMPtr<nsIObserverService> observerService =
++        do_GetService("@mozilla.org/observer-service;1");
++    if (observerService) {
++      observerService->RemoveObserver(this, TOPIC_PROFILE_BEFORE_CHANGE);
++    }
++    mIOThread->Shutdown();
++    // Clear out mJumpListMgr, as MSCOM services won't be available soon.
++    ReentrantMonitorAutoEnter lock(mMonitor);
++    mJumpListMgr = nullptr;
++  } else if (strcmp(aTopic, "nsPref:changed") == 0 &&
++             nsDependentString(aData).EqualsASCII(kPrefTaskbarEnabled)) {
++    bool enabled = Preferences::GetBool(kPrefTaskbarEnabled, true);
++    if (!enabled) {
++      nsCOMPtr<nsIRunnable> event =
++          new mozilla::widget::AsyncDeleteAllFaviconsFromDisk();
++      mIOThread->Dispatch(event, NS_DISPATCH_NORMAL);
++    }
++  } else if (strcmp(aTopic, TOPIC_CLEAR_PRIVATE_DATA) == 0) {
++    // Delete JumpListCache icons from Disk, if any.
++    nsCOMPtr<nsIRunnable> event =
++        new mozilla::widget::AsyncDeleteAllFaviconsFromDisk(false);
++    mIOThread->Dispatch(event, NS_DISPATCH_NORMAL);
++  }
++  return NS_OK;
++}
++
++}  // namespace widget
++}  // namespace mozilla
+diff --git a/widget/windows/LegacyJumpListBuilder.h b/widget/windows/LegacyJumpListBuilder.h
+new file mode 100644
+index 0000000000000..1d96773c47a82
+--- /dev/null
++++ b/widget/windows/LegacyJumpListBuilder.h
+@@ -0,0 +1,71 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef __LegacyJumpListBuilder_h__
++#define __LegacyJumpListBuilder_h__
++
++#include <windows.h>
++
++// Needed for various com interfaces
++#include <shobjidl.h>
++#undef LogSeverity  // SetupAPI.h #defines this as DWORD
++
++#include "nsString.h"
++
++#include "nsILegacyJumpListBuilder.h"
++#include "nsILegacyJumpListItem.h"
++#include "LegacyJumpListItem.h"
++#include "nsIObserver.h"
++#include "nsTArray.h"
++#include "mozilla/Attributes.h"
++#include "mozilla/LazyIdleThread.h"
++#include "mozilla/mscom/AgileReference.h"
++#include "mozilla/ReentrantMonitor.h"
++
++namespace mozilla {
++namespace widget {
++
++namespace detail {
++class DoneCommitListBuildCallback;
++}  // namespace detail
++
++class LegacyJumpListBuilder : public nsILegacyJumpListBuilder,
++                              public nsIObserver {
++  virtual ~LegacyJumpListBuilder();
++
++ public:
++  NS_DECL_THREADSAFE_ISUPPORTS
++  NS_DECL_NSILEGACYJUMPLISTBUILDER
++  NS_DECL_NSIOBSERVER
++
++  LegacyJumpListBuilder();
++
++ protected:
++  static Atomic<bool> sBuildingList;
++
++ private:
++  mscom::AgileReference<ICustomDestinationList> mJumpListMgr
++      MOZ_GUARDED_BY(mMonitor);
++  uint32_t mMaxItems MOZ_GUARDED_BY(mMonitor);
++  bool mHasCommit;
++  RefPtr<LazyIdleThread> mIOThread;
++  ReentrantMonitor mMonitor;
++  nsString mAppUserModelId;
++
++  bool IsSeparator(nsCOMPtr<nsILegacyJumpListItem>& item);
++  void RemoveIconCacheAndGetJumplistShortcutURIs(IObjectArray* aObjArray,
++                                                 nsTArray<nsString>& aURISpecs);
++  void DeleteIconFromDisk(const nsAString& aPath);
++  nsresult RemoveIconCacheForAllItems();
++  void DoCommitListBuild(RefPtr<detail::DoneCommitListBuildCallback> aCallback);
++  void DoInitListBuild(RefPtr<dom::Promise>&& aPromise);
++
++  friend class WinTaskbar;
++};
++
++}  // namespace widget
++}  // namespace mozilla
++
++#endif /* __LegacyJumpListBuilder_h__ */
+diff --git a/widget/windows/LegacyJumpListItem.cpp b/widget/windows/LegacyJumpListItem.cpp
+new file mode 100644
+index 0000000000000..3ffddf11f98b4
+--- /dev/null
++++ b/widget/windows/LegacyJumpListItem.cpp
+@@ -0,0 +1,559 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "LegacyJumpListItem.h"
++
++#include <shellapi.h>
++#include <propvarutil.h>
++#include <propkey.h>
++
++#include "nsIFile.h"
++#include "nsNetUtil.h"
++#include "nsCRT.h"
++#include "nsNetCID.h"
++#include "nsCExternalHandlerService.h"
++#include "nsComponentManagerUtils.h"
++#include "nsCycleCollectionParticipant.h"
++#include "mozilla/Preferences.h"
++#include "LegacyJumpListBuilder.h"
++#include "WinUtils.h"
++
++namespace mozilla {
++namespace widget {
++
++// ISUPPORTS Impl's
++NS_IMPL_ISUPPORTS(LegacyJumpListItem, nsILegacyJumpListItem)
++
++NS_INTERFACE_MAP_BEGIN(LegacyJumpListSeparator)
++  NS_INTERFACE_MAP_ENTRY(nsILegacyJumpListSeparator)
++  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsILegacyJumpListItem,
++                                   LegacyJumpListItemBase)
++  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, LegacyJumpListItemBase)
++NS_INTERFACE_MAP_END
++NS_IMPL_ADDREF(LegacyJumpListSeparator)
++NS_IMPL_RELEASE(LegacyJumpListSeparator)
++
++NS_INTERFACE_MAP_BEGIN(LegacyJumpListLink)
++  NS_INTERFACE_MAP_ENTRY(nsILegacyJumpListLink)
++  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsILegacyJumpListItem,
++                                   LegacyJumpListItemBase)
++  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, LegacyJumpListItemBase)
++NS_INTERFACE_MAP_END
++NS_IMPL_ADDREF(LegacyJumpListLink)
++NS_IMPL_RELEASE(LegacyJumpListLink)
++
++NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(LegacyJumpListShortcut)
++  NS_INTERFACE_MAP_ENTRY(nsILegacyJumpListShortcut)
++  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsILegacyJumpListItem,
++                                   LegacyJumpListItemBase)
++  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsILegacyJumpListShortcut)
++NS_INTERFACE_MAP_END
++NS_IMPL_CYCLE_COLLECTING_ADDREF(LegacyJumpListShortcut)
++NS_IMPL_CYCLE_COLLECTING_RELEASE(LegacyJumpListShortcut)
++NS_IMPL_CYCLE_COLLECTION(LegacyJumpListShortcut, mHandlerApp)
++
++NS_IMETHODIMP LegacyJumpListItemBase::GetType(int16_t* aType) {
++  NS_ENSURE_ARG_POINTER(aType);
++
++  *aType = mItemType;
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListItemBase::Equals(nsILegacyJumpListItem* aItem,
++                                             bool* aResult) {
++  NS_ENSURE_ARG_POINTER(aItem);
++
++  *aResult = false;
++
++  int16_t theType = nsILegacyJumpListItem::JUMPLIST_ITEM_EMPTY;
++  if (NS_FAILED(aItem->GetType(&theType))) return NS_OK;
++
++  // Make sure the types match.
++  if (Type() != theType) return NS_OK;
++
++  *aResult = true;
++
++  return NS_OK;
++}
++
++/* link impl. */
++
++NS_IMETHODIMP LegacyJumpListLink::GetUri(nsIURI** aURI) {
++  NS_IF_ADDREF(*aURI = mURI);
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListLink::SetUri(nsIURI* aURI) {
++  mURI = aURI;
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListLink::SetUriTitle(const nsAString& aUriTitle) {
++  mUriTitle.Assign(aUriTitle);
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListLink::GetUriTitle(nsAString& aUriTitle) {
++  aUriTitle.Assign(mUriTitle);
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListLink::Equals(nsILegacyJumpListItem* aItem,
++                                         bool* aResult) {
++  NS_ENSURE_ARG_POINTER(aItem);
++
++  nsresult rv;
++
++  *aResult = false;
++
++  int16_t theType = nsILegacyJumpListItem::JUMPLIST_ITEM_EMPTY;
++  if (NS_FAILED(aItem->GetType(&theType))) return NS_OK;
++
++  // Make sure the types match.
++  if (Type() != theType) return NS_OK;
++
++  nsCOMPtr<nsILegacyJumpListLink> link = do_QueryInterface(aItem, &rv);
++  if (NS_FAILED(rv)) return rv;
++
++  // Check the titles
++  nsAutoString title;
++  link->GetUriTitle(title);
++  if (!mUriTitle.Equals(title)) return NS_OK;
++
++  // Call the internal object's equals() method to check.
++  nsCOMPtr<nsIURI> theUri;
++  bool equals = false;
++  if (NS_SUCCEEDED(link->GetUri(getter_AddRefs(theUri)))) {
++    if (!theUri) {
++      if (!mURI) *aResult = true;
++      return NS_OK;
++    }
++    if (NS_SUCCEEDED(theUri->Equals(mURI, &equals)) && equals) {
++      *aResult = true;
++    }
++  }
++
++  return NS_OK;
++}
++
++/* shortcut impl. */
++
++NS_IMETHODIMP LegacyJumpListShortcut::GetApp(nsILocalHandlerApp** aApp) {
++  NS_IF_ADDREF(*aApp = mHandlerApp);
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListShortcut::SetApp(nsILocalHandlerApp* aApp) {
++  mHandlerApp = aApp;
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListShortcut::GetIconIndex(int32_t* aIconIndex) {
++  NS_ENSURE_ARG_POINTER(aIconIndex);
++
++  *aIconIndex = mIconIndex;
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListShortcut::SetIconIndex(int32_t aIconIndex) {
++  mIconIndex = aIconIndex;
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListShortcut::GetFaviconPageUri(
++    nsIURI** aFaviconPageURI) {
++  NS_IF_ADDREF(*aFaviconPageURI = mFaviconPageURI);
++
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListShortcut::SetFaviconPageUri(
++    nsIURI* aFaviconPageURI) {
++  mFaviconPageURI = aFaviconPageURI;
++  return NS_OK;
++}
++
++NS_IMETHODIMP LegacyJumpListShortcut::Equals(nsILegacyJumpListItem* aItem,
++                                             bool* aResult) {
++  NS_ENSURE_ARG_POINTER(aItem);
++
++  nsresult rv;
++
++  *aResult = false;
++
++  int16_t theType = nsILegacyJumpListItem::JUMPLIST_ITEM_EMPTY;
++  if (NS_FAILED(aItem->GetType(&theType))) return NS_OK;
++
++  // Make sure the types match.
++  if (Type() != theType) return NS_OK;
++
++  nsCOMPtr<nsILegacyJumpListShortcut> shortcut = do_QueryInterface(aItem, &rv);
++  if (NS_FAILED(rv)) return rv;
++
++  // Check the icon index
++  // int32_t idx;
++  // shortcut->GetIconIndex(&idx);
++  // if (mIconIndex != idx)
++  //  return NS_OK;
++  // No need to check the icon page URI either
++
++  // Call the internal object's equals() method to check.
++  nsCOMPtr<nsILocalHandlerApp> theApp;
++  bool equals = false;
++  if (NS_SUCCEEDED(shortcut->GetApp(getter_AddRefs(theApp)))) {
++    if (!theApp) {
++      if (!mHandlerApp) *aResult = true;
++      return NS_OK;
++    }
++    if (NS_SUCCEEDED(theApp->Equals(mHandlerApp, &equals)) && equals) {
++      *aResult = true;
++    }
++  }
++
++  return NS_OK;
++}
++
++/* internal helpers */
++
++// (static) Creates a ShellLink that encapsulate a separator.
++nsresult LegacyJumpListSeparator::GetSeparator(
++    RefPtr<IShellLinkW>& aShellLink) {
++  HRESULT hr;
++  IShellLinkW* psl;
++
++  // Create a IShellLink.
++  hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
++                        IID_IShellLinkW, (LPVOID*)&psl);
++  if (FAILED(hr)) return NS_ERROR_UNEXPECTED;
++
++  IPropertyStore* pPropStore = nullptr;
++  hr = psl->QueryInterface(IID_IPropertyStore, (LPVOID*)&pPropStore);
++  if (FAILED(hr)) return NS_ERROR_UNEXPECTED;
++
++  PROPVARIANT pv;
++  InitPropVariantFromBoolean(TRUE, &pv);
++
++  pPropStore->SetValue(PKEY_AppUserModel_IsDestListSeparator, pv);
++  pPropStore->Commit();
++  pPropStore->Release();
++
++  PropVariantClear(&pv);
++
++  aShellLink = dont_AddRef(psl);
++
++  return NS_OK;
++}
++
++// (static) Creates a ShellLink that encapsulate a shortcut to local apps.
++nsresult LegacyJumpListShortcut::GetShellLink(
++    nsCOMPtr<nsILegacyJumpListItem>& item, RefPtr<IShellLinkW>& aShellLink,
++    RefPtr<LazyIdleThread>& aIOThread) {
++  HRESULT hr;
++  IShellLinkW* psl;
++  nsresult rv;
++
++  // Shell links:
++  // http://msdn.microsoft.com/en-us/library/bb776891(VS.85).aspx
++  // http://msdn.microsoft.com/en-us/library/bb774950(VS.85).aspx
++
++  int16_t type;
++  if (NS_FAILED(item->GetType(&type))) return NS_ERROR_INVALID_ARG;
++
++  if (type != nsILegacyJumpListItem::JUMPLIST_ITEM_SHORTCUT)
++    return NS_ERROR_INVALID_ARG;
++
++  nsCOMPtr<nsILegacyJumpListShortcut> shortcut = do_QueryInterface(item, &rv);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsCOMPtr<nsILocalHandlerApp> handlerApp;
++  rv = shortcut->GetApp(getter_AddRefs(handlerApp));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  // Create a IShellLink
++  hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
++                        IID_IShellLinkW, (LPVOID*)&psl);
++  if (FAILED(hr)) return NS_ERROR_UNEXPECTED;
++
++  // Retrieve the app path, title, description and optional command line args.
++  nsAutoString appPath, appTitle, appDescription, appArgs;
++  int32_t appIconIndex = 0;
++
++  // Path
++  nsCOMPtr<nsIFile> executable;
++  handlerApp->GetExecutable(getter_AddRefs(executable));
++
++  rv = executable->GetPath(appPath);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  // Command line parameters
++  uint32_t count = 0;
++  handlerApp->GetParameterCount(&count);
++  for (uint32_t idx = 0; idx < count; idx++) {
++    if (idx > 0) appArgs.Append(' ');
++    nsAutoString param;
++    rv = handlerApp->GetParameter(idx, param);
++    if (NS_FAILED(rv)) return rv;
++    appArgs.Append(param);
++  }
++
++  handlerApp->GetName(appTitle);
++  handlerApp->GetDetailedDescription(appDescription);
++
++  bool useUriIcon = false;   // if we want to use the URI icon
++  bool usedUriIcon = false;  // if we did use the URI icon
++  shortcut->GetIconIndex(&appIconIndex);
++
++  nsCOMPtr<nsIURI> iconUri;
++  rv = shortcut->GetFaviconPageUri(getter_AddRefs(iconUri));
++  if (NS_SUCCEEDED(rv) && iconUri) {
++    useUriIcon = true;
++  }
++
++  // Store the title of the app
++  if (appTitle.Length() > 0) {
++    IPropertyStore* pPropStore = nullptr;
++    hr = psl->QueryInterface(IID_IPropertyStore, (LPVOID*)&pPropStore);
++    if (FAILED(hr)) return NS_ERROR_UNEXPECTED;
++
++    PROPVARIANT pv;
++    InitPropVariantFromString(appTitle.get(), &pv);
++
++    pPropStore->SetValue(PKEY_Title, pv);
++    pPropStore->Commit();
++    pPropStore->Release();
++
++    PropVariantClear(&pv);
++  }
++
++  // Store the rest of the params
++  psl->SetPath(appPath.get());
++  psl->SetDescription(appDescription.get());
++  psl->SetArguments(appArgs.get());
++
++  if (useUriIcon) {
++    nsString icoFilePath;
++    rv = mozilla::widget::FaviconHelper::ObtainCachedIconFile(
++        iconUri, icoFilePath, aIOThread, false);
++    if (NS_SUCCEEDED(rv)) {
++      // Always use the first icon in the ICO file
++      // our encoded icon only has 1 resource
++      psl->SetIconLocation(icoFilePath.get(), 0);
++      usedUriIcon = true;
++    }
++  }
++
++  // We didn't use an ICO via URI so fall back to the app icon
++  if (!usedUriIcon) {
++    psl->SetIconLocation(appPath.get(), appIconIndex);
++  }
++
++  aShellLink = dont_AddRef(psl);
++
++  return NS_OK;
++}
++
++// If successful fills in the aSame parameter
++// aSame will be true if the path is in our icon cache
++static nsresult IsPathInOurIconCache(
++    nsCOMPtr<nsILegacyJumpListShortcut>& aShortcut, wchar_t* aPath,
++    bool* aSame) {
++  NS_ENSURE_ARG_POINTER(aPath);
++  NS_ENSURE_ARG_POINTER(aSame);
++
++  *aSame = false;
++
++  // Construct the path of our jump list cache
++  nsCOMPtr<nsIFile> jumpListCache;
++  nsresult rv =
++      NS_GetSpecialDirectory("ProfLDS", getter_AddRefs(jumpListCache));
++  NS_ENSURE_SUCCESS(rv, rv);
++  rv = jumpListCache->AppendNative(
++      nsDependentCString(FaviconHelper::kJumpListCacheDir));
++  NS_ENSURE_SUCCESS(rv, rv);
++  nsAutoString jumpListCachePath;
++  rv = jumpListCache->GetPath(jumpListCachePath);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  // Construct the parent path of the passed in path
++  nsCOMPtr<nsIFile> passedInFile =
++      do_CreateInstance("@mozilla.org/file/local;1");
++  NS_ENSURE_TRUE(passedInFile, NS_ERROR_FAILURE);
++  nsAutoString passedInPath(aPath);
++  rv = passedInFile->InitWithPath(passedInPath);
++  nsCOMPtr<nsIFile> passedInParentFile;
++  passedInFile->GetParent(getter_AddRefs(passedInParentFile));
++  nsAutoString passedInParentPath;
++  rv = jumpListCache->GetPath(passedInParentPath);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  *aSame = jumpListCachePath.Equals(passedInParentPath);
++  return NS_OK;
++}
++
++// (static) For a given IShellLink, create and return a populated
++// nsILegacyJumpListShortcut.
++nsresult LegacyJumpListShortcut::GetJumpListShortcut(
++    IShellLinkW* pLink, nsCOMPtr<nsILegacyJumpListShortcut>& aShortcut) {
++  NS_ENSURE_ARG_POINTER(pLink);
++
++  nsresult rv;
++  HRESULT hres;
++
++  nsCOMPtr<nsILocalHandlerApp> handlerApp =
++      do_CreateInstance(NS_LOCALHANDLERAPP_CONTRACTID, &rv);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  wchar_t buf[MAX_PATH];
++
++  // Path
++  hres = pLink->GetPath(buf, MAX_PATH, nullptr, SLGP_UNCPRIORITY);
++  if (FAILED(hres)) return NS_ERROR_INVALID_ARG;
++
++  nsCOMPtr<nsIFile> file;
++  nsDependentString filepath(buf);
++  rv = NS_NewLocalFile(filepath, false, getter_AddRefs(file));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  rv = handlerApp->SetExecutable(file);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  // Parameters
++  hres = pLink->GetArguments(buf, MAX_PATH);
++  if (SUCCEEDED(hres)) {
++    LPWSTR* arglist;
++    int32_t numArgs;
++    int32_t idx;
++
++    arglist = ::CommandLineToArgvW(buf, &numArgs);
++    if (arglist) {
++      for (idx = 0; idx < numArgs; idx++) {
++        // szArglist[i] is null terminated
++        nsDependentString arg(arglist[idx]);
++        handlerApp->AppendParameter(arg);
++      }
++      ::LocalFree(arglist);
++    }
++  }
++
++  rv = aShortcut->SetApp(handlerApp);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  // Icon index or file location
++  int iconIdx = 0;
++  hres = pLink->GetIconLocation(buf, MAX_PATH, &iconIdx);
++  if (SUCCEEDED(hres)) {
++    // XXX How do we handle converting local files to images here? Do we need
++    // to?
++    aShortcut->SetIconIndex(iconIdx);
++
++    // Obtain the local profile directory and construct the output icon file
++    // path We only set the Icon Uri if we're sure it was from our icon cache.
++    bool isInOurCache;
++    if (NS_SUCCEEDED(IsPathInOurIconCache(aShortcut, buf, &isInOurCache)) &&
++        isInOurCache) {
++      nsCOMPtr<nsIURI> iconUri;
++      nsAutoString path(buf);
++      rv = NS_NewURI(getter_AddRefs(iconUri), path);
++      if (NS_SUCCEEDED(rv)) {
++        aShortcut->SetFaviconPageUri(iconUri);
++      }
++    }
++  }
++
++  // Do we need the title and description? Probably not since handler app
++  // doesn't compare these in equals.
++
++  return NS_OK;
++}
++
++// (static) ShellItems are used to encapsulate links to things. We currently
++// only support URI links, but more support could be added, such as local file
++// and directory links.
++nsresult LegacyJumpListLink::GetShellItem(nsCOMPtr<nsILegacyJumpListItem>& item,
++                                          RefPtr<IShellItem2>& aShellItem) {
++  IShellItem2* psi = nullptr;
++  nsresult rv;
++
++  int16_t type;
++  if (NS_FAILED(item->GetType(&type))) return NS_ERROR_INVALID_ARG;
++
++  if (type != nsILegacyJumpListItem::JUMPLIST_ITEM_LINK)
++    return NS_ERROR_INVALID_ARG;
++
++  nsCOMPtr<nsILegacyJumpListLink> link = do_QueryInterface(item, &rv);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsCOMPtr<nsIURI> uri;
++  rv = link->GetUri(getter_AddRefs(uri));
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  nsAutoCString spec;
++  rv = uri->GetSpec(spec);
++  NS_ENSURE_SUCCESS(rv, rv);
++
++  // Create the IShellItem
++  if (FAILED(SHCreateItemFromParsingName(NS_ConvertASCIItoUTF16(spec).get(),
++                                         nullptr, IID_PPV_ARGS(&psi)))) {
++    return NS_ERROR_INVALID_ARG;
++  }
++
++  // Set the title
++  nsAutoString linkTitle;
++  link->GetUriTitle(linkTitle);
++
++  IPropertyStore* pPropStore = nullptr;
++  HRESULT hres = psi->GetPropertyStore(GPS_DEFAULT, IID_IPropertyStore,
++                                       (void**)&pPropStore);
++  if (FAILED(hres)) return NS_ERROR_UNEXPECTED;
++
++  PROPVARIANT pv;
++  InitPropVariantFromString(linkTitle.get(), &pv);
++
++  // May fail due to shell item access permissions.
++  pPropStore->SetValue(PKEY_ItemName, pv);
++  pPropStore->Commit();
++  pPropStore->Release();
++
++  PropVariantClear(&pv);
++
++  aShellItem = dont_AddRef(psi);
++
++  return NS_OK;
++}
++
++// (static) For a given IShellItem, create and return a populated
++// nsILegacyJumpListLink.
++nsresult LegacyJumpListLink::GetJumpListLink(
++    IShellItem* pItem, nsCOMPtr<nsILegacyJumpListLink>& aLink) {
++  NS_ENSURE_ARG_POINTER(pItem);
++
++  // We assume for now these are URI links, but through properties we could
++  // query and create other types.
++  nsresult rv;
++  LPWSTR lpstrName = nullptr;
++
++  if (SUCCEEDED(pItem->GetDisplayName(SIGDN_URL, &lpstrName))) {
++    nsCOMPtr<nsIURI> uri;
++    nsAutoString spec(lpstrName);
++
++    rv = NS_NewURI(getter_AddRefs(uri), NS_ConvertUTF16toUTF8(spec));
++    if (NS_FAILED(rv)) return NS_ERROR_INVALID_ARG;
++
++    aLink->SetUri(uri);
++
++    ::CoTaskMemFree(lpstrName);
++  }
++
++  return NS_OK;
++}
++
++}  // namespace widget
++}  // namespace mozilla
+diff --git a/widget/windows/LegacyJumpListItem.h b/widget/windows/LegacyJumpListItem.h
+new file mode 100644
+index 0000000000000..bcef82d349448
+--- /dev/null
++++ b/widget/windows/LegacyJumpListItem.h
+@@ -0,0 +1,133 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef __LegacyJumpListItem_h__
++#define __LegacyJumpListItem_h__
++
++#include <windows.h>
++#include <shobjidl.h>
++#undef LogSeverity  // SetupAPI.h #defines this as DWORD
++
++#include "mozilla/RefPtr.h"
++#include "mozilla/LazyIdleThread.h"
++#include "nsILegacyJumpListItem.h"  // defines nsILegacyJumpListItem
++#include "nsIMIMEInfo.h"            // defines nsILocalHandlerApp
++#include "nsTArray.h"
++#include "nsCOMPtr.h"
++#include "nsIURI.h"
++#include "nsICryptoHash.h"
++#include "nsString.h"
++#include "nsCycleCollectionParticipant.h"
++
++class nsIThread;
++
++namespace mozilla {
++namespace widget {
++
++class LegacyJumpListItemBase : public nsILegacyJumpListItem {
++ public:
++  LegacyJumpListItemBase()
++      : mItemType(nsILegacyJumpListItem::JUMPLIST_ITEM_EMPTY) {}
++
++  explicit LegacyJumpListItemBase(int32_t type) : mItemType(type) {}
++
++  NS_DECL_NSILEGACYJUMPLISTITEM
++
++  static const char kJumpListCacheDir[];
++
++ protected:
++  virtual ~LegacyJumpListItemBase() {}
++
++  short Type() { return mItemType; }
++  short mItemType;
++};
++
++class LegacyJumpListItem : public LegacyJumpListItemBase {
++  ~LegacyJumpListItem() {}
++
++ public:
++  using LegacyJumpListItemBase::LegacyJumpListItemBase;
++
++  NS_DECL_ISUPPORTS
++};
++
++class LegacyJumpListSeparator : public LegacyJumpListItemBase,
++                                public nsILegacyJumpListSeparator {
++  ~LegacyJumpListSeparator() {}
++
++ public:
++  LegacyJumpListSeparator()
++      : LegacyJumpListItemBase(nsILegacyJumpListItem::JUMPLIST_ITEM_SEPARATOR) {
++  }
++
++  NS_DECL_ISUPPORTS
++  NS_FORWARD_NSILEGACYJUMPLISTITEM(LegacyJumpListItemBase::)
++
++  static nsresult GetSeparator(RefPtr<IShellLinkW>& aShellLink);
++};
++
++class LegacyJumpListLink : public LegacyJumpListItemBase,
++                           public nsILegacyJumpListLink {
++  ~LegacyJumpListLink() {}
++
++ public:
++  LegacyJumpListLink()
++      : LegacyJumpListItemBase(nsILegacyJumpListItem::JUMPLIST_ITEM_LINK) {}
++
++  NS_DECL_ISUPPORTS
++  NS_IMETHOD GetType(int16_t* aType) override {
++    return LegacyJumpListItemBase::GetType(aType);
++  }
++  NS_IMETHOD Equals(nsILegacyJumpListItem* item, bool* _retval) override;
++  NS_DECL_NSILEGACYJUMPLISTLINK
++
++  static nsresult GetShellItem(nsCOMPtr<nsILegacyJumpListItem>& item,
++                               RefPtr<IShellItem2>& aShellItem);
++  static nsresult GetJumpListLink(IShellItem* pItem,
++                                  nsCOMPtr<nsILegacyJumpListLink>& aLink);
++
++ protected:
++  nsString mUriTitle;
++  nsCOMPtr<nsIURI> mURI;
++  nsCOMPtr<nsICryptoHash> mCryptoHash;
++};
++
++class LegacyJumpListShortcut : public LegacyJumpListItemBase,
++                               public nsILegacyJumpListShortcut {
++  ~LegacyJumpListShortcut() {}
++
++ public:
++  LegacyJumpListShortcut()
++      : LegacyJumpListItemBase(nsILegacyJumpListItem::JUMPLIST_ITEM_SHORTCUT) {}
++
++  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
++  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(LegacyJumpListShortcut,
++                                           LegacyJumpListItemBase)
++  NS_IMETHOD GetType(int16_t* aType) override {
++    return LegacyJumpListItemBase::GetType(aType);
++  }
++  NS_IMETHOD Equals(nsILegacyJumpListItem* item, bool* _retval) override;
++  NS_DECL_NSILEGACYJUMPLISTSHORTCUT
++
++  static nsresult GetShellLink(nsCOMPtr<nsILegacyJumpListItem>& item,
++                               RefPtr<IShellLinkW>& aShellLink,
++                               RefPtr<LazyIdleThread>& aIOThread);
++  static nsresult GetJumpListShortcut(
++      IShellLinkW* pLink, nsCOMPtr<nsILegacyJumpListShortcut>& aShortcut);
++  static nsresult GetOutputIconPath(nsCOMPtr<nsIURI> aFaviconPageURI,
++                                    nsCOMPtr<nsIFile>& aICOFile);
++
++ protected:
++  int32_t mIconIndex;
++  nsCOMPtr<nsIURI> mFaviconPageURI;
++  nsCOMPtr<nsILocalHandlerApp> mHandlerApp;
++
++  bool ExecutableExists(nsCOMPtr<nsILocalHandlerApp>& handlerApp);
++};
++
++}  // namespace widget
++}  // namespace mozilla
++
++#endif /* __LegacyJumpListItem_h__ */
+diff --git a/widget/windows/components.conf b/widget/windows/components.conf
+index 2d59a2f89d88e..e5089ed9e1fbb 100644
+--- a/widget/windows/components.conf
++++ b/widget/windows/components.conf
+@@ -57,6 +57,36 @@ Classes = [
+         'type': 'mozilla::widget::WinTaskbar',
+         'headers': ['/widget/windows/WinTaskbar.h'],
+     },
++    {
++        'cid': '{73a5946f-608d-454f-9d33-0b8f8c7294b6}',
++        'contract_ids': ['@mozilla.org/windows-legacyjumplistbuilder;1'],
++        'type': 'mozilla::widget::LegacyJumpListBuilder',
++        'headers': ['/widget/windows/LegacyJumpListBuilder.h'],
++    },
++    {
++        'cid': '{2b9a1f2c-27ce-45b6-8d4e-755d0e34f8db}',
++        'contract_ids': ['@mozilla.org/windows-legacyjumplistitem;1'],
++        'type': 'mozilla::widget::LegacyJumpListItem',
++        'headers': ['/widget/windows/LegacyJumpListItem.h'],
++    },
++    {
++        'cid': '{21f1f13b-f75a-42ad-867a-d91ad694447e}',
++        'contract_ids': ['@mozilla.org/windows-legacyjumplistseparator;1'],
++        'type': 'mozilla::widget::LegacyJumpListSeparator',
++        'headers': ['/widget/windows/LegacyJumpListItem.h'],
++    },
++    {
++        'cid': '{f72c5dc4-5a12-47be-be28-ab105f33b08f}',
++        'contract_ids': ['@mozilla.org/windows-legacyjumplistlink;1'],
++        'type': 'mozilla::widget::LegacyJumpListLink',
++        'headers': ['/widget/windows/LegacyJumpListItem.h'],
++    },
++    {
++        'cid': '{b16656b2-5187-498f-abf4-56346126bfdb}',
++        'contract_ids': ['@mozilla.org/windows-legacyjumplistshortcut;1'],
++        'type': 'mozilla::widget::LegacyJumpListShortcut',
++        'headers': ['/widget/windows/LegacyJumpListItem.h'],
++    },
+     {
+         'cid': '{e04a55e8-fee3-4ea2-a98b-41d2621adc3c}',
+         'contract_ids': ['@mozilla.org/windows-ui-utils;1'],
+diff --git a/widget/windows/moz.build b/widget/windows/moz.build
+index 6f0cc689b404b..34ccb95a3142d 100644
+--- a/widget/windows/moz.build
++++ b/widget/windows/moz.build
+@@ -77,6 +77,7 @@ UNIFIED_SOURCES += [
+     "InkCollector.cpp",
+     "JumpListBuilder.cpp",
+     "KeyboardLayout.cpp",
++    "LegacyJumpListItem.cpp",
+     "LSPAnnotator.cpp",
+     "nsAppShell.cpp",
+     "nsClipboard.cpp",
+@@ -124,6 +125,7 @@ UNIFIED_SOURCES += [
+ SOURCES += [
+     "CompositorWidgetParent.cpp",
+     "InProcessWinCompositorWidget.cpp",
++    "LegacyJumpListBuilder.cpp",
+     "MediaKeysEventSourceFactory.cpp",
+     "nsBidiKeyboard.cpp",
+     "nsFilePicker.cpp",

@@ -1,0 +1,62 @@
+
+
+diff --git a/xpcom/base/AvailableMemoryTracker.cpp b/xpcom/base/AvailableMemoryTracker.cpp
+index a14c43bcbc459..412761681fcde 100644
+--- a/xpcom/base/AvailableMemoryTracker.cpp
++++ b/xpcom/base/AvailableMemoryTracker.cpp
+@@ -7,7 +7,7 @@
+ #include "mozilla/AvailableMemoryTracker.h"
+ 
+ #if defined(XP_WIN)
+-#  include <windows.h>
++#  include "mozilla/WindowsVersion.h"
+ #  include "nsIMemoryReporter.h"
+ #endif
+ 
+@@ -115,11 +115,15 @@ nsJemallocFreeDirtyPagesRunnable::Run() {
+ 
+ #if defined(XP_WIN)
+ void nsJemallocFreeDirtyPagesRunnable::OptimizeSystemHeap() {
+-  HEAP_OPTIMIZE_RESOURCES_INFORMATION heapOptInfo = {
+-      HEAP_OPTIMIZE_RESOURCES_CURRENT_VERSION};
+-
+-  ::HeapSetInformation(nullptr, HeapOptimizeResources, &heapOptInfo,
+-                       sizeof(heapOptInfo));
++  // HeapSetInformation exists prior to Windows 8.1, but the
++  // HeapOptimizeResources information class does not.
++  if (IsWin8Point1OrLater()) {
++    HEAP_OPTIMIZE_RESOURCES_INFORMATION heapOptInfo = {
++        HEAP_OPTIMIZE_RESOURCES_CURRENT_VERSION};
++
++    ::HeapSetInformation(nullptr, HeapOptimizeResources, &heapOptInfo,
++                         sizeof(heapOptInfo));
++  }
+ }
+ #endif  // defined(XP_WIN)
+ 
+diff --git a/xpcom/glue/standalone/nsXPCOMGlue.cpp b/xpcom/glue/standalone/nsXPCOMGlue.cpp
+index 0bcb39efa2e6c..fd5f1e075d447 100644
+--- a/xpcom/glue/standalone/nsXPCOMGlue.cpp
++++ b/xpcom/glue/standalone/nsXPCOMGlue.cpp
+@@ -43,6 +43,7 @@ using LibHandleResult = ::mozilla::Result<LibHandleType, DLErrorType>;
+ 
+ #if defined(XP_WIN)
+ #  include <mbstring.h>
++#  include "mozilla/WindowsVersion.h"
+ #  include "mozilla/PreXULSkeletonUI.h"
+ 
+ static LibHandleResult GetLibHandle(pathstr_t aDependentLib) {
+@@ -297,6 +298,13 @@ static XPCOMGlueLoadResult XPCOMGlueLoad(
+     if (l == 0 || *buffer == '#') {
+       continue;
+     }
++#  ifdef XP_WIN
++    // There is no point in reading Universal CRT forwarder DLLs ahead on
++    // Windows 10 because they will not be touched later.
++    if (IsWin10OrLater() && !strncmp(buffer, "api-", 4)) {
++      continue;
++    }
++#  endif
+ 
+     // cut the trailing newline, if present
+     if (buffer[l - 1] == '\n') {

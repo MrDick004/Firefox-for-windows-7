@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from xpcom/. r=emilio    2023-07-26 16:52:54    f49f478714086fe9f485bf53ebee1791e5428c8a

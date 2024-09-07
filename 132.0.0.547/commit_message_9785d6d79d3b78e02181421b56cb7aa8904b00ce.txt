@@ -1,0 +1,1 @@
+Bug 1859957 - Remove unnecessary dynamic loading of `GetCurrentApplicationUserModelId`. r=bytesized,win-reviewers,gstoll    2023/10/25 1:05:29    7ebe5365ef3d705a94da08208ebc052a6b3e7aca
