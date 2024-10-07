@@ -1,0 +1,112 @@
+
+
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 55e2b52189ffd..4b0ea29511d6e 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -1228,7 +1228,7 @@ static const wchar_t* ChooseWindowClass(WindowType aWindowType) {
+         return GetMainWindowClass();
+     }
+   }();
+-  RegisterWindowClass(className, 0, gStockApplicationIcon);
++  RegisterWindowClass(className, aWindowType == WindowType::Popup ? CS_DROPSHADOW : 0, gStockApplicationIcon);
+   return className;
+ }
+ 
+@@ -1574,6 +1574,15 @@ void nsWindow::Show(bool aState) {
+ 
+   if (mWindowType == WindowType::Popup) {
+     MOZ_ASSERT(ChooseWindowClass(mWindowType) == kClassNameDropShadow);
++    const bool shouldUseDropShadow =
++        mTransparencyMode != TransparencyMode::Transparent;
++
++    static bool sShadowEnabled = true;
++    if (sShadowEnabled != shouldUseDropShadow) {
++      ::SetClassLongA(mWnd, GCL_STYLE, shouldUseDropShadow ? CS_DROPSHADOW : 0);
++      sShadowEnabled = shouldUseDropShadow;
++    }
++
+     // WS_EX_COMPOSITED conflicts with the WS_EX_LAYERED style and causes
+     // some popup menus to become invisible.
+     LONG_PTR exStyle = ::GetWindowLongPtrW(mWnd, GWL_EXSTYLE);
+@@ -1770,6 +1779,26 @@ void nsWindow::Show(bool aState) {
+ // This does not take cloaking into account.
+ bool nsWindow::IsVisible() const { return mIsVisible; }
+ 
++/**************************************************************
++ *
++ * SECTION: Window clipping utilities
++ *
++ * Used in Size and Move operations for setting the proper
++ * window clipping regions for window transparency.
++ *
++ **************************************************************/
++
++// XP and Vista visual styles sometimes require window clipping regions to be
++// applied for proper transparency. These routines are called on size and move
++// operations.
++// XXX this is apparently still needed in Windows 7 and later
++void nsWindow::ClearThemeRegion() {
++  if (mWindowType == WindowType::Popup && !IsPopupWithTitleBar() &&
++      (mPopupType == PopupType::Tooltip || mPopupType == PopupType::Panel)) {
++    SetWindowRgn(mWnd, nullptr, false);
++  }
++}
++
+ /**************************************************************
+  *
+  * SECTION: Touch and APZ-related functions
+@@ -1944,6 +1973,8 @@ void nsWindow::Move(double aX, double aY) {
+       pl.rcNormalPosition.bottom += deltaY;
+       VERIFY(::SetWindowPlacement(mWnd, &pl));
+     } else {
++      ClearThemeRegion();
++
+       UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE;
+       double oldScale = mDefaultScale;
+       mResizeState = IN_SIZEMOVE;
+@@ -2008,6 +2039,7 @@ void nsWindow::Resize(double aWidth, double aHeight, bool aRepaint) {
+         flags |= SWP_NOREDRAW;
+       }
+ 
++      ClearThemeRegion();
+       double oldScale = mDefaultScale;
+       mResizeState = RESIZING;
+       VERIFY(
+@@ -2086,6 +2118,8 @@ void nsWindow::Resize(double aX, double aY, double aWidth, double aHeight,
+         flags |= SWP_NOREDRAW;
+       }
+ 
++      ClearThemeRegion();
++
+       double oldScale = mDefaultScale;
+       mResizeState = RESIZING;
+       VERIFY(
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index 76142f3a3e5d6..de3a231563fb4 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -586,6 +586,11 @@ class nsWindow final : public nsBaseWidget {
+   DWORD WindowStyle();
+   DWORD WindowExStyle();
+ 
++  /**
++   * XP and Vista theming support for windows with rounded edges
++   */
++  void ClearThemeRegion();
++
+   /**
+    * Popup hooks
+    */
+diff --git a/widget/windows/nsWindowDefs.h b/widget/windows/nsWindowDefs.h
+index 320d6ef07b078..a191f05309e93 100644
+--- a/widget/windows/nsWindowDefs.h
++++ b/widget/windows/nsWindowDefs.h
+@@ -61,6 +61,7 @@ const wchar_t kClassNameHidden[] = L"MozillaHiddenWindowClass";
+ const wchar_t kClassNameGeneral[] = L"MozillaWindowClass";
+ const wchar_t kClassNameDialog[] = L"MozillaDialogClass";
+ const wchar_t kClassNameDropShadow[] = L"MozillaDropShadowWindowClass";
++const wchar_t kClassNameTemp[] = L"MozillaTempWindowClass";
+ const wchar_t kClassNameTransition[] = L"MozillaTransitionWindowClass";
+ 
+ /**************************************************************

@@ -1,0 +1,430 @@
+
+
+diff --git a/browser/app/winlauncher/freestanding/DllBlocklist.cpp b/browser/app/winlauncher/freestanding/DllBlocklist.cpp
+index f8f9560acba18..38cd29f76da39 100644
+--- a/browser/app/winlauncher/freestanding/DllBlocklist.cpp
++++ b/browser/app/winlauncher/freestanding/DllBlocklist.cpp
+@@ -165,6 +165,27 @@ static BlockAction CheckBlockInfo(const DllBlockInfo* aInfo,
+                                   uint64_t& aVersion) {
+   aVersion = DllBlockInfo::ALL_VERSIONS;
+ 
++  if (aInfo->mFlags & (DllBlockInfoFlags::BLOCK_WIN8_AND_OLDER |
++                       DllBlockInfoFlags::BLOCK_WIN7_AND_OLDER)) {
++    RTL_OSVERSIONINFOW osv = {sizeof(osv)};
++    NTSTATUS ntStatus = ::RtlGetVersion(&osv);
++    if (!NT_SUCCESS(ntStatus)) {
++      return BlockAction::Error;
++    }
++
++    if ((aInfo->mFlags & DllBlockInfoFlags::BLOCK_WIN8_AND_OLDER) &&
++        (osv.dwMajorVersion > 6 ||
++         (osv.dwMajorVersion == 6 && osv.dwMinorVersion > 2))) {
++      return BlockAction::Allow;
++    }
++
++    if ((aInfo->mFlags & DllBlockInfoFlags::BLOCK_WIN7_AND_OLDER) &&
++        (osv.dwMajorVersion > 6 ||
++         (osv.dwMajorVersion == 6 && osv.dwMinorVersion > 1))) {
++      return BlockAction::Allow;
++    }
++  }
++
+   if ((aInfo->mFlags & DllBlockInfoFlags::CHILD_PROCESSES_ONLY) &&
+       !(gBlocklistInitFlags & eDllBlocklistInitFlagIsChildProcess)) {
+     return BlockAction::Allow;
+diff --git a/browser/app/winlauncher/test/TestCrossProcessWin.cpp b/browser/app/winlauncher/test/TestCrossProcessWin.cpp
+index e002edae506d1..8b7f35714fef0 100644
+--- a/browser/app/winlauncher/test/TestCrossProcessWin.cpp
++++ b/browser/app/winlauncher/test/TestCrossProcessWin.cpp
+@@ -52,7 +52,8 @@ using namespace mozilla::freestanding;
+ // clang-format off
+ const DllBlockInfo kDllBlocklistShort[] = {
+   // The entries do not have to be sorted.
+-  DLL_BLOCKLIST_ENTRY("X Y Z_Test", MAKE_VERSION(1, 2, 65535, 65535))
++  DLL_BLOCKLIST_ENTRY("X Y Z_Test", MAKE_VERSION(1, 2, 65535, 65535),
++                      DllBlockInfoFlags::BLOCK_WIN8_AND_OLDER)
+   DLL_BLOCKLIST_ENTRY("\u30E9\u30FC\u30E1\u30F3_Test")
+   DLL_BLOCKLIST_ENTRY("Avmvirtualsource_Test.ax", MAKE_VERSION(1, 0, 0, 3),
+                       DllBlockInfoFlags::BROWSER_PROCESS_ONLY)
+diff --git a/toolkit/xre/dllservices/mozglue/Authenticode.cpp b/toolkit/xre/dllservices/mozglue/Authenticode.cpp
+index 73c35c283ce67..c233ff7e6f64c 100644
+--- a/toolkit/xre/dllservices/mozglue/Authenticode.cpp
++++ b/toolkit/xre/dllservices/mozglue/Authenticode.cpp
+@@ -11,6 +11,7 @@
+ #include "mozilla/DynamicallyLinkedFunctionPtr.h"
+ #include "mozilla/ScopeExit.h"
+ #include "mozilla/UniquePtr.h"
++#include "mozilla/WindowsVersion.h"
+ #include "nsWindowsHelpers.h"
+ 
+ #include <windows.h>
+@@ -289,22 +290,36 @@ bool SignedBinary::VerifySignature(const wchar_t* aFilePath) {
+   // First, we open a catalog admin context.
+   HCATADMIN rawCatAdmin;
+ 
+-  static const mozilla::StaticDynamicallyLinkedFunctionPtr<
+-      decltype(&::CryptCATAdminAcquireContext2)>
+-      pCryptCATAdminAcquireContext2(L"wintrust.dll",
+-                                    "CryptCATAdminAcquireContext2");
+-  if (!pCryptCATAdminAcquireContext2) {
+-    return false;
+-  }
++  // Windows 7 also exports the CryptCATAdminAcquireContext2 API, but it does
++  // *not* sign its binaries with SHA-256, so we use the old API in that case.
++  if (mozilla::IsWin8OrLater()) {
++    static const mozilla::StaticDynamicallyLinkedFunctionPtr<
++        decltype(&::CryptCATAdminAcquireContext2)>
++        pCryptCATAdminAcquireContext2(L"wintrust.dll",
++                                      "CryptCATAdminAcquireContext2");
++    if (!pCryptCATAdminAcquireContext2) {
++      return false;
++    }
+ 
+-  CERT_STRONG_SIGN_PARA policy = {sizeof(policy)};
+-  policy.dwInfoChoice = CERT_STRONG_SIGN_OID_INFO_CHOICE;
+-  policy.pszOID = const_cast<char*>(
+-      szOID_CERT_STRONG_SIGN_OS_CURRENT);  // -Wwritable-strings
++    CERT_STRONG_SIGN_PARA policy = {sizeof(policy)};
++    policy.dwInfoChoice = CERT_STRONG_SIGN_OID_INFO_CHOICE;
++    policy.pszOID = const_cast<char*>(
++        szOID_CERT_STRONG_SIGN_OS_CURRENT);  // -Wwritable-strings
+ 
+-  if (!pCryptCATAdminAcquireContext2(&rawCatAdmin, nullptr,
+-                                     BCRYPT_SHA256_ALGORITHM, &policy, 0)) {
+-    return false;
++    if (!pCryptCATAdminAcquireContext2(&rawCatAdmin, nullptr,
++                                       BCRYPT_SHA256_ALGORITHM, &policy, 0)) {
++      return false;
++    }
++  } else {
++    static const mozilla::StaticDynamicallyLinkedFunctionPtr<
++        decltype(&::CryptCATAdminAcquireContext)>
++        pCryptCATAdminAcquireContext(L"wintrust.dll",
++                                     "CryptCATAdminAcquireContext");
++
++    if (!pCryptCATAdminAcquireContext ||
++        !pCryptCATAdminAcquireContext(&rawCatAdmin, nullptr, 0)) {
++      return false;
++    }
+   }
+ 
+   CATAdminContextUniquePtr catAdmin(rawCatAdmin);
+@@ -448,7 +463,9 @@ bool SignedBinary::VerifySignature(const wchar_t* aFilePath) {
+   wtCatInfo.pcwszMemberTag = strHashBuf.get();
+   wtCatInfo.pcwszMemberFilePath = aFilePath;
+   wtCatInfo.hMemberFile = rawFile;
+-  wtCatInfo.hCatAdmin = rawCatAdmin;
++  if (mozilla::IsWin8OrLater()) {
++    wtCatInfo.hCatAdmin = rawCatAdmin;
++  }
+ 
+   WINTRUST_DATA trustData = {sizeof(trustData)};
+   trustData.dwUnionChoice = WTD_CHOICE_CATALOG;
+diff --git a/toolkit/xre/dllservices/mozglue/WindowsDllBlocklist.cpp b/toolkit/xre/dllservices/mozglue/WindowsDllBlocklist.cpp
+index 4f97ccc39f66f..e8d8db2e96b27 100644
+--- a/toolkit/xre/dllservices/mozglue/WindowsDllBlocklist.cpp
++++ b/toolkit/xre/dllservices/mozglue/WindowsDllBlocklist.cpp
+@@ -68,6 +68,47 @@ typedef NTSTATUS(NTAPI* LdrLoadDll_func)(PWCHAR filePath, PULONG flags,
+                                          PHANDLE handle);
+ static WindowsDllInterceptor::FuncHookType<LdrLoadDll_func> stub_LdrLoadDll;
+ 
++#ifdef _M_AMD64
++typedef decltype(RtlInstallFunctionTableCallback)*
++    RtlInstallFunctionTableCallback_func;
++static WindowsDllInterceptor::FuncHookType<RtlInstallFunctionTableCallback_func>
++    stub_RtlInstallFunctionTableCallback;
++
++extern uint8_t* sMsMpegJitCodeRegionStart;
++extern size_t sMsMpegJitCodeRegionSize;
++
++BOOLEAN WINAPI patched_RtlInstallFunctionTableCallback(
++    DWORD64 TableIdentifier, DWORD64 BaseAddress, DWORD Length,
++    PGET_RUNTIME_FUNCTION_CALLBACK Callback, PVOID Context,
++    PCWSTR OutOfProcessCallbackDll) {
++  // msmpeg2vdec.dll sets up a function table callback for their JIT code that
++  // just terminates the process, because their JIT doesn't have unwind info.
++  // If we see this callback being registered, record the region address, so
++  // that StackWalk.cpp can avoid unwinding addresses in this region.
++  //
++  // To keep things simple I'm not tracking unloads of msmpeg2vdec.dll.
++  // Worst case the stack walker will needlessly avoid a few pages of memory.
++
++  // Tricky: GetModuleHandleExW adds a ref by default; GetModuleHandleW doesn't.
++  HMODULE callbackModule = nullptr;
++  DWORD moduleFlags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
++                      GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
++
++  // These GetModuleHandle calls enter a critical section on Win7.
++  AutoSuppressStackWalking suppress;
++
++  if (GetModuleHandleExW(moduleFlags, (LPWSTR)Callback, &callbackModule) &&
++      GetModuleHandleW(L"msmpeg2vdec.dll") == callbackModule) {
++    sMsMpegJitCodeRegionStart = (uint8_t*)BaseAddress;
++    sMsMpegJitCodeRegionSize = Length;
++  }
++
++  return stub_RtlInstallFunctionTableCallback(TableIdentifier, BaseAddress,
++                                              Length, Callback, Context,
++                                              OutOfProcessCallbackDll);
++}
++#endif
++
+ template <class T>
+ struct RVAMap {
+   RVAMap(HANDLE map, DWORD offset) {
+@@ -302,6 +343,16 @@ static bool ShouldBlockBasedOnBlockInfo(const DllBlockInfo& info,
+         "Ignoring the REDIRECT_TO_NOOP_ENTRYPOINT flag\n");
+   }
+ 
++  if ((info.mFlags & DllBlockInfoFlags::BLOCK_WIN8_AND_OLDER) &&
++      IsWin8Point1OrLater()) {
++    return false;
++  }
++
++  if ((info.mFlags & DllBlockInfoFlags::BLOCK_WIN7_AND_OLDER) &&
++      IsWin8OrLater()) {
++    return false;
++  }
++
+   if ((info.mFlags & DllBlockInfoFlags::CHILD_PROCESSES_ONLY) &&
+       !(sInitFlags & eDllBlocklistInitFlagIsChildProcess)) {
+     return false;
+@@ -580,6 +631,16 @@ MFBT_API void DllBlocklist_Initialize(uint32_t aInitFlags) {
+ 
+   glue::ModuleLoadFrame::StaticInit(&gMozglueLoaderObserver, &gWinLauncher);
+ 
++#ifdef _M_AMD64
++  if (!IsWin8OrLater()) {
++    Kernel32Intercept.Init(L"kernel32.dll");
++    // The crash that this hook works around is only seen on Win7.
++    stub_RtlInstallFunctionTableCallback.Set(
++        Kernel32Intercept, "RtlInstallFunctionTableCallback",
++        &patched_RtlInstallFunctionTableCallback);
++  }
++#endif
++
+   // Bug 1361410: WRusr.dll will overwrite our hook and cause a crash.
+   // Workaround: If we detect WRusr.dll, don't hook.
+   if (!GetModuleHandleW(L"WRusr.dll")) {
+diff --git a/toolkit/xre/dllservices/mozglue/WindowsDllBlocklistDefs.in b/toolkit/xre/dllservices/mozglue/WindowsDllBlocklistDefs.in
+index 970a8d07b3256..5dd6cd747132a 100644
+--- a/toolkit/xre/dllservices/mozglue/WindowsDllBlocklistDefs.in
++++ b/toolkit/xre/dllservices/mozglue/WindowsDllBlocklistDefs.in
+@@ -198,6 +198,10 @@ ALL_PROCESSES += [
+     DllBlocklistEntry("nahimic2osd.dll", (2, 5, 19, 0xffff)),
+     DllBlocklistEntry("nahimicmsidevprops.dll", UNVERSIONED),
+ 
++    # Bug 1268470 - crashes with Kaspersky Lab on Windows 8
++    DllBlocklistEntry("klsihk64.dll", (14, 0, 456, 0xffff),
++                      BLOCK_WIN8_AND_OLDER),
++
+     # Bug 1579758, crashes with OpenSC nightly version 0.19.0.448 and lower
+     DllBlocklistEntry("onepin-opensc-pkcs11.dll", (0, 19, 0, 448)),
+ 
+@@ -236,6 +240,10 @@ ALL_PROCESSES += [
+     # Old version of COMODO Firewall, bug 1407712 and bug 1624336
+     DllBlocklistEntry("guard64.dll", (8, 4, 0, 65535)),
+ 
++    # Old version of Panda Security, bug 1637984 and bug 1705125
++    DllBlocklistEntry("PavLspHook64.dll", (9, 2, 2, 1), BLOCK_WIN7_AND_OLDER),
++    DllBlocklistEntry("PavSHook64.dll", (9, 2, 2, 1), BLOCK_WIN7_AND_OLDER),
++
+     # Webroot SecureAnywhere causes crashes, bug 1700281
+     DllBlocklistEntry("WRDll.x64.dll", (1, 1, 0, 227)),
+     DllBlocklistEntry("WRDll.x86.dll", (1, 1, 0, 227)),
+@@ -253,6 +261,9 @@ ALL_PROCESSES += [
+ 
+     # Cylance, bug 1756190 and bug 1799562
+     DllBlocklistEntry("CylanceMemDef64.dll", ALL_VERSIONS),
++
++    # ESET security (bug 1833793)
++    DllBlocklistEntry("eoppbrowser.dll", (1, 0, 88, 0), BLOCK_WIN7_AND_OLDER),
+ ]
+ 
+ # Shell extensions that result in crashes when the file-dialog is opened. (These
+@@ -411,6 +422,9 @@ UTILITY_PROCESSES += [
+     DllBlocklistEntry("ipseng32.dll", ALL_VERSIONS),
+     DllBlocklistEntry("ks3rdhmpg.dll", ALL_VERSIONS),
+     DllBlocklistEntry("kwsui64.dll", ALL_VERSIONS),
++
++    # Messes with user32 and breaks Utility on Win7 x86
++    DllBlocklistEntry("aswhook.dll", ALL_VERSIONS, BLOCK_WIN7_AND_OLDER),
+ ]
+ 
+ UTILITY_PROCESSES_TESTS += [
+diff --git a/toolkit/xre/dllservices/mozglue/WindowsDllBlocklistInfo.h b/toolkit/xre/dllservices/mozglue/WindowsDllBlocklistInfo.h
+index 0bf091c8d552c..3607c3049e878 100644
+--- a/toolkit/xre/dllservices/mozglue/WindowsDllBlocklistInfo.h
++++ b/toolkit/xre/dllservices/mozglue/WindowsDllBlocklistInfo.h
+@@ -20,14 +20,16 @@ namespace mozilla {
+ // CHILD_PROCESSES_ONLY.
+ enum DllBlockInfoFlags : uint32_t {
+   FLAGS_DEFAULT = 0,
+-  USE_TIMESTAMP = 1 << 0,
+-  CHILD_PROCESSES_ONLY = 1 << 1,
+-  BROWSER_PROCESS_ONLY = 1 << 2,
+-  REDIRECT_TO_NOOP_ENTRYPOINT = 1 << 3,
+-  UTILITY_PROCESSES_ONLY = 1 << 4,
+-  SOCKET_PROCESSES_ONLY = 1 << 5,
+-  GPU_PROCESSES_ONLY = 1 << 6,
+-  GMPLUGIN_PROCESSES_ONLY = 1 << 7,
++  BLOCK_WIN7_AND_OLDER = 1 << 0,
++  BLOCK_WIN8_AND_OLDER = 1 << 1,
++  USE_TIMESTAMP = 1 << 2,
++  CHILD_PROCESSES_ONLY = 1 << 3,
++  BROWSER_PROCESS_ONLY = 1 << 4,
++  REDIRECT_TO_NOOP_ENTRYPOINT = 1 << 5,
++  UTILITY_PROCESSES_ONLY = 1 << 6,
++  SOCKET_PROCESSES_ONLY = 1 << 7,
++  GPU_PROCESSES_ONLY = 1 << 8,
++  GMPLUGIN_PROCESSES_ONLY = 1 << 9,
+ };
+ 
+ constexpr DllBlockInfoFlags operator|(const DllBlockInfoFlags a,
+diff --git a/toolkit/xre/dllservices/mozglue/gen_dll_blocklist_defs.py b/toolkit/xre/dllservices/mozglue/gen_dll_blocklist_defs.py
+index f6452ee8ac50c..4dbc89946c916 100644
+--- a/toolkit/xre/dllservices/mozglue/gen_dll_blocklist_defs.py
++++ b/toolkit/xre/dllservices/mozglue/gen_dll_blocklist_defs.py
+@@ -54,6 +54,8 @@ DLL_BLOCKLIST_DEFINITIONS_BEGIN_NAMED(gBlockedInprocDlls)
+ 
+ # These flag names should match the ones defined in WindowsDllBlocklistInfo.h
+ FLAGS_DEFAULT = "FLAGS_DEFAULT"
++BLOCK_WIN8_AND_OLDER = "BLOCK_WIN8_AND_OLDER"
++BLOCK_WIN7_AND_OLDER = "BLOCK_WIN7_AND_OLDER"
+ USE_TIMESTAMP = "USE_TIMESTAMP"
+ CHILD_PROCESSES_ONLY = "CHILD_PROCESSES_ONLY"
+ BROWSER_PROCESS_ONLY = "BROWSER_PROCESS_ONLY"
+@@ -64,6 +66,12 @@ SOCKET_PROCESSES_ONLY = "SOCKET_PROCESSES_ONLY"
+ GPU_PROCESSES_ONLY = "GPU_PROCESSES_ONLY"
+ GMPLUGIN_PROCESSES_ONLY = "GMPLUGIN_PROCESSES_ONLY"
+ 
++# Only these flags are available in the input script
++INPUT_ONLY_FLAGS = {
++    BLOCK_WIN8_AND_OLDER,
++    BLOCK_WIN7_AND_OLDER,
++}
++
+ 
+ def FILTER_ALLOW_ALL(entry):
+     # A11y entries are special, so we always exclude those by default
+@@ -735,6 +743,9 @@ def gen_blocklists(first_fd, defs_filename):
+         # For each defname, add a special list for test-only entries
+         exec_env[derive_test_key(defname)] = []
+ 
++    # Import flags into exec_env
++    exec_env.update({flag: flag for flag in INPUT_ONLY_FLAGS})
++
+     # Now execute the input script with exec_env providing the globals
+     exec_script_file(defs_filename, exec_env)
+ 
+diff --git a/toolkit/xre/dllservices/mozglue/nsWindowsDllInterceptor.h b/toolkit/xre/dllservices/mozglue/nsWindowsDllInterceptor.h
+index 1b09f820fa2de..1211b495264d1 100644
+--- a/toolkit/xre/dllservices/mozglue/nsWindowsDllInterceptor.h
++++ b/toolkit/xre/dllservices/mozglue/nsWindowsDllInterceptor.h
+@@ -486,9 +486,34 @@ class WindowsDllInterceptor final
+       // injected DLLs do the same and interfere with our stuff.
+       bool needs10BytePatch = (mModule == ::GetModuleHandleW(L"ntdll.dll"));
+ 
++      bool isWin8Or81 = IsWin8OrLater() && (!IsWin10OrLater());
++      bool isWin8 = IsWin8OrLater() && (!IsWin8Point1OrLater());
++
++      bool isKernel32Dll = (mModule == ::GetModuleHandleW(L"kernel32.dll"));
++
++      bool isDuplicateHandle = (reinterpret_cast<void*>(aProc) ==
++                                reinterpret_cast<void*>(&::DuplicateHandle));
++
++      // CloseHandle on Windows 8/8.1 only accomodates 10-byte patches.
++      needs10BytePatch |= isWin8Or81 && isKernel32Dll &&
++                          (reinterpret_cast<void*>(aProc) ==
++                           reinterpret_cast<void*>(&CloseHandle));
++
++      // CreateFileA and DuplicateHandle on Windows 8 require 10-byte patches.
++      needs10BytePatch |= isWin8 && isKernel32Dll &&
++                          ((reinterpret_cast<void*>(aProc) ==
++                            reinterpret_cast<void*>(&::CreateFileA)) ||
++                           isDuplicateHandle);
++
+       if (needs10BytePatch) {
+         flags |= DetourFlags::eEnable10BytePatch;
+       }
++
++      if (isWin8 && isDuplicateHandle) {
++        // Because we can't detour Win8's KERNELBASE!DuplicateHandle,
++        // we detour kernel32!DuplicateHandle (See bug 1659398).
++        flags |= DetourFlags::eDontResolveRedirection;
++      }
+ #endif  // defined(_M_X64)
+ 
+       mDetourPatcher.Init(flags);
+diff --git a/toolkit/xre/dllservices/tests/TestDllInterceptor.cpp b/toolkit/xre/dllservices/tests/TestDllInterceptor.cpp
+index 397c8dbc1111f..e62358091e0fb 100644
+--- a/toolkit/xre/dllservices/tests/TestDllInterceptor.cpp
++++ b/toolkit/xre/dllservices/tests/TestDllInterceptor.cpp
+@@ -21,6 +21,7 @@
+ #include "mozilla/DynamicallyLinkedFunctionPtr.h"
+ #include "mozilla/UniquePtr.h"
+ #include "mozilla/WindowsProcessMitigations.h"
++#include "mozilla/WindowsVersion.h"
+ #include "nsWindowsDllInterceptor.h"
+ #include "nsWindowsHelpers.h"
+ 
+@@ -292,6 +293,17 @@ class RedirectionResolver : public interceptor::WindowsDllPatcherBase<
+                                 interceptor::VMSharingPolicyShared> {
+  public:
+   uintptr_t ResolveRedirectedAddressForTest(FARPROC aFunc) {
++    bool isWin8 = IsWin8OrLater() && (!IsWin8Point1OrLater());
++
++    bool isDuplicateHandle = (reinterpret_cast<void*>(aFunc) ==
++                              reinterpret_cast<void*>(&::DuplicateHandle));
++
++    // We need to reproduce the behavior of WindowsDllInterceptor::AddDetour
++    // with respect to redirection, including the corner case for bug 1659398.
++    if (isWin8 && isDuplicateHandle) {
++      return reinterpret_cast<uintptr_t>(aFunc);
++    }
++
+     return ResolveRedirectedAddress(aFunc).GetAddress();
+   }
+ };
+@@ -671,6 +683,10 @@ bool MaybeTestHook(const bool cond, const char (&dll)[N], const char* func,
+           NULL))
+ 
+ bool ShouldTestTipTsf() {
++  if (!IsWin8OrLater()) {
++    return false;
++  }
++
+   mozilla::DynamicallyLinkedFunctionPtr<decltype(&SHGetKnownFolderPath)>
+       pSHGetKnownFolderPath(L"shell32.dll", "SHGetKnownFolderPath");
+   if (!pSHGetKnownFolderPath) {
+@@ -1313,6 +1329,11 @@ bool TestSpareBytesAfterDetourFor10BytePatch() {
+ #endif  // defined(_M_X64)
+ 
+ bool TestDynamicCodePolicy() {
++  if (!IsWin8Point1OrLater()) {
++    // Skip if a platform does not support this policy.
++    return true;
++  }
++
+   PROCESS_MITIGATION_DYNAMIC_CODE_POLICY policy = {};
+   policy.ProhibitDynamicCode = true;
+ 
+@@ -1513,7 +1534,8 @@ extern "C" int wmain(int argc, wchar_t* argv[]) {
+                        &attributes, nullptr) &&
+       TEST_DETOUR_SKIP_EXEC("ntdll.dll", LdrLoadDll) &&
+       TEST_HOOK("ntdll.dll", LdrUnloadDll, NotEquals, 0) &&
+-      TEST_HOOK_SKIP_EXEC("ntdll.dll", LdrResolveDelayLoadedAPI) &&
++      MAYBE_TEST_HOOK_SKIP_EXEC(IsWin8OrLater(), "ntdll.dll",
++                                LdrResolveDelayLoadedAPI) &&
+       MAYBE_TEST_HOOK_PARAMS(HasApiSetQueryApiSetPresence(),
+                              "Api-ms-win-core-apiquery-l1-1-0.dll",
+                              ApiSetQueryApiSetPresence, Equals, FALSE,
+@@ -1544,6 +1566,8 @@ extern "C" int wmain(int argc, wchar_t* argv[]) {
+ #endif  // !defined(_M_ARM64)
+       TEST_DETOUR_SKIP_EXEC("kernel32.dll", BaseThreadInitThunk) &&
+ #if defined(_M_X64) || defined(_M_ARM64)
++      MAYBE_TEST_HOOK(!IsWin8OrLater(), "kernel32.dll",
++                      RtlInstallFunctionTableCallback, Equals, FALSE) &&
+       TEST_HOOK("user32.dll", GetKeyState, Ignore, 0) &&  // see Bug 1316415
+ #endif
+       TEST_HOOK("user32.dll", GetWindowInfo, Equals, FALSE) &&

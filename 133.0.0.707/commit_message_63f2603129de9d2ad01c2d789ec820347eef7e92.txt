@@ -1,0 +1,1 @@
+Bug 1880109 - Remove legacy JumpListBuilder interfaces and backend. r=rkraesig,win-reviewers    2024-06-13 09:17:59    0be84b68595acb45c3702482f55b81b8a4949aaa

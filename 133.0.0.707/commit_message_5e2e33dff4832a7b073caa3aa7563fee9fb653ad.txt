@@ -1,0 +1,1 @@
+Bug 1869053 - [3/5] simplify use of AgileReference in IAudioSessionControl  r=handyman,win-reviewers    2023-12-22 03:46:55    d676d3009f2cbd8ac1ebcbead6a67cebed9f2af6

@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from hal/. r=gsvelto    2023-07-26 16:52:51    f8b484b2cbc36865af9d3bf8cdb6fee21babe219

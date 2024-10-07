@@ -1,0 +1,1 @@
+Bug 1880109 - Remove legacy JumpListBuilder references in linting tools. r=Standard8,frontend-codestyle-reviewers    2024-06-13 09:18:00    a917cd5715c155e8897a62cef8bb6f2408f89c63

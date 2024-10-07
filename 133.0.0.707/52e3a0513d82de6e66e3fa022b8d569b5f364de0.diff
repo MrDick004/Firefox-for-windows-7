@@ -1,0 +1,178 @@
+
+
+diff --git a/gfx/config/gfxVars.h b/gfx/config/gfxVars.h
+index 880b6f4934426..3dffec09ce445 100644
+--- a/gfx/config/gfxVars.h
++++ b/gfx/config/gfxVars.h
+@@ -77,6 +77,7 @@ class gfxVarReceiver;
+   _(UseDoubleBufferingWithCompositor, bool, false)                 \
+   _(UseGLSwizzle, bool, true)                                      \
+   _(ForceSubpixelAAWherePossible, bool, false)                     \
++  _(DwmCompositionEnabled, bool, true)                             \
+   _(FxREmbedded, bool, false)                                      \
+   _(UseAHardwareBufferSharedSurfaceWebglOop, bool, false)          \
+   _(UseEGL, bool, false)                                           \
+diff --git a/gfx/layers/wr/WebRenderLayerManager.cpp b/gfx/layers/wr/WebRenderLayerManager.cpp
+index f32517f3e67aa..d68b28a7f9f14 100644
+--- a/gfx/layers/wr/WebRenderLayerManager.cpp
++++ b/gfx/layers/wr/WebRenderLayerManager.cpp
+@@ -11,6 +11,7 @@
+ #include "mozilla/StaticPrefs_layers.h"
+ #include "mozilla/dom/BrowserChild.h"
+ #include "mozilla/gfx/DrawEventRecorder.h"
++#include "mozilla/gfx/gfxVars.h"
+ #include "mozilla/layers/CompositorBridgeChild.h"
+ #include "mozilla/layers/StackingContextHelper.h"
+ #include "mozilla/layers/TextureClient.h"
+@@ -731,11 +732,17 @@ void WebRenderLayerManager::WaitOnTransactionProcessed() {
+ void WebRenderLayerManager::SendInvalidRegion(const nsIntRegion& aRegion) {
+   // XXX Webrender does not support invalid region yet.
+ 
+-#ifndef XP_WIN
+-  if (WrBridge()) {
++#ifdef XP_WIN
++  // When DWM is disabled, each window does not have own back buffer. They would
++  // paint directly to a buffer that was to be displayed by the video card.
++  // WM_PAINT via SendInvalidRegion() requests necessary re-paint.
++  const bool needsInvalidate = !gfx::gfxVars::DwmCompositionEnabled();
++#else
++  const bool needsInvalidate = true;
++#endif
++  if (needsInvalidate && WrBridge()) {
+     WrBridge()->SendInvalidateRenderedFrame();
+   }
+-#endif
+ }
+ 
+ void WebRenderLayerManager::ScheduleComposite(wr::RenderReasons aReasons) {
+diff --git a/gfx/thebes/gfxWindowsPlatform.cpp b/gfx/thebes/gfxWindowsPlatform.cpp
+index 7a98e18fd6a31..e05cc05538619 100644
+--- a/gfx/thebes/gfxWindowsPlatform.cpp
++++ b/gfx/thebes/gfxWindowsPlatform.cpp
+@@ -259,7 +259,8 @@ class D3DSharedTexturesReporter final : public nsIMemoryReporter {
+ 
+ NS_IMPL_ISUPPORTS(D3DSharedTexturesReporter, nsIMemoryReporter)
+ 
+-gfxWindowsPlatform::gfxWindowsPlatform() : mRenderMode(RENDER_GDI) {
++gfxWindowsPlatform::gfxWindowsPlatform() : mRenderMode(RENDER_GDI),
++      mDwmCompositionStatus(DwmCompositionStatus::Unknown) {
+   // If win32k is locked down then we can't use COM STA and shouldn't need it.
+   // Also, we won't be using any GPU memory in this process.
+   if (!IsWin32kLockedDown()) {
+@@ -397,6 +398,27 @@ void gfxWindowsPlatform::InitAcceleration() {
+   gfxVars::SetSystemTextQualityListener(
+       gfxDWriteFont::SystemTextQualityChanged);
+ 
++  if (XRE_IsParentProcess()) {
++    BOOL dwmEnabled = FALSE;
++    if (FAILED(::DwmIsCompositionEnabled(&dwmEnabled)) || !dwmEnabled) {
++      gfxVars::SetDwmCompositionEnabled(false);
++    } else {
++      gfxVars::SetDwmCompositionEnabled(true);
++    }
++  }
++
++  // gfxVars are not atomic, but multiple threads can query DWM status
++  // Therefore, mirror value into an atomic
++  mDwmCompositionStatus = gfxVars::DwmCompositionEnabled()
++                              ? DwmCompositionStatus::Enabled
++                              : DwmCompositionStatus::Disabled;
++
++  gfxVars::SetDwmCompositionEnabledListener([this] {
++    this->mDwmCompositionStatus = gfxVars::DwmCompositionEnabled()
++                                      ? DwmCompositionStatus::Enabled
++                                      : DwmCompositionStatus::Disabled;
++  });
++
+   // CanUseHardwareVideoDecoding depends on DeviceManagerDx state,
+   // so update the cached value now.
+   UpdateCanUseHardwareVideoDecoding();
+@@ -1424,6 +1446,12 @@ void gfxWindowsPlatform::InitGPUProcessSupport() {
+   // If we're still enabled at this point, the user set the force-enabled pref.
+ }
+ 
++bool gfxWindowsPlatform::DwmCompositionEnabled() {
++  MOZ_RELEASE_ASSERT(mDwmCompositionStatus != DwmCompositionStatus::Unknown);
++
++  return mDwmCompositionStatus == DwmCompositionStatus::Enabled;
++}
++
+ class D3DVsyncSource final : public VsyncSource {
+  public:
+   D3DVsyncSource()
+@@ -1437,6 +1465,11 @@ class D3DVsyncSource final : public VsyncSource {
+   }
+ 
+   void SetVsyncRate() {
++    if (!gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled()) {
++      mVsyncRate = TimeDuration::FromMilliseconds(1000.0 / 60.0);
++      return;
++    }
++
+     DWM_TIMING_INFO vblankTime;
+     // Make sure to init the cbSize, otherwise GetCompositionTiming will fail
+     vblankTime.cbSize = sizeof(DWM_TIMING_INFO);
+@@ -1584,6 +1617,15 @@ class D3DVsyncSource final : public VsyncSource {
+       MOZ_ASSERT(vsync <= TimeStamp::Now());
+       NotifyVsync(vsync, vsync + mVsyncRate);
+ 
++      // DwmComposition can be dynamically enabled/disabled
++      // so we have to check every time that it's available.
++      // When it is unavailable, we fallback to software but will try
++      // to get back to dwm rendering once it's re-enabled
++      if (!gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled()) {
++        ScheduleSoftwareVsync(vsync);
++        return;
++      }
++
+       HRESULT hr = E_FAIL;
+       if (!StaticPrefs::gfx_vsync_force_disable_waitforvblank()) {
+         UpdateVBlankOutput();
+@@ -1688,6 +1730,11 @@ already_AddRefed<mozilla::gfx::VsyncSource>
+ gfxWindowsPlatform::CreateGlobalHardwareVsyncSource() {
+   MOZ_RELEASE_ASSERT(NS_IsMainThread(), "GFX: Not in main thread.");
+ 
++  if (!DwmCompositionEnabled()) {
++    NS_WARNING("DWM not enabled, falling back to software vsync");
++    return GetSoftwareVsyncSource();
++  }
++
+   RefPtr<VsyncSource> d3dVsyncSource = new D3DVsyncSource();
+   return d3dVsyncSource.forget();
+ }
+diff --git a/gfx/thebes/gfxWindowsPlatform.h b/gfx/thebes/gfxWindowsPlatform.h
+index 8687c7dde2c89..ef0efab35dfb4 100644
+--- a/gfx/thebes/gfxWindowsPlatform.h
++++ b/gfx/thebes/gfxWindowsPlatform.h
+@@ -170,6 +170,8 @@ class gfxWindowsPlatform final : public gfxPlatform {
+  public:
+   static nsresult GetGpuTimeSinceProcessStartInMs(uint64_t* aResult);
+ 
++  bool DwmCompositionEnabled();
++
+   static bool IsOptimus();
+ 
+   bool SupportsApzWheelInput() const override { return true; }
+@@ -214,6 +216,12 @@ class gfxWindowsPlatform final : public gfxPlatform {
+   RenderMode mRenderMode;
+ 
+  private:
++  enum class DwmCompositionStatus : uint32_t {
++    Unknown,
++    Disabled,
++    Enabled,
++  };
++
+   void Init();
+   void InitAcceleration() override;
+   void InitWebRenderConfig() override;
+@@ -237,6 +245,9 @@ class gfxWindowsPlatform final : public gfxPlatform {
+ 
+   bool mInitializedDevices = false;
+ 
++  mozilla::Atomic<DwmCompositionStatus, mozilla::ReleaseAcquire>
++      mDwmCompositionStatus;
++
+   // Cached contents of the output color profile file
+   nsTArray<uint8_t> mCachedOutputColorProfile;
+ };

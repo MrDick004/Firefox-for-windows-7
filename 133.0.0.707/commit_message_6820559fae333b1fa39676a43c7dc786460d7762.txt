@@ -1,0 +1,1 @@
+Bug 1845746 - Stop using DwmCompositionEnabled in widget/windows/. r=handyman    2023-08-11 02:58:03    78e57a9733d2e0e5831a7e3f573560ce8f0e4337

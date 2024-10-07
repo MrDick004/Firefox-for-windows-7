@@ -1,0 +1,1 @@
+Fix the macros for older Windows SDK

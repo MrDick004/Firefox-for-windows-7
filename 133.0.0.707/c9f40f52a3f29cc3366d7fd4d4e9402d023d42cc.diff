@@ -1,0 +1,72 @@
+
+
+diff --git a/browser/installer/windows/nsis/defines.nsi.in b/browser/installer/windows/nsis/defines.nsi.in
+index ae17ff4d17d00..f38c0da0169c2 100644
+--- a/browser/installer/windows/nsis/defines.nsi.in
++++ b/browser/installer/windows/nsis/defines.nsi.in
+@@ -98,10 +98,10 @@
+ !define MinSupportedVer "Microsoft Windows 10 for ARM"
+ #else
+ !define ARCH "x64"
+-!define MinSupportedVer "Microsoft Windows 10 x64"
++!define MinSupportedVer "Microsoft Windows 7 x64"
+ #endif
+ #else
+-!define MinSupportedVer "Microsoft Windows 10"
++!define MinSupportedVer "Microsoft Windows 7"
+ !define ARCH "x86"
+ #endif
+ 
+diff --git a/browser/installer/windows/nsis/installer.nsi b/browser/installer/windows/nsis/installer.nsi
+index e9f9d323c4cb8..55e55d5b9d2a1 100755
+--- a/browser/installer/windows/nsis/installer.nsi
++++ b/browser/installer/windows/nsis/installer.nsi
+@@ -1722,8 +1722,8 @@ Function .onInit
+   ; SSE2 instruction set is available. Result returned in $R7.
+   System::Call "kernel32::IsProcessorFeaturePresent(i 10)i .R7"
+ 
+-  ; Windows 8.1/Server 2012 R2 and lower are not supported.
+-  ${Unless} ${AtLeastWin10}
++  ; Windows NT 6.0 (Vista/Server 2008) and lower are not supported.
++  ${Unless} ${AtLeastWin7}
+     ${If} "$R7" == "0"
+       strCpy $R7 "$(WARN_MIN_SUPPORTED_OSVER_CPU_MSG)"
+     ${Else}
+@@ -1744,6 +1744,7 @@ Function .onInit
+ !ifdef HAVE_64BIT_BUILD
+   ${If} "${ARCH}" == "AArch64"
+     ${IfNot} ${IsNativeARM64}
++    ${OrIfNot} ${AtLeastWin10}
+       MessageBox MB_OKCANCEL|MB_ICONSTOP "$(WARN_MIN_SUPPORTED_OSVER_MSG)" IDCANCEL +2
+       ExecShell "open" "${URLSystemRequirements}"
+       Quit
+diff --git a/browser/installer/windows/nsis/stub.nsi b/browser/installer/windows/nsis/stub.nsi
+index 9d1e0d5e922c1..be9445dda471d 100644
+--- a/browser/installer/windows/nsis/stub.nsi
++++ b/browser/installer/windows/nsis/stub.nsi
+@@ -295,8 +295,8 @@ Function .onInit
+   ; SSE2 instruction set is available.
+   System::Call "kernel32::IsProcessorFeaturePresent(i 10)i .R7"
+ 
+-  ; Windows 8.1/Server 2012 R2 and lower are not supported.
+-  ${Unless} ${AtLeastWin10}
++  ; Windows NT 6.0 (Vista/Server 2008) and lower are not supported.
++  ${Unless} ${AtLeastWin7}
+     ${If} "$R7" == "0"
+       strCpy $R7 "$(WARN_MIN_SUPPORTED_OSVER_CPU_MSG)"
+     ${Else}
+diff --git a/toolkit/mozapps/installer/windows/nsis/common.nsh b/toolkit/mozapps/installer/windows/nsis/common.nsh
+index a5e3977fb0d54..6b1febde13624 100755
+--- a/toolkit/mozapps/installer/windows/nsis/common.nsh
++++ b/toolkit/mozapps/installer/windows/nsis/common.nsh
+@@ -5377,8 +5377,8 @@
+         Quit
+       ${EndIf}
+ 
+-      ; Windows 8.1/Server 2012 R2 and lower are not supported.
+-      ${Unless} ${AtLeastWin10}
++      ; Windows NT 6.0 (Vista/Server 2008) and lower are not supported.
++      ${Unless} ${AtLeastWin7}
+         MessageBox MB_OK|MB_ICONSTOP "$R9"
+         ; Nothing initialized so no need to call OnEndCommon
+         Quit

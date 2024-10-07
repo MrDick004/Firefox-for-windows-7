@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from widget/. r=handyman    2023-07-26 16:52:54    dfc3a22088f3bcfb8bcebb35301f7d9053a837f9
