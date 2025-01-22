@@ -1,0 +1,1 @@
+Bug 1869053 - [2/5] eliminate all implicit conversions between RefPtr and AgileReference  r=handyman,win-reviewers    2023-12-22 03:46:54    e85d023afd36a5d30d1024c10136a111589ea3e8

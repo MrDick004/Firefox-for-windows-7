@@ -1,0 +1,141 @@
+
+
+diff --git a/browser/installer/Makefile.in b/browser/installer/Makefile.in
+index 2e55ed4b83dcd..7fa33323b5224 100644
+--- a/browser/installer/Makefile.in
++++ b/browser/installer/Makefile.in
+@@ -53,6 +53,9 @@ DEFINES += -DJAREXT=
+ 
+ ifdef MOZ_ANGLE_RENDERER
+ DEFINES += -DMOZ_ANGLE_RENDERER=$(MOZ_ANGLE_RENDERER)
++ifdef MOZ_D3DCOMPILER_VISTA_DLL
++DEFINES += -DMOZ_D3DCOMPILER_VISTA_DLL=$(MOZ_D3DCOMPILER_VISTA_DLL)
++endif
+ endif
+ 
+ ifdef MOZ_ENABLE_SKIA_PDF
+diff --git a/browser/installer/package-manifest.in b/browser/installer/package-manifest.in
+index da760e143740a..c438603e241b6 100644
+--- a/browser/installer/package-manifest.in
++++ b/browser/installer/package-manifest.in
+@@ -121,6 +121,7 @@
+ @BINPATH@/msvcp*.dll
+ @BINPATH@/libEGL.dll
+ @BINPATH@/libGLESv2.dll
++@BINPATH@/d3dcompiler_47.dll
+ #endif
+ 
+ [browser]
+@@ -203,6 +204,10 @@
+ #ifdef MOZ_ANGLE_RENDERER
+ @BINPATH@/libEGL.dll
+ @BINPATH@/libGLESv2.dll
++
++#ifdef MOZ_D3DCOMPILER_VISTA_DLL
++@BINPATH@/@MOZ_D3DCOMPILER_VISTA_DLL@
++#endif
+ #endif # MOZ_ANGLE_RENDERER
+ 
+ #ifdef MOZ_DXCOMPILER
+diff --git a/gfx/angle/moz.build b/gfx/angle/moz.build
+index ee870a088e938..406f2422ec88b 100644
+--- a/gfx/angle/moz.build
++++ b/gfx/angle/moz.build
+@@ -12,3 +12,8 @@ DIRS += [
+ # Only build libEGL/libGLESv2 on Windows
+ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
+     DIRS += ["targets/libEGL", "targets/libGLESv2"]
++
++if CONFIG["MOZ_ANGLE_RENDERER"] and CONFIG["MOZ_D3DCOMPILER_VISTA_DLL_PATH"]:
++    FINAL_TARGET_FILES += [
++        "%" + CONFIG["MOZ_D3DCOMPILER_VISTA_DLL_PATH"],
++    ]
+diff --git a/gfx/gl/moz.build b/gfx/gl/moz.build
+index 965b0add48e68..330e57a3f79ae 100644
+--- a/gfx/gl/moz.build
++++ b/gfx/gl/moz.build
+@@ -148,6 +148,9 @@ include("/ipc/chromium/chromium-config.mozbuild")
+ 
+ FINAL_LIBRARY = "xul"
+ 
++if CONFIG["MOZ_D3DCOMPILER_VISTA_DLL"]:
++    DEFINES["MOZ_D3DCOMPILER_VISTA_DLL"] = CONFIG["MOZ_D3DCOMPILER_VISTA_DLL"]
++
+ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
+     CXXFLAGS += CONFIG["MOZ_GTK3_CFLAGS"]
+     CFLAGS += CONFIG["MOZ_GTK3_CFLAGS"]
+diff --git a/python/mozbuild/mozpack/executables.py b/python/mozbuild/mozpack/executables.py
+index 38f09028264a0..dd6849cabe3c4 100644
+--- a/python/mozbuild/mozpack/executables.py
++++ b/python/mozbuild/mozpack/executables.py
+@@ -91,6 +91,11 @@ def may_strip(path):
+     """
+     from buildconfig import substs
+ 
++    # Bug 1658632: clang-11-based strip complains about d3dcompiler_47.dll.
++    # It's not clear why this happens, but as a quick fix just avoid stripping
++    # this DLL. It's not from our build anyway.
++    if "d3dcompiler" in path:
++        return False
+     return bool(substs.get("PKG_STRIP"))
+ 
+ 
+diff --git a/toolkit/content/license.html b/toolkit/content/license.html
+index c7d530621c5d2..58d73015f0b52 100644
+--- a/toolkit/content/license.html
++++ b/toolkit/content/license.html
+@@ -6175,6 +6175,7 @@ Copyright (c) &lt;year&gt;, Xiph.org Foundation
+     <p>These terms apply to the following files;
+     they are referred to below as "Distributable Code":
+       <ul>
++        <li><var>d3d*.dll</var> (Direct3D libraries)</li>
+         <li><var>msvc*.dll</var> (C and C++ runtime libraries)</li>
+         <li><var>vcruntime*.dll</var> (Visual C++ Runtime)</li>
+       </ul>
+diff --git a/toolkit/moz.configure b/toolkit/moz.configure
+index 011eee093dcf7..4896f815d0e67 100644
+--- a/toolkit/moz.configure
++++ b/toolkit/moz.configure
+@@ -2701,7 +2701,42 @@ set_config("NASM_ASFLAGS", nasm_asflags)
+ 
+ 
+ with only_when(compile_environment & target_is_windows):
++
++    def d3d_compiler_dll_result(value):
++        if not value.path:
++            return "provided by the OS"
++        return value.path
++
++    @depends(target, valid_windows_sdk_dir, fxc)
++    @checking("for D3D compiler DLL", d3d_compiler_dll_result)
++    @imports("os.path")
++    def d3d_compiler_dll(target, windows_sdk_dir, fxc):
++        suffix = {
++            "x86_64": "x64",
++        }.get(target.cpu, target.cpu)
++
++        name = "d3dcompiler_47.dll"
++
++        if target.cpu == "aarch64":
++            # AArch64 Windows comes with d3dcompiler_47.dll installed
++            return namespace(name=name, path=None)
++
++        if windows_sdk_dir:
++            path = os.path.join(windows_sdk_dir.path, "Redist", "D3D", suffix, name)
++            error_extra = "in Windows SDK at {}".format(windows_sdk_dir.path)
++        else:
++            path = os.path.join(os.path.dirname(fxc), name)
++            error_extra = "alongside FXC at {}".format(fxc)
++
++        if os.path.exists(path):
++            return namespace(name=name, path=path)
++        die("Could not find {} {}".format(name, error_extra))
++
+     set_config("MOZ_ANGLE_RENDERER", True)
++    set_config(
++        "MOZ_D3DCOMPILER_VISTA_DLL", d3d_compiler_dll.name, when=d3d_compiler_dll.path
++    )
++    set_config("MOZ_D3DCOMPILER_VISTA_DLL_PATH", d3d_compiler_dll.path)
+ 
+     option(
+         "--enable-dxcompiler",

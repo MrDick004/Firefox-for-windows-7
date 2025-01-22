@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from OSPreferences. r=jfkthame    2023-07-26 16:52:51    17f056116c3abf6e53b77fb6fa85d818ccc760ba

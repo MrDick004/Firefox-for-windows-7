@@ -1,0 +1,1 @@
+avoid calling GetCurrentPackageFullName on Windows < 8

@@ -1,0 +1,1 @@
+Bug 1930292 - Don't extend into the frame border area with chromemargin=0,0,0,0. r=win-reviewers,rkraesig    2024-11-28 20:12:50    edea50a2331efe8911bd4918d4fd41c593716ff2

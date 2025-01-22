@@ -1,0 +1,121 @@
+diff --git a/browser/base/content/browser-tabsintitlebar.js b/browser/base/content/browser-tabsintitlebar.js
+index 7d39d033ab5c8..84e2c45237113 100644
+--- a/browser/base/content/browser-tabsintitlebar.js
++++ b/browser/base/content/browser-tabsintitlebar.js
+@@ -69,9 +69,11 @@ var TabsInTitlebar = {
+       !Object.keys(this._disallowed).length;
+     if (allowed) {
+       document.documentElement.setAttribute("tabsintitlebar", "true");
+-      document.documentElement.setAttribute("chromemargin", "0,0,0,0");
+       if (AppConstants.platform == "macosx") {
++        document.documentElement.setAttribute("chromemargin", "0,-1,-1,-1");
+         document.documentElement.removeAttribute("drawtitle");
++      } else {
++        document.documentElement.setAttribute("chromemargin", "0,2,2,2");
+       }
+     } else {
+       document.documentElement.removeAttribute("tabsintitlebar");
+diff --git a/browser/base/content/browser.xhtml b/browser/base/content/browser.xhtml
+index 6a63601bb7220..605222626ea30 100644
+--- a/browser/base/content/browser.xhtml
++++ b/browser/base/content/browser.xhtml
+@@ -17,7 +17,11 @@
+ #endif
+         data-l10n-args="{&quot;content-title&quot;:&quot;CONTENTTITLE&quot;,&quot;profile-name&quot;:&quot;PROFILENAME&quot;}"
+         data-l10n-attrs="data-content-title-default, data-content-title-private, data-title-default, data-title-private, data-content-title-default-with-profile, data-content-title-private-with-profile, data-title-default-with-profile, data-title-private-with-profile"
+-        chromemargin="0,0,0,0"
++#ifdef XP_WIN
++        chromemargin="0,2,2,2"
++#else
++        chromemargin="0,-1,-1,-1"
++#endif
+         tabsintitlebar="true"
+         windowtype="navigator:browser"
+         macanimationtype="document"
+diff --git a/browser/components/BrowserGlue.sys.mjs b/browser/components/BrowserGlue.sys.mjs
+index a672c05a5b170..3efbbe780d771 100644
+--- a/browser/components/BrowserGlue.sys.mjs
++++ b/browser/components/BrowserGlue.sys.mjs
+@@ -1822,7 +1822,7 @@ BrowserGlue.prototype = {
+     // Hide the titlebar if the actual browser window will draw in it.
+     let hiddenTitlebar = Services.appinfo.drawInTitlebar;
+     if (hiddenTitlebar) {
+-      win.windowUtils.setChromeMargin(0, 0, 0, 0);
++      win.windowUtils.setChromeMargin(0, 2, 2, 2);
+     }
+ 
+     let docElt = win.document.documentElement;
+diff --git a/mozglue/misc/PreXULSkeletonUI.cpp b/mozglue/misc/PreXULSkeletonUI.cpp
+index 584a1e2b6b15c..3c5744a785157 100644
+--- a/mozglue/misc/PreXULSkeletonUI.cpp
++++ b/mozglue/misc/PreXULSkeletonUI.cpp
+@@ -1995,16 +1995,22 @@ static Result<Ok, PreXULSkeletonUIError> CreateAndStorePreXULSkeletonUIImpl(
+   sCaptionHeight =
+       sVerticalResizeMargin + sGetSystemMetricsForDpi(SM_CYCAPTION, sDpi);
+ 
+-  // These match the offsets that we get with default prefs. We don't use the
+-  // skeleton ui if tabsInTitlebar is disabled, see bug 1673092.
++  // These match the margins set in browser-tabsintitlebar.js with default prefs
++  // on Windows. We don't use the skeleton ui if tabsInTitlebar is disabled, see
++  // bug 1673092.
++  const Margin nonClientMargin{0, 2, 2, 2};
++
+   if (sMaximized) {
+     sNonClientOffset.top = sCaptionHeight - sVerticalResizeMargin;
+   } else {
+     // See nsWindow::NormalWindowNonClientOffset()
+     sNonClientOffset.top = sCaptionHeight;
+-    sNonClientOffset.bottom = sVerticalResizeMargin;
+-    sNonClientOffset.left = sHorizontalResizeMargin;
+-    sNonClientOffset.right = sHorizontalResizeMargin;
++    sNonClientOffset.bottom =
++        std::min(sVerticalResizeMargin, nonClientMargin.bottom);
++    sNonClientOffset.left =
++        std::min(sHorizontalResizeMargin, nonClientMargin.left);
++    sNonClientOffset.right =
++        std::min(sHorizontalResizeMargin, nonClientMargin.right);
+   }
+ 
+   if (sMaximized) {
+diff --git a/toolkit/content/tests/browser/browser_findbar_marks.js b/toolkit/content/tests/browser/browser_findbar_marks.js
+index d75d539d89590..bd025086f7231 100644
+--- a/toolkit/content/tests/browser/browser_findbar_marks.js
++++ b/toolkit/content/tests/browser/browser_findbar_marks.js
+@@ -197,9 +197,8 @@ add_task(async function test_found_resize() {
+   info(`values: ${JSON.stringify(values)}`);
+   info(`resizedValues: ${JSON.stringify(resizedValues)}`);
+   isfuzzy(resizedValues[0], values[0], 2, "first value");
+-  const kSlop = 50;
+-  Assert.greaterOrEqual(resizedValues[1] - kSlop, values[1], "second value");
+-  Assert.greaterOrEqual(resizedValues[2] - kSlop, values[2], "third value");
++  Assert.greater(resizedValues[1] - 50, values[1], "second value");
++  Assert.greater(resizedValues[2] - 50, values[2], "third value");
+ 
+   endFn();
+ 
+diff --git a/toolkit/content/tests/chrome/window_maximized_persist_with_no_titlebar.xhtml b/toolkit/content/tests/chrome/window_maximized_persist_with_no_titlebar.xhtml
+index 785f3bff967fe..e104dfa6525a2 100644
+--- a/toolkit/content/tests/chrome/window_maximized_persist_with_no_titlebar.xhtml
++++ b/toolkit/content/tests/chrome/window_maximized_persist_with_no_titlebar.xhtml
+@@ -5,7 +5,7 @@
+         height="300"
+         width="300"
+         sizemode="normal"
+-        chromemargin="0,0,0,0"
++        chromemargin="0,2,2,2"
+         id="window"
+         persist="height width sizemode">
+ <script type="application/javascript"><![CDATA[
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index f4f4828127ef3..eb6fcb1d992da 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -943,7 +943,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
+       // These match the margins set in browser-tabsintitlebar.js with
+       // default prefs on Windows. Bug 1673092 tracks lining this up with
+       // that more correctly instead of hard-coding it.
+-      SetNonClientMargins(LayoutDeviceIntMargin());
++      SetNonClientMargins(LayoutDeviceIntMargin(0, 2, 2, 2));
+       // The skeleton UI already painted over the NC area, so there's no need
+       // to do that again; the effective non-client margins haven't changed.
+       mNeedsNCAreaClear = false;

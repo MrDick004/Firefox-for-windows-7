@@ -1,0 +1,1 @@
+Bug 1843842 part 2 - Always use RtlAddGrowableFunctionTable on Windows. r=arai,emk    2023/7/18 15:17:08    63d61e6a0fd225834912ff73a3012ea0aaf13b2a
