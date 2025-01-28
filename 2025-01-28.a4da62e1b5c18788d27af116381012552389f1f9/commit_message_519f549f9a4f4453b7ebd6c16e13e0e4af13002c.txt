@@ -1,0 +1,1 @@
+Bug 1842497 - Unship d3dcompiler_47.dll. r=firefox-build-system-reviewers,glandium    2023-07-15 20:29:51    4968b61e4e3674d7ca5fb85c4226a9fd2cc23c6d

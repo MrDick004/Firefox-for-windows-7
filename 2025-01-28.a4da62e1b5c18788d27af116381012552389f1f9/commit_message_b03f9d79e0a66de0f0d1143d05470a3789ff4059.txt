@@ -1,0 +1,1 @@
+Bug 1909311 - Remove nsIFormControlFrame and nsITextControlFrame. r=masayuki,layout-reviewers,dholbert    2024-07-24 00:16:18    b03f9d79e0a66de0f0d1143d05470a3789ff4059

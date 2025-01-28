@@ -1,0 +1,1 @@
+Bug 1911763 - Clean-up plumbing for transparent window compositing on windows. r=gfx-reviewers,sotaro    2024-09-30 20:16:08    bb03b082e633dea1cff2a89bbf07e171cf7e33ca

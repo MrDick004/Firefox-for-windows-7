@@ -1,0 +1,1 @@
+Bug 1843230 - Remove IsWin8OrLater checks from dom/geolocation/ r=emk    2023-07-15 23:01:29    2c64cdf9d2298485a5789fc770f33aedee11b7f1

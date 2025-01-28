@@ -1,0 +1,121 @@
+diff --git a/layout/style/test/test_non_content_accessible_values.html b/layout/style/test/test_non_content_accessible_values.html
+index 633427f8e12f..7ba1cf9f05e1 100644
+--- a/layout/style/test/test_non_content_accessible_values.html
++++ b/layout/style/test/test_non_content_accessible_values.html
+@@ -45,6 +45,7 @@ const NON_CONTENT_ACCESSIBLE_VALUES = {
+     "menucheckbox",
+     "menuradio",
+     "menuseparator",
++    "menuarrow",
+     "menuimage",
+     "-moz-menulist-arrow-button",
+     "checkbox-container",
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index 177e288cd221..859685fca099 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1491,6 +1491,9 @@ pub enum Appearance {
+     /// Menu Popup background.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Menupopup,
++    /// Menu item arrow.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Menuarrow,
+     /// The meter bar's meter indicator.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Meterchunk,
+diff --git a/widget/Theme.cpp b/widget/Theme.cpp
+index daeb09785056..042412bb7cbd 100644
+--- a/widget/Theme.cpp
++++ b/widget/Theme.cpp
+@@ -761,17 +761,25 @@ enum class PhysicalArrowDirection {
+   Bottom,
+ };
+ 
+-void Theme::PaintMenulistArrow(nsIFrame* aFrame, DrawTarget& aDrawTarget,
+-                               const LayoutDeviceRect& aRect) {
++void Theme::PaintMenuArrow(StyleAppearance aAppearance, nsIFrame* aFrame,
++                           DrawTarget& aDrawTarget,
++                           const LayoutDeviceRect& aRect) {
+   // not const: these may be negated in-place below
+   float polygonX[] = {-4.0f, -0.5f, 0.5f, 4.0f,  4.0f,
+                       3.0f,  0.0f,  0.0f, -3.0f, -4.0f};
+   float polygonY[] = {-1,    3.0f, 3.0f, -1.0f, -2.0f,
+                       -2.0f, 1.5f, 1.5f, -2.0f, -2.0f};
+ 
++  const bool isMenuList =
++      aAppearance == StyleAppearance::MozMenulistArrowButton;
+   const float kPolygonSize = kMinimumDropdownArrowButtonWidth;
++
+   const auto direction = [&] {
+     const auto wm = aFrame->GetWritingMode();
++    if (!isMenuList) {
++      return wm.IsPhysicalRTL() ? PhysicalArrowDirection::Left
++                                : PhysicalArrowDirection::Right;
++    }
+     switch (wm.GetBlockDir()) {
+       case WritingMode::BlockDir::LR:
+         return PhysicalArrowDirection::Right;
+@@ -1217,12 +1225,13 @@ bool Theme::DoDrawWidgetBackground(PaintBackendData& aPaintData,
+     case StyleAppearance::Menulist:
+       PaintMenulist(aPaintData, devPxRect, elementState, colors, dpiRatio);
+       break;
++    case StyleAppearance::Menuarrow:
+     case StyleAppearance::MozMenulistArrowButton:
+       if constexpr (std::is_same_v<PaintBackendData, WebRenderBackendData>) {
+         // TODO: Need to figure out how to best draw this using WR.
+         return false;
+       } else {
+-        PaintMenulistArrow(aFrame, aPaintData, devPxRect);
++        PaintMenuArrow(aAppearance, aFrame, aPaintData, devPxRect);
+       }
+       break;
+     case StyleAppearance::Tooltip: {
+@@ -1687,6 +1696,7 @@ bool Theme::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFrame* aFrame,
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
++    case StyleAppearance::Menuarrow:
+     case StyleAppearance::MozMenulistArrowButton:
+     case StyleAppearance::SpinnerUpbutton:
+     case StyleAppearance::SpinnerDownbutton:
+diff --git a/widget/Theme.h b/widget/Theme.h
+index f107b7488da4..0c28d66b4090 100644
+--- a/widget/Theme.h
++++ b/widget/Theme.h
+@@ -171,7 +171,8 @@ class Theme : protected nsNativeTheme, public nsITheme {
+   template <typename PaintBackendData>
+   void PaintMenulist(PaintBackendData&, const LayoutDeviceRect&,
+                      const ElementState&, const Colors&, DPIRatio);
+-  void PaintMenulistArrow(nsIFrame*, DrawTarget&, const LayoutDeviceRect&);
++  void PaintMenuArrow(StyleAppearance, nsIFrame*, DrawTarget&,
++                      const LayoutDeviceRect&);
+   void PaintSpinnerButton(nsIFrame*, DrawTarget&, const LayoutDeviceRect&,
+                           const ElementState&, StyleAppearance, const Colors&,
+                           DPIRatio);
+diff --git a/widget/nsNativeTheme.cpp b/widget/nsNativeTheme.cpp
+index 4c78d3fa5387..bb83cf4cad11 100644
+--- a/widget/nsNativeTheme.cpp
++++ b/widget/nsNativeTheme.cpp
+@@ -572,5 +572,6 @@ bool nsNativeTheme::IsWidgetAlwaysNonNative(nsIFrame* aFrame,
+                                             StyleAppearance aAppearance) {
+   return IsWidgetScrollbarPart(aAppearance) ||
+          aAppearance == StyleAppearance::FocusOutline ||
++         aAppearance == StyleAppearance::Menuarrow ||
+          (aFrame && aFrame->StyleUI()->mMozTheme == StyleMozTheme::NonNative);
+ }
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index 1a8af27882e5..466df9ffef9e 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -1554,6 +1554,10 @@ LayoutDeviceIntSize nsNativeThemeWin::ClassicGetMinimumWidgetSize(
+     nsIFrame* aFrame, StyleAppearance aAppearance) {
+   LayoutDeviceIntSize result;
+   switch (aAppearance) {
++    case StyleAppearance::Menuarrow:
++      result.width = ::GetSystemMetrics(SM_CXMENUCHECK);
++      result.height = ::GetSystemMetrics(SM_CYMENUCHECK);
++      break;
+     case StyleAppearance::RangeThumb: {
+       if (IsRangeHorizontal(aFrame)) {
+         result.width = 12;

@@ -1,0 +1,29 @@
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 2541f95b1716..cde5832074e1 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -3888,15 +3888,7 @@ uint32_t nsWindow::GetMaxTouchPoints() const {
+ }
+ 
+ void nsWindow::SetIsEarlyBlankWindow(bool aIsEarlyBlankWindow) {
+-  if (mIsEarlyBlankWindow == aIsEarlyBlankWindow) {
+-    return;
+-  }
+   mIsEarlyBlankWindow = aIsEarlyBlankWindow;
+-  if (!aIsEarlyBlankWindow && mNeedsNCAreaClear) {
+-    // We skip processing WM_PAINT messages while we're the blank window;
+-    // ensure we get one to do any work we might have missed.
+-    ::RedrawWindow(mWnd, nullptr, nullptr, RDW_INVALIDATE | RDW_INTERNALPAINT);
+-  }
+ }
+ 
+ /**************************************************************
+@@ -7220,7 +7212,7 @@ void nsWindow::UpdateOpaqueRegionInternal() {
+   DwmExtendFrameIntoClientArea(mWnd, &margins);
+   if (mTransparencyMode == TransparencyMode::Transparent) {
+     mNeedsNCAreaClear = true;
+-    ::RedrawWindow(mWnd, nullptr, nullptr, RDW_INVALIDATE | RDW_INTERNALPAINT);
++    Invalidate();
+   }
+ }
+ 

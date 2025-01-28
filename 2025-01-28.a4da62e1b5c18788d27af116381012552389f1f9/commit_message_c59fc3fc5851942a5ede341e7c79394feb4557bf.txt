@@ -1,0 +1,1 @@
+Bug 1880109 - Remove legacy JumpListBuilder usage in WinTaskbar. r=rkraesig,win-reviewers    2024-06-13 09:17:59    c3fd469fa02fa5be003aa5009f868a428c6c226c

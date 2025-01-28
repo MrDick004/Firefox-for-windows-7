@@ -1,0 +1,94 @@
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index b22045d0389a..7d57ca2ca353 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -2664,7 +2664,6 @@ bool nsWindow::UpdateNonClientMargins(bool aReflowWindow) {
+     metrics.mOffset = NormalWindowNonClientOffset();
+   }
+ 
+-  UpdateOpaqueRegionInternal();
+ 
+   if (aReflowWindow) {
+     // Force a reflow of content based on the new client
+@@ -7411,51 +7409,11 @@ void nsWindow::SetWindowTranslucencyInner(TransparencyMode aMode) {
+ 
+   mTransparencyMode = aMode;
+ 
+-  UpdateOpaqueRegionInternal();
+-
+   if (mCompositorWidgetDelegate) {
+     mCompositorWidgetDelegate->UpdateTransparency(aMode);
+   }
+ }
+ 
+-void nsWindow::UpdateOpaqueRegion(const LayoutDeviceIntRegion& aRegion) {
+-  if (aRegion == mOpaqueRegion) {
+-    return;
+-  }
+-  mOpaqueRegion = aRegion;
+-  UpdateOpaqueRegionInternal();
+-}
+-
+-void nsWindow::UpdateOpaqueRegionInternal() {
+-  MARGINS margins{0};
+-  if (mTransparencyMode == TransparencyMode::Transparent) {
+-    // If there is no opaque region, set margins to support a full sheet of
+-    // glass. Comments in MSDN indicate all values must be set to -1 to get a
+-    // full sheet of glass.
+-    margins = {-1, -1, -1, -1};
+-    if (!mOpaqueRegion.IsEmpty()) {
+-      LayoutDeviceIntRect clientBounds = GetClientBounds();
+-      // Find the largest rectangle and use that to calculate the inset.
+-      LayoutDeviceIntRect largest = mOpaqueRegion.GetLargestRectangle();
+-      margins.cxLeftWidth = largest.X();
+-      margins.cxRightWidth = clientBounds.Width() - largest.XMost();
+-      margins.cyBottomHeight = clientBounds.Height() - largest.YMost();
+-      margins.cyTopHeight = largest.Y();
+-
+-      auto ncmargin = NonClientSizeMargin();
+-      margins.cxLeftWidth += ncmargin.left;
+-      margins.cyTopHeight += ncmargin.top;
+-      margins.cxRightWidth += ncmargin.right;
+-      margins.cyBottomHeight += ncmargin.bottom;
+-    }
+-  }
+-  DwmExtendFrameIntoClientArea(mWnd, &margins);
+-  if (mTransparencyMode == TransparencyMode::Transparent) {
+-    mNeedsNCAreaClear = true;
+-    Invalidate();
+-  }
+-}
+-
+ /**************************************************************
+  **************************************************************
+  **
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index abc53cc8f1b5..4ab53f1fada7 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -619,8 +619,6 @@ class nsWindow final : public nsBaseWidget {
+   bool IsSimulatedClientArea(int32_t clientX, int32_t clientY);
+   bool IsWindowButton(int32_t hitTestResult);
+ 
+-  void UpdateOpaqueRegion(const LayoutDeviceIntRegion&) override;
+-  void UpdateOpaqueRegionInternal();
+ 
+   void SetColorScheme(const mozilla::Maybe<mozilla::ColorScheme>&) override;
+ 
+@@ -810,8 +807,6 @@ class nsWindow final : public nsBaseWidget {
+ 
+   // Draggable titlebar region maintained by UpdateWindowDraggingRegion
+   LayoutDeviceIntRegion mDraggableRegion;
+-  // Opaque region maintained by UpdateOpaqueRegion
+-  LayoutDeviceIntRegion mOpaqueRegion;
+ 
+   // Graphics
+   LayoutDeviceIntRect mLastPaintBounds;
+@@ -820,6 +815,7 @@ class nsWindow final : public nsBaseWidget {
+ 
+   // Transparency
+   TransparencyMode mTransparencyMode = TransparencyMode::Opaque;
++  nsIntRegion mPossiblyTransparentRegion;
+ 
+   // Win7 Gesture processing and management
+   nsWinGesture mGesture;

@@ -1,0 +1,144 @@
+diff --git a/browser/base/content/test/performance/browser.toml b/browser/base/content/test/performance/browser.toml
+index 3bd4a1c0e5af..3f27c3706655 100644
+--- a/browser/base/content/test/performance/browser.toml
++++ b/browser/base/content/test/performance/browser.toml
+@@ -39,8 +39,6 @@ skip-if = [
+ 
+ ["browser_hiddenwindow_existence.js"]
+ 
+-["browser_opaque_region.js"]
+-
+ ["browser_panel_vsync.js"]
+ support-files = ["!/browser/components/downloads/test/browser/head.js"]
+ 
+diff --git a/browser/base/content/test/performance/browser_opaque_region.js b/browser/base/content/test/performance/browser_opaque_region.js
+deleted file mode 100644
+index 004abb29bf3d..000000000000
+--- a/browser/base/content/test/performance/browser_opaque_region.js
++++ /dev/null
+@@ -1,36 +0,0 @@
+-/* Any copyright is dedicated to the Public Domain.
+-   https://creativecommons.org/publicdomain/zero/1.0/ */
+-
+-"use strict";
+-
+-add_task(async function test_opaque_region() {
+-  // Ensure we've painted.
+-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+-
+-  let contentRect = document
+-    .getElementById("tabbrowser-tabbox")
+-    .getBoundingClientRect();
+-  let opaqueRegion = window.windowUtils.getWidgetOpaqueRegion();
+-
+-  info(`Got opaque region: ${JSON.stringify(opaqueRegion)}`);
+-  isnot(opaqueRegion.length, 0, "Should have some part of the window opaque");
+-
+-  let anyContainsContentRect = false;
+-  let containsContentRect = opaqueRect => {
+-    return (
+-      opaqueRect.x <= contentRect.x &&
+-      opaqueRect.y <= contentRect.y &&
+-      opaqueRect.width >= contentRect.width &&
+-      opaqueRect.height >= contentRect.height
+-    );
+-  };
+-
+-  for (let opaqueRect of opaqueRegion) {
+-    anyContainsContentRect |= containsContentRect(opaqueRect);
+-  }
+-
+-  ok(
+-    anyContainsContentRect,
+-    "The browser area should be considered opaque by widget"
+-  );
+-});
+diff --git a/dom/base/nsDOMWindowUtils.cpp b/dom/base/nsDOMWindowUtils.cpp
+index ac1823a08c82..ed2d6c499985 100644
+--- a/dom/base/nsDOMWindowUtils.cpp
++++ b/dom/base/nsDOMWindowUtils.cpp
+@@ -292,30 +292,6 @@ CompositorBridgeChild* nsDOMWindowUtils::GetCompositorBridge() {
+   return nullptr;
+ }
+ 
+-nsresult nsDOMWindowUtils::GetWidgetOpaqueRegion(
+-    nsTArray<RefPtr<DOMRect>>& aRects) {
+-  nsIWidget* widget = GetWidget();
+-  if (!widget) {
+-    return NS_ERROR_FAILURE;
+-  }
+-  auto AddRect = [&](const LayoutDeviceIntRect& aRect) {
+-    RefPtr rect = new DOMRect(mWindow);
+-    CSSRect cssRect = aRect / widget->GetDefaultScale();
+-    rect->SetRect(cssRect.x, cssRect.y, cssRect.width, cssRect.height);
+-    aRects.AppendElement(std::move(rect));
+-  };
+-  if (widget->GetTransparencyMode() == TransparencyMode::Opaque) {
+-    AddRect(
+-        LayoutDeviceIntRect(LayoutDeviceIntPoint(), widget->GetClientSize()));
+-    return NS_OK;
+-  }
+-  auto region = widget->GetOpaqueRegionForTesting();
+-  for (auto iter = region.RectIter(); !iter.Done(); iter.Next()) {
+-    AddRect(iter.Get());
+-  }
+-  return NS_OK;
+-}
+-
+ NS_IMETHODIMP
+ nsDOMWindowUtils::GetLastOverWindowPointerLocationInCSSPixels(float* aX,
+                                                               float* aY) {
+diff --git a/dom/interfaces/base/nsIDOMWindowUtils.idl b/dom/interfaces/base/nsIDOMWindowUtils.idl
+index b37004fbc0fc..40ddbcdac5d1 100644
+--- a/dom/interfaces/base/nsIDOMWindowUtils.idl
++++ b/dom/interfaces/base/nsIDOMWindowUtils.idl
+@@ -1071,9 +1071,6 @@ interface nsIDOMWindowUtils : nsISupports {
+    */
+   DOMRect getBoundsWithoutFlushing(in Element aElement);
+ 
+-  /** Returns the opaque region, for testing */
+-  Array<DOMRect> getWidgetOpaqueRegion();
+-
+   /**
+    * Scroll the visual viewport to the given coordinates, relative to the
+    * document origin.
+diff --git a/widget/gtk/nsWindow.h b/widget/gtk/nsWindow.h
+index e3d3d18e9661..ea84a9a79e83 100644
+--- a/widget/gtk/nsWindow.h
++++ b/widget/gtk/nsWindow.h
+@@ -273,9 +273,6 @@ class nsWindow final : public nsBaseWidget {
+ 
+   void UpdateOpaqueRegionInternal();
+   void UpdateOpaqueRegion(const LayoutDeviceIntRegion&) override;
+-  LayoutDeviceIntRegion GetOpaqueRegionForTesting() const override {
+-    return GetOpaqueRegion();
+-  }
+   LayoutDeviceIntRegion GetOpaqueRegion() const;
+ 
+   already_AddRefed<mozilla::gfx::DrawTarget> StartRemoteDrawingInRegion(
+diff --git a/widget/nsIWidget.h b/widget/nsIWidget.h
+index 7fc5cb96d121..b30309440533 100644
+--- a/widget/nsIWidget.h
++++ b/widget/nsIWidget.h
+@@ -1176,7 +1176,6 @@ class nsIWidget : public nsISupports {
+    * @param aOpaqueRegion the region of the window that is opaque.
+    */
+   virtual void UpdateOpaqueRegion(const LayoutDeviceIntRegion& aOpaqueRegion) {}
+-  virtual LayoutDeviceIntRegion GetOpaqueRegionForTesting() const { return {}; }
+ 
+   /**
+    * Informs the widget about the region of the window that is draggable.
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index cabb1839ee5b..f8572be02b5f 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -647,9 +647,6 @@ class nsWindow final : public nsBaseWidget {
+ 
+   void UpdateOpaqueRegion(const LayoutDeviceIntRegion&) override;
+   void UpdateOpaqueRegionInternal();
+-  LayoutDeviceIntRegion GetOpaqueRegionForTesting() const override {
+-    return mOpaqueRegion;
+-  }
+ 
+   void SetColorScheme(const mozilla::Maybe<mozilla::ColorScheme>&) override;
+ 

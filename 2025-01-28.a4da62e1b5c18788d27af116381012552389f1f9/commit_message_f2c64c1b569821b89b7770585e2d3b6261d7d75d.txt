@@ -1,0 +1,1 @@
+Bug 1858398 - Use nesting in windows/browser.css. r=emilio,desktop-theme-reviewers    2023-10-11 20:58:53    f2c64c1b569821b89b7770585e2d3b6261d7d75d

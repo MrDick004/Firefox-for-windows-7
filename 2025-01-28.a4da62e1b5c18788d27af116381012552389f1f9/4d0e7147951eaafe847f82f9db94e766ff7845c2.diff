@@ -1,0 +1,922 @@
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index 9354290c38c2..fac7e6516c1f 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1616,6 +1616,9 @@ pub enum Appearance {
+     /// The dropdown portion of a toolbar button
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     ToolbarbuttonDropdown,
++    /// The gripper for a toolbar.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Toolbargripper,
+     /// The toolbox that contains the toolbars.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Toolbox,
+@@ -1628,6 +1631,9 @@ pub enum Appearance {
+     /// An individual header cell
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Treeheadercell,
++    /// The sort arrow for a header.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treeheadersortarrow,
+     /// A tree item.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Treeitem,
+diff --git a/servo/components/style/values/specified/color.rs b/servo/components/style/values/specified/color.rs
+index 3b64c3346ac3..c23ec269bef0 100644
+--- a/servo/components/style/values/specified/color.rs
++++ b/servo/components/style/values/specified/color.rs
+@@ -347,17 +347,9 @@ pub enum SystemColor {
+ 
+     /// Color of tree column headers
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+-    MozColheader,
+-    #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     MozColheadertext,
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+-    MozColheaderhover,
+-    #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     MozColheaderhovertext,
+-    #[parse(condition = "ParserContext::chrome_rules_enabled")]
+-    MozColheaderactive,
+-    #[parse(condition = "ParserContext::chrome_rules_enabled")]
+-    MozColheaderactivetext,
+ 
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     TextSelectDisabledBackground,
+diff --git a/toolkit/themes/linux/global/toolbar.css b/toolkit/themes/linux/global/toolbar.css
+index 3514b6bbe424..6a0ecb6bfe9a 100644
+--- a/toolkit/themes/linux/global/toolbar.css
++++ b/toolkit/themes/linux/global/toolbar.css
+@@ -14,24 +14,26 @@ toolbox {
+ }
+ 
+ toolbar {
+-  background-color: -moz-headerbar;
+-  color: -moz-headerbartext;
++  appearance: auto;
++  -moz-default-appearance: toolbar;
+   min-width: 1px;
+   min-height: 20px;
+   padding: 2px 0;
++}
+ 
+-  &:where(:-moz-window-inactive) {
+-    background-color: -moz-headerbarinactive;
+-    color: -moz-headerbarinactivetext;
+-  }
++toolbar[type="menubar"] {
++  appearance: none;
++  padding: 1px 0;
++}
+ 
+-  &[type="menubar"] {
+-    background-color: transparent;
+-    padding: 1px 0;
+-  }
++toolbar[lwtheme] {
++  appearance: none;
+ }
+ 
+ toolbarseparator {
++  appearance: auto;
++  -moz-default-appearance: separator;
++  margin: 0;
+   min-width: 2px;
+ }
+ 
+diff --git a/toolkit/themes/shared/desktop-non-mac.jar.inc.mn b/toolkit/themes/shared/desktop-non-mac.jar.inc.mn
+index 072678facee3..5a598401912c 100644
+--- a/toolkit/themes/shared/desktop-non-mac.jar.inc.mn
++++ b/toolkit/themes/shared/desktop-non-mac.jar.inc.mn
+@@ -18,9 +18,6 @@
+ 
+   skin/classic/global/icons/search-textbox.svg             (../../windows/global/icons/search-textbox.svg)
+ 
+-  skin/classic/mozapps/handling/handling.css               (../../windows/mozapps/handling/handling.css)
+-
+-  skin/classic/global/tree/sort-asc.svg                    (../../windows/global/tree/sort-asc.svg)
+-  skin/classic/global/tree/sort-dsc.svg                    (../../windows/global/tree/sort-dsc.svg)
++  skin/classic/mozapps/handling/handling.css                 (../../windows/mozapps/handling/handling.css)
+ 
+ % override chrome://mozapps/skin/xpinstall/xpinstallItemGeneric.png       chrome://mozapps/skin/extensions/extensionGeneric.svg
+diff --git a/toolkit/themes/shared/tree.css b/toolkit/themes/shared/tree.css
+index 2aacb68682a5..bccaa4e59a95 100644
+--- a/toolkit/themes/shared/tree.css
++++ b/toolkit/themes/shared/tree.css
+@@ -17,10 +17,6 @@ tree {
+   color: FieldText;
+   appearance: auto;
+   -moz-default-appearance: listbox;
+-  @media (-moz-platform: linux) {
+-    appearance: none;
+-    border: 1px solid ThreeDShadow;
+-  }
+ }
+ 
+ /* ::::: tree rows ::::: */
+@@ -125,37 +121,22 @@ treecol,
+ .tree-columnpicker-button {
+   appearance: auto;
+   -moz-default-appearance: treeheadercell;
+-  background-color: -moz-ColHeader;
+-  color: -moz-ColHeaderText;
+   align-items: center;
+   justify-content: center;
++  color: -moz-ColHeaderText;
+   padding: 0 4px;
+   margin: 0;
+-  border-inline-start: 1px solid ThreeDLightShadow;
+-
+-  @media (-moz-platform: linux) or ((-moz-platform: windows) and (prefers-color-scheme: dark)) {
+-    appearance: none;
+-    box-shadow: inset 0 -1px ThreeDLightShadow;
+-  }
++}
+ 
+-  &:where(:hover) {
+-    background-color: -moz-ColHeaderHover;
+-    color: -moz-ColHeaderHoverText;
+-  }
+-  &:where(:hover:active) {
+-    background-color: -moz-ColHeaderActive;
+-    color: -moz-ColHeaderActiveText;
+-  }
++treecol:where(:hover),
++.tree-columnpicker-button:where(:hover) {
++  color: -moz-ColHeaderHoverText;
+ }
+ 
+ .treecol-text {
+   margin: 0 !important;
+ }
+ 
+-treecol:where([ordinal="1"]) {
+-  border-inline-start: none;
+-}
+-
+ treecol[hideheader="true"] {
+   appearance: none;
+ }
+@@ -250,21 +231,44 @@ html|input.tree-input {
+   z-index: 2147483647;
+ }
+ 
+-@media not (-moz-platform: macos) {
++@media (-moz-platform: windows) {
+   /* ::::: sort direction indicator :::::  */
++
+   .treecol-sortdirection {
+-    list-style-image: url("chrome://global/skin/tree/sort-asc.svg");
++    list-style-image: none;
+     -moz-context-properties: fill;
+     fill: currentColor;
+-    visibility: hidden;
++  }
+ 
+-    treecol[sortDirection="ascending"]:not([hideheader="true"]) > & {
+-      visibility: inherit;
+-    }
++  treecol[sortDirection="ascending"]:not([hideheader="true"]) > .treecol-sortdirection {
++    list-style-image: url("chrome://global/skin/tree/sort-asc.svg");
++  }
+ 
+-    treecol[sortDirection="descending"]:not([hideheader="true"]) > & {
+-      visibility: inherit;
+-      list-style-image: url("chrome://global/skin/tree/sort-dsc.svg");
++  treecol[sortDirection="descending"]:not([hideheader="true"]) > .treecol-sortdirection {
++    list-style-image: url("chrome://global/skin/tree/sort-dsc.svg");
++  }
++
++  @media (prefers-color-scheme: dark) {
++    treecol,
++    .tree-columnpicker-button {
++      appearance: none;
++      background-color: ButtonFace;
++      color: ButtonText;
++      border-inline-start: 1px solid ThreeDLightShadow;
++      box-shadow: inset 0 -1px ThreeDLightShadow;
++    }
++    treecol:where([ordinal="1"]) {
++      border-inline-start: none;
++    }
++    treecol:where(:hover),
++    .tree-columnpicker-button:where(:hover) {
++      background-color: -moz-ButtonHoverFace;
++      color: -moz-ButtonHoverText;
++    }
++    treecol:where(:hover:active),
++    .tree-columnpicker-button:where(:hover:active) {
++      background-color: -moz-ButtonActiveFace;
++      color: -moz-ButtonActiveText;
+     }
+   }
+ }
+@@ -279,3 +283,10 @@ html|input.tree-input {
+     outline: none;
+   }
+ }
++
++@media (-moz-platform: linux) {
++  .treecol-sortdirection {
++    appearance: auto;
++    -moz-default-appearance: treeheadersortarrow;
++  }
++}
+diff --git a/toolkit/themes/windows/global/jar.mn b/toolkit/themes/windows/global/jar.mn
+index fc4d66835a9f..f6e4192158af 100644
+--- a/toolkit/themes/windows/global/jar.mn
++++ b/toolkit/themes/windows/global/jar.mn
+@@ -19,3 +19,5 @@ toolkit.jar:
+   skin/classic/global/icons/Portrait.png                   (icons/Portrait.png)
+   skin/classic/global/icons/warning-large.png              (icons/warning-large.png)
+   skin/classic/global/in-content/common.css                (in-content/common.css)
++  skin/classic/global/tree/sort-asc.svg                    (tree/sort-asc.svg)
++  skin/classic/global/tree/sort-dsc.svg                    (tree/sort-dsc.svg)
+diff --git a/widget/Theme.cpp b/widget/Theme.cpp
+index ae81cec07f3f..32fa3d8bdfad 100644
+--- a/widget/Theme.cpp
++++ b/widget/Theme.cpp
+@@ -1327,7 +1327,6 @@ bool Theme::DoDrawWidgetBackground(PaintBackendData& aPaintData,
+       break;
+     }
+     case StyleAppearance::Button:
+-    case StyleAppearance::Toolbarbutton:
+       PaintButton(aPaintData, devPxRect, aAppearance, elementState, colors,
+                   dpiRatio);
+       break;
+@@ -1439,7 +1438,6 @@ LayoutDeviceIntMargin Theme::GetWidgetBorder(nsDeviceContext* aContext,
+     case StyleAppearance::Menulist:
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::Button:
+-    case StyleAppearance::Toolbarbutton:
+       // Return the border size from the UA sheet, even though what we paint
+       // doesn't actually match that. We know this is the UA sheet border
+       // because we disable native theming when different border widths are
+@@ -1507,7 +1505,6 @@ bool Theme::GetWidgetOverflow(nsDeviceContext* aContext, nsIFrame* aFrame,
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::Menulist:
+     case StyleAppearance::Button:
+-    case StyleAppearance::Toolbarbutton:
+       outlineOffset = -kButtonBorderWidth;
+       break;
+     default:
+@@ -1673,7 +1670,6 @@ bool Theme::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFrame* aFrame,
+     case StyleAppearance::ScrollbarVertical:
+     case StyleAppearance::Scrollcorner:
+     case StyleAppearance::Button:
+-    case StyleAppearance::Toolbarbutton:
+     case StyleAppearance::Listbox:
+     case StyleAppearance::Menulist:
+     case StyleAppearance::MenulistButton:
+diff --git a/widget/cocoa/nsLookAndFeel.mm b/widget/cocoa/nsLookAndFeel.mm
+index 7e35c330677e..fb59967c03a9 100644
+--- a/widget/cocoa/nsLookAndFeel.mm
++++ b/widget/cocoa/nsLookAndFeel.mm
+@@ -209,9 +209,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+     case ColorID::MozButtonhoverface:
+     case ColorID::MozButtonactiveface:
+     case ColorID::MozButtondisabledface:
+-    case ColorID::MozColheader:
+-    case ColorID::MozColheaderhover:
+-    case ColorID::MozColheaderactive:
+       aColor = GetColorFromNSColor(NSColor.controlColor);
+       if (!NS_GET_A(aColor)) {
+         aColor = GetColorFromNSColor(NSColor.controlBackgroundColor);
+@@ -268,7 +265,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+     case ColorID::MozCellhighlighttext:
+     case ColorID::MozColheadertext:
+     case ColorID::MozColheaderhovertext:
+-    case ColorID::MozColheaderactivetext:
+     case ColorID::MozSidebartext:
+       aColor = GetColorFromNSColor(NSColor.controlTextColor);
+       break;
+diff --git a/widget/cocoa/nsNativeThemeCocoa.mm b/widget/cocoa/nsNativeThemeCocoa.mm
+index e2834736883c..b6f8a4cb1c3c 100644
+--- a/widget/cocoa/nsNativeThemeCocoa.mm
++++ b/widget/cocoa/nsNativeThemeCocoa.mm
+@@ -2412,6 +2412,8 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
+ 
+     case StyleAppearance::Treeheader:
+       // do nothing, taken care of by individual header cells
++    case StyleAppearance::Treeheadersortarrow:
++      // do nothing, taken care of by treeview header
+     case StyleAppearance::Treeline:
+       // do nothing, these lines don't exist on macos
+       break;
+@@ -3198,6 +3200,7 @@ bool nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext,
+     case StyleAppearance::Treeview:
+     case StyleAppearance::Treeheader:
+     case StyleAppearance::Treeheadercell:
++    case StyleAppearance::Treeheadersortarrow:
+     case StyleAppearance::Treeitem:
+     case StyleAppearance::Treeline:
+ 
+diff --git a/widget/gtk/WidgetStyleCache.cpp b/widget/gtk/WidgetStyleCache.cpp
+index 15233a5fb1bf..9a67096d525e 100644
+--- a/widget/gtk/WidgetStyleCache.cpp
++++ b/widget/gtk/WidgetStyleCache.cpp
+@@ -120,6 +120,18 @@ static GtkWidget* CreateGripperWidget() {
+   return widget;
+ }
+ 
++static GtkWidget* CreateToolbarWidget() {
++  GtkWidget* widget = gtk_toolbar_new();
++  gtk_container_add(GTK_CONTAINER(GetWidget(MOZ_GTK_GRIPPER)), widget);
++  return widget;
++}
++
++static GtkWidget* CreateToolbarSeparatorWidget() {
++  GtkWidget* widget = GTK_WIDGET(gtk_separator_tool_item_new());
++  AddToWindowContainer(widget);
++  return widget;
++}
++
+ static GtkWidget* CreateButtonWidget() {
+   GtkWidget* widget = gtk_button_new_with_label("M");
+   AddToWindowContainer(widget);
+@@ -394,6 +406,13 @@ static GtkWidget* CreateTreeHeaderCellWidget() {
+   return gtk_tree_view_column_get_button(middleTreeViewColumn);
+ }
+ 
++static GtkWidget* CreateTreeHeaderSortArrowWidget() {
++  /* TODO, but it can't be NULL */
++  GtkWidget* widget = gtk_button_new();
++  AddToWindowContainer(widget);
++  return widget;
++}
++
+ static GtkWidget* CreateHPanedWidget() {
+   GtkWidget* widget = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+   AddToWindowContainer(widget);
+@@ -710,6 +729,12 @@ static GtkWidget* CreateWidget(WidgetNodeType aAppearance) {
+       return CreateExpanderWidget();
+     case MOZ_GTK_FRAME:
+       return CreateFrameWidget();
++    case MOZ_GTK_GRIPPER:
++      return CreateGripperWidget();
++    case MOZ_GTK_TOOLBAR:
++      return CreateToolbarWidget();
++    case MOZ_GTK_TOOLBAR_SEPARATOR:
++      return CreateToolbarSeparatorWidget();
+     case MOZ_GTK_SPINBUTTON:
+       return CreateSpinWidget();
+     case MOZ_GTK_BUTTON:
+@@ -727,6 +752,8 @@ static GtkWidget* CreateWidget(WidgetNodeType aAppearance) {
+       return CreateTreeViewWidget();
+     case MOZ_GTK_TREE_HEADER_CELL:
+       return CreateTreeHeaderCellWidget();
++    case MOZ_GTK_TREE_HEADER_SORTARROW:
++      return CreateTreeHeaderSortArrowWidget();
+     case MOZ_GTK_SPLITTER_HORIZONTAL:
+       return CreateHPanedWidget();
+     case MOZ_GTK_SPLITTER_VERTICAL:
+@@ -1046,6 +1073,10 @@ static GtkStyleContext* GetCssNodeStyleInternal(WidgetNodeType aNodeType) {
+     case MOZ_GTK_PROGRESS_CHUNK:
+       style = CreateChildCSSNode("progress", MOZ_GTK_PROGRESS_TROUGH);
+       break;
++    case MOZ_GTK_GRIPPER:
++      // TODO - create from CSS node
++      style = CreateSubStyleWithClass(MOZ_GTK_GRIPPER, GTK_STYLE_CLASS_GRIP);
++      break;
+     case MOZ_GTK_SPINBUTTON_ENTRY:
+       // TODO - create from CSS node
+       style =
+@@ -1197,6 +1228,9 @@ static GtkStyleContext* GetWidgetStyleInternal(WidgetNodeType aNodeType) {
+                                       GTK_STYLE_CLASS_PROGRESSBAR);
+       gtk_style_context_remove_class(style, GTK_STYLE_CLASS_TROUGH);
+       break;
++    case MOZ_GTK_GRIPPER:
++      style = CreateSubStyleWithClass(MOZ_GTK_GRIPPER, GTK_STYLE_CLASS_GRIP);
++      break;
+     case MOZ_GTK_SPINBUTTON_ENTRY:
+       style =
+           CreateSubStyleWithClass(MOZ_GTK_SPINBUTTON, GTK_STYLE_CLASS_ENTRY);
+diff --git a/widget/gtk/gtk3drawing.cpp b/widget/gtk/gtk3drawing.cpp
+index 1fa8b9560694..40d56770c8ec 100644
+--- a/widget/gtk/gtk3drawing.cpp
++++ b/widget/gtk/gtk3drawing.cpp
+@@ -878,6 +878,17 @@ static gint moz_gtk_scale_thumb_paint(cairo_t* cr, GdkRectangle* rect,
+   return MOZ_GTK_SUCCESS;
+ }
+ 
++static gint moz_gtk_gripper_paint(cairo_t* cr, GdkRectangle* rect,
++                                  GtkWidgetState* state,
++                                  GtkTextDirection direction) {
++  GtkStyleContext* style =
++      GetStyleContext(MOZ_GTK_GRIPPER, state->image_scale, direction,
++                      GetStateFlagsFromGtkWidgetState(state));
++  gtk_render_background(style, cr, rect->x, rect->y, rect->width, rect->height);
++  gtk_render_frame(style, cr, rect->x, rect->y, rect->width, rect->height);
++  return MOZ_GTK_SUCCESS;
++}
++
+ static gint moz_gtk_hpaned_paint(cairo_t* cr, GdkRectangle* rect,
+                                  GtkWidgetState* state) {
+   GtkStyleContext* style =
+@@ -988,6 +999,42 @@ static gint moz_gtk_tree_header_cell_paint(cairo_t* cr,
+   return MOZ_GTK_SUCCESS;
+ }
+ 
++static gint moz_gtk_tree_header_sort_arrow_paint(cairo_t* cr,
++                                                 GdkRectangle* rect,
++                                                 GtkWidgetState* state,
++                                                 GtkArrowType arrow_type,
++                                                 GtkTextDirection direction) {
++  GdkRectangle arrow_rect;
++  gdouble arrow_angle;
++  GtkStyleContext* style;
++
++  /* hard code these values */
++  arrow_rect.width = 11;
++  arrow_rect.height = 11;
++  arrow_rect.x = rect->x + (rect->width - arrow_rect.width) / 2;
++  arrow_rect.y = rect->y + (rect->height - arrow_rect.height) / 2;
++  style = GetStyleContext(MOZ_GTK_TREE_HEADER_SORTARROW, state->image_scale,
++                          direction, GetStateFlagsFromGtkWidgetState(state));
++  switch (arrow_type) {
++    case GTK_ARROW_LEFT:
++      arrow_angle = ARROW_LEFT;
++      break;
++    case GTK_ARROW_RIGHT:
++      arrow_angle = ARROW_RIGHT;
++      break;
++    case GTK_ARROW_DOWN:
++      arrow_angle = ARROW_DOWN;
++      break;
++    default:
++      arrow_angle = ARROW_UP;
++      break;
++  }
++  if (arrow_type != GTK_ARROW_NONE)
++    gtk_render_arrow(style, cr, arrow_angle, arrow_rect.x, arrow_rect.y,
++                     arrow_rect.width);
++  return MOZ_GTK_SUCCESS;
++}
++
+ /* See gtk_expander_paint() for reference.
+  */
+ static gint moz_gtk_treeview_expander_paint(cairo_t* cr, GdkRectangle* rect,
+@@ -1137,6 +1184,57 @@ static gint moz_gtk_arrow_paint(cairo_t* cr, GdkRectangle* rect,
+   return MOZ_GTK_SUCCESS;
+ }
+ 
++static gint moz_gtk_toolbar_paint(cairo_t* cr, GdkRectangle* rect,
++                                  GtkWidgetState* state,
++                                  GtkTextDirection direction) {
++  GtkStyleContext* style =
++      GetStyleContext(MOZ_GTK_TOOLBAR, state->image_scale, direction);
++  gtk_render_background(style, cr, rect->x, rect->y, rect->width, rect->height);
++  gtk_render_frame(style, cr, rect->x, rect->y, rect->width, rect->height);
++  return MOZ_GTK_SUCCESS;
++}
++
++/* See _gtk_toolbar_paint_space_line() for reference.
++ */
++static gint moz_gtk_toolbar_separator_paint(cairo_t* cr, GdkRectangle* rect,
++                                            GtkWidgetState* state,
++                                            GtkTextDirection direction) {
++  gint separator_width;
++  gint paint_width;
++  gboolean wide_separators;
++
++  /* Defined as constants in GTK+ 2.10.14 */
++  const double start_fraction = 0.2;
++  const double end_fraction = 0.8;
++
++  GtkStyleContext* style = GetStyleContext(MOZ_GTK_TOOLBAR, state->image_scale);
++  gtk_style_context_get_style(style, "wide-separators", &wide_separators,
++                              "separator-width", &separator_width, NULL);
++
++  style =
++      GetStyleContext(MOZ_GTK_TOOLBAR_SEPARATOR, state->image_scale, direction);
++  if (wide_separators) {
++    if (separator_width > rect->width) separator_width = rect->width;
++
++    gtk_render_frame(style, cr, rect->x + (rect->width - separator_width) / 2,
++                     rect->y + rect->height * start_fraction, separator_width,
++                     rect->height * (end_fraction - start_fraction));
++  } else {
++    GtkBorder padding;
++    gtk_style_context_get_padding(style, gtk_style_context_get_state(style),
++                                  &padding);
++
++    paint_width = padding.left;
++    if (paint_width > rect->width) paint_width = rect->width;
++
++    gtk_render_line(style, cr, rect->x + (rect->width - paint_width) / 2,
++                    rect->y + rect->height * start_fraction,
++                    rect->x + (rect->width - paint_width) / 2,
++                    rect->y + rect->height * end_fraction);
++  }
++  return MOZ_GTK_SUCCESS;
++}
++
+ static gint moz_gtk_tooltip_paint(cairo_t* cr, const GdkRectangle* aRect,
+                                   GtkWidgetState* state,
+                                   GtkTextDirection direction) {
+@@ -1625,6 +1723,9 @@ gint moz_gtk_get_widget_border(WidgetNodeType widget, gint* left, gint* top,
+       moz_gtk_add_border_padding(style, left, top, right, bottom);
+       return MOZ_GTK_SUCCESS;
+     }
++    case MOZ_GTK_TREE_HEADER_SORTARROW:
++      w = GetWidget(MOZ_GTK_TREE_HEADER_SORTARROW);
++      break;
+     case MOZ_GTK_DROPDOWN: {
+       /* We need to account for the arrow on the dropdown, so text
+        * doesn't come too close to the arrow, or in some cases spill
+@@ -1723,10 +1824,12 @@ gint moz_gtk_get_widget_border(WidgetNodeType widget, gint* left, gint* top,
+     case MOZ_GTK_RADIOBUTTON:
+     case MOZ_GTK_SCALE_THUMB_HORIZONTAL:
+     case MOZ_GTK_SCALE_THUMB_VERTICAL:
++    case MOZ_GTK_GRIPPER:
+     case MOZ_GTK_PROGRESS_CHUNK:
+     case MOZ_GTK_PROGRESS_CHUNK_INDETERMINATE:
+     case MOZ_GTK_PROGRESS_CHUNK_VERTICAL_INDETERMINATE:
+     case MOZ_GTK_TREEVIEW_EXPANDER:
++    case MOZ_GTK_TOOLBAR_SEPARATOR:
+     case MOZ_GTK_HEADER_BAR:
+     case MOZ_GTK_HEADER_BAR_MAXIMIZED:
+     case MOZ_GTK_HEADER_BAR_BUTTON_CLOSE:
+@@ -1740,6 +1843,7 @@ gint moz_gtk_get_widget_border(WidgetNodeType widget, gint* left, gint* top,
+     case MOZ_GTK_WINDOW_DECORATION_SOLID:
+     case MOZ_GTK_RESIZER:
+     case MOZ_GTK_TOOLBARBUTTON_ARROW:
++    case MOZ_GTK_TOOLBAR:
+     case MOZ_GTK_TAB_SCROLLARROW:
+       return MOZ_GTK_SUCCESS;
+     default:
+@@ -1834,6 +1938,22 @@ void moz_gtk_get_arrow_size(WidgetNodeType widgetType, gint* width,
+   }
+ }
+ 
++gint moz_gtk_get_toolbar_separator_width(gint* size) {
++  gboolean wide_separators;
++  gint separator_width;
++  GtkBorder border;
++
++  GtkStyleContext* style = GetStyleContext(MOZ_GTK_TOOLBAR);
++  gtk_style_context_get_style(style, "space-size", size, "wide-separators",
++                              &wide_separators, "separator-width",
++                              &separator_width, NULL);
++  /* Just in case... */
++  gtk_style_context_get_border(style, gtk_style_context_get_state(style),
++                               &border);
++  *size = MAX(*size, (wide_separators ? separator_width : border.left));
++  return MOZ_GTK_SUCCESS;
++}
++
+ gint moz_gtk_get_expander_size(gint* size) {
+   GtkStyleContext* style = GetStyleContext(MOZ_GTK_EXPANDER);
+   gtk_style_context_get_style(style, "expander-size", size, NULL);
+@@ -2112,10 +2232,15 @@ gint moz_gtk_widget_paint(WidgetNodeType widget, cairo_t* cr,
+                           direction, GetStateFlagsFromGtkWidgetState(state));
+       return moz_gtk_entry_paint(cr, rect, state, style, widget);
+     }
++    case MOZ_GTK_GRIPPER:
++      return moz_gtk_gripper_paint(cr, rect, state, direction);
+     case MOZ_GTK_TREEVIEW:
+       return moz_gtk_treeview_paint(cr, rect, state, direction);
+     case MOZ_GTK_TREE_HEADER_CELL:
+       return moz_gtk_tree_header_cell_paint(cr, rect, state, flags, direction);
++    case MOZ_GTK_TREE_HEADER_SORTARROW:
++      return moz_gtk_tree_header_sort_arrow_paint(
++          cr, rect, state, (GtkArrowType)flags, direction);
+     case MOZ_GTK_TREEVIEW_EXPANDER:
+       return moz_gtk_treeview_expander_paint(
+           cr, rect, state, (GtkExpanderStyle)flags, direction);
+@@ -2131,6 +2256,10 @@ gint moz_gtk_widget_paint(WidgetNodeType widget, cairo_t* cr,
+       return moz_gtk_text_view_paint(cr, rect, state, direction);
+     case MOZ_GTK_DROPDOWN:
+       return moz_gtk_combo_box_paint(cr, rect, state, direction);
++    case MOZ_GTK_TOOLBAR:
++      return moz_gtk_toolbar_paint(cr, rect, state, direction);
++    case MOZ_GTK_TOOLBAR_SEPARATOR:
++      return moz_gtk_toolbar_separator_paint(cr, rect, state, direction);
+     case MOZ_GTK_TOOLTIP:
+       return moz_gtk_tooltip_paint(cr, rect, state, direction);
+     case MOZ_GTK_FRAME:
+diff --git a/widget/gtk/gtkdrawing.h b/widget/gtk/gtkdrawing.h
+index e751dc38c9a4..f71c1dcd60ea 100644
+--- a/widget/gtk/gtkdrawing.h
++++ b/widget/gtk/gtkdrawing.h
+@@ -158,6 +158,8 @@ enum WidgetNodeType : int {
+   MOZ_GTK_SPINBUTTON_UP,
+   MOZ_GTK_SPINBUTTON_DOWN,
+   MOZ_GTK_SPINBUTTON_ENTRY,
++  /* Paints the gripper of a GtkHandleBox. */
++  MOZ_GTK_GRIPPER,
+   /* Paints a GtkEntry. */
+   MOZ_GTK_ENTRY,
+   /* Paints a GtkExpander. */
+@@ -174,6 +176,10 @@ enum WidgetNodeType : int {
+   /* Paints an entry in an editable option menu */
+   MOZ_GTK_DROPDOWN_ENTRY,
+ 
++  /* Paints the background of a GtkHandleBox. */
++  MOZ_GTK_TOOLBAR,
++  /* Paints a toolbar separator */
++  MOZ_GTK_TOOLBAR_SEPARATOR,
+   /* Paints a GtkToolTip */
+   MOZ_GTK_TOOLTIP,
+   /* Paints a GtkBox from GtkToolTip  */
+@@ -215,6 +221,8 @@ enum WidgetNodeType : int {
+   MOZ_GTK_TREEVIEW_VIEW,
+   /* Paints treeheader cells */
+   MOZ_GTK_TREE_HEADER_CELL,
++  /* Paints sort arrows in treeheader cells */
++  MOZ_GTK_TREE_HEADER_SORTARROW,
+   /* Paints an expander for a GtkTreeView */
+   MOZ_GTK_TREEVIEW_EXPANDER,
+   /* Paints the background of menus, context menus. */
+diff --git a/widget/gtk/nsLookAndFeel.cpp b/widget/gtk/nsLookAndFeel.cpp
+index 75481bc7e4ba..2dad456cf274 100644
+--- a/widget/gtk/nsLookAndFeel.cpp
++++ b/widget/gtk/nsLookAndFeel.cpp
+@@ -749,23 +749,11 @@ nsresult nsLookAndFeel::PerThemeData::GetColor(ColorID aID,
+     case ColorID::MozComboboxtext:
+       aColor = mComboBoxText;
+       break;
+-    case ColorID::MozColheader:
+-      aColor = mMozColHeader.mBg;
+-      break;
+     case ColorID::MozColheadertext:
+-      aColor = mMozColHeader.mFg;
+-      break;
+-    case ColorID::MozColheaderhover:
+-      aColor = mMozColHeaderHover.mBg;
++      aColor = mMozColHeaderText;
+       break;
+     case ColorID::MozColheaderhovertext:
+-      aColor = mMozColHeaderHover.mFg;
+-      break;
+-    case ColorID::MozColheaderactive:
+-      aColor = mMozColHeaderActive.mBg;
+-      break;
+-    case ColorID::MozColheaderactivetext:
+-      aColor = mMozColHeaderActive.mFg;
++      aColor = mMozColHeaderHoverText;
+       break;
+     case ColorID::SpellCheckerUnderline:
+     case ColorID::Mark:
+@@ -2125,9 +2113,10 @@ void nsLookAndFeel::PerThemeData::Init() {
+ 
+   // Column header colors
+   style = GetStyleContext(MOZ_GTK_TREE_HEADER_CELL);
+-  mMozColHeader = GetColorPair(style, GTK_STATE_FLAG_NORMAL);
+-  mMozColHeaderHover = GetColorPair(style, GTK_STATE_FLAG_NORMAL);
+-  mMozColHeaderActive = GetColorPair(style, GTK_STATE_FLAG_ACTIVE);
++  gtk_style_context_get_color(style, GTK_STATE_FLAG_NORMAL, &color);
++  mMozColHeaderText = GDK_RGBA_TO_NS_RGBA(color);
++  gtk_style_context_get_color(style, GTK_STATE_FLAG_PRELIGHT, &color);
++  mMozColHeaderHoverText = GDK_RGBA_TO_NS_RGBA(color);
+ 
+   // Compute cell highlight colors
+   InitCellHighlightColors();
+diff --git a/widget/gtk/nsLookAndFeel.h b/widget/gtk/nsLookAndFeel.h
+index 32defb4525d5..48400b31c042 100644
+--- a/widget/gtk/nsLookAndFeel.h
++++ b/widget/gtk/nsLookAndFeel.h
+@@ -120,9 +120,8 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
+     ColorPair mAccent;
+     ColorPair mSelectedItem;
+ 
+-    ColorPair mMozColHeader;
+-    ColorPair mMozColHeaderHover;
+-    ColorPair mMozColHeaderActive;
++    nscolor mMozColHeaderText = kBlack;
++    nscolor mMozColHeaderHoverText = kBlack;
+ 
+     ColorPair mTitlebar;
+     ColorPair mTitlebarInactive;
+diff --git a/widget/gtk/nsNativeThemeGTK.cpp b/widget/gtk/nsNativeThemeGTK.cpp
+index 06d9b480070a..cf97d7c23239 100644
+--- a/widget/gtk/nsNativeThemeGTK.cpp
++++ b/widget/gtk/nsNativeThemeGTK.cpp
+@@ -289,6 +289,12 @@ bool nsNativeThemeGTK::GetGtkWidgetAndState(StyleAppearance aAppearance,
+       }
+       break;
+     }
++    case StyleAppearance::Separator:
++      aGtkWidgetType = MOZ_GTK_TOOLBAR_SEPARATOR;
++      break;
++    case StyleAppearance::Toolbargripper:
++      aGtkWidgetType = MOZ_GTK_GRIPPER;
++      break;
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+     case StyleAppearance::Textfield:
+@@ -300,6 +306,37 @@ bool nsNativeThemeGTK::GetGtkWidgetAndState(StyleAppearance aAppearance,
+     case StyleAppearance::Treeview:
+       aGtkWidgetType = MOZ_GTK_TREEVIEW;
+       break;
++    case StyleAppearance::Treeheadercell:
++      if (aWidgetFlags) {
++        // In this case, the flag denotes whether the header is the sorted one
++        // or not
++        if (GetTreeSortDirection(aFrame) == eTreeSortDirection_Natural)
++          *aWidgetFlags = false;
++        else
++          *aWidgetFlags = true;
++      }
++      aGtkWidgetType = MOZ_GTK_TREE_HEADER_CELL;
++      break;
++    case StyleAppearance::Treeheadersortarrow:
++      if (aWidgetFlags) {
++        switch (GetTreeSortDirection(aFrame)) {
++          case eTreeSortDirection_Ascending:
++            *aWidgetFlags = GTK_ARROW_DOWN;
++            break;
++          case eTreeSortDirection_Descending:
++            *aWidgetFlags = GTK_ARROW_UP;
++            break;
++          case eTreeSortDirection_Natural:
++          default:
++            /* This prevents the treecolums from getting smaller
++             * and wider when switching sort direction off and on
++             * */
++            *aWidgetFlags = GTK_ARROW_NONE;
++            break;
++        }
++      }
++      aGtkWidgetType = MOZ_GTK_TREE_HEADER_SORTARROW;
++      break;
+     case StyleAppearance::Treetwisty:
+       aGtkWidgetType = MOZ_GTK_TREEVIEW_EXPANDER;
+       if (aWidgetFlags) *aWidgetFlags = GTK_EXPANDER_COLLAPSED;
+@@ -332,6 +369,9 @@ bool nsNativeThemeGTK::GetGtkWidgetAndState(StyleAppearance aAppearance,
+           *aWidgetFlags = GTK_ARROW_LEFT;
+       }
+       break;
++    case StyleAppearance::Toolbar:
++      aGtkWidgetType = MOZ_GTK_TOOLBAR;
++      break;
+     case StyleAppearance::Tooltip:
+       aGtkWidgetType = MOZ_GTK_TOOLTIP;
+       break;
+@@ -1093,7 +1133,9 @@ LayoutDeviceIntSize nsNativeThemeGTK::GetMinimumWidgetSize(
+     }
+     case StyleAppearance::Button:
+     case StyleAppearance::Menulist:
+-    case StyleAppearance::MenulistButton: {
++    case StyleAppearance::MenulistButton:
++    case StyleAppearance::Toolbarbutton:
++    case StyleAppearance::Treeheadercell: {
+       if (aAppearance == StyleAppearance::Menulist ||
+           aAppearance == StyleAppearance::MenulistButton) {
+         // Include the arrow size.
+@@ -1142,11 +1184,15 @@ LayoutDeviceIntSize nsNativeThemeGTK::GetMinimumWidgetSize(
+         result.height = height;
+       }
+     } break;
++    case StyleAppearance::Separator: {
++      moz_gtk_get_toolbar_separator_width(&result.width);
++    } break;
+     case StyleAppearance::Spinner:
+       // hard code these sizes
+       result.width = 14;
+       result.height = 26;
+       break;
++    case StyleAppearance::Treeheadersortarrow:
+     case StyleAppearance::SpinnerUpbutton:
+     case StyleAppearance::SpinnerDownbutton:
+       // hard code these sizes
+@@ -1256,6 +1302,7 @@ nsNativeThemeGTK::ThemeSupportsWidget(nsPresContext* aPresContext,
+     case StyleAppearance::Radio:
+     case StyleAppearance::Checkbox:
+     case StyleAppearance::Toolbox:  // N/A
++    case StyleAppearance::Toolbar:
+     case StyleAppearance::Toolbarbutton:
+     case StyleAppearance::Dualbutton:  // so we can override the border with 0
+     case StyleAppearance::ToolbarbuttonDropdown:
+@@ -1263,12 +1310,16 @@ nsNativeThemeGTK::ThemeSupportsWidget(nsPresContext* aPresContext,
+     case StyleAppearance::ButtonArrowDown:
+     case StyleAppearance::ButtonArrowNext:
+     case StyleAppearance::ButtonArrowPrevious:
++    case StyleAppearance::Separator:
++    case StyleAppearance::Toolbargripper:
+     case StyleAppearance::Listbox:
+     case StyleAppearance::Treeview:
+       // case StyleAppearance::Treeitem:
+     case StyleAppearance::Treetwisty:
+       // case StyleAppearance::Treeline:
+       // case StyleAppearance::Treeheader:
++    case StyleAppearance::Treeheadercell:
++    case StyleAppearance::Treeheadersortarrow:
+     case StyleAppearance::Treetwistyopen:
+     case StyleAppearance::ProgressBar:
+     case StyleAppearance::Progresschunk:
+@@ -1336,6 +1387,7 @@ bool nsNativeThemeGTK::ThemeDrawsFocusForWidget(nsIFrame* aFrame,
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::Textarea:
+     case StyleAppearance::Textfield:
++    case StyleAppearance::Treeheadercell:
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+       return true;
+diff --git a/widget/nsNativeTheme.cpp b/widget/nsNativeTheme.cpp
+index 390246617fd6..4c78d3fa5387 100644
+--- a/widget/nsNativeTheme.cpp
++++ b/widget/nsNativeTheme.cpp
+@@ -54,6 +54,7 @@ NS_IMPL_ISUPPORTS(nsNativeTheme, nsITimerCallback, nsINamed)
+     if (aAppearance == StyleAppearance::Checkbox ||
+         aAppearance == StyleAppearance::Radio ||
+         aAppearance == StyleAppearance::ToolbarbuttonDropdown ||
++        aAppearance == StyleAppearance::Treeheadersortarrow ||
+         aAppearance == StyleAppearance::ButtonArrowPrevious ||
+         aAppearance == StyleAppearance::ButtonArrowNext ||
+         aAppearance == StyleAppearance::ButtonArrowUp ||
+diff --git a/widget/nsXPLookAndFeel.cpp b/widget/nsXPLookAndFeel.cpp
+index 3020dbba68ce..c56ff06cac53 100644
+--- a/widget/nsXPLookAndFeel.cpp
++++ b/widget/nsXPLookAndFeel.cpp
+@@ -283,12 +283,8 @@ static const char sColorPrefs[][41] = {
+     "ui.-moz-hyperlinktext",
+     "ui.-moz-activehyperlinktext",
+     "ui.-moz-visitedhyperlinktext",
+-    "ui.-moz-colheader",
+     "ui.-moz-colheadertext",
+-    "ui.-moz-colheaderhover",
+     "ui.-moz-colheaderhovertext",
+-    "ui.-moz-colheaderactive",
+-    "ui.-moz-colheaderactivetext",
+     "ui.textSelectDisabledBackground",
+     "ui.textSelectAttentionBackground",
+     "ui.textSelectAttentionForeground",
+@@ -741,9 +737,6 @@ Maybe<nscolor> nsXPLookAndFeel::GenericDarkColor(ColorID aID) {
+     case ColorID::Captiontext:
+     case ColorID::Inactivecaptiontext:  // TODO(emilio): Maybe make
+                                         // Inactivecaptiontext Graytext?
+-    case ColorID::MozColheadertext:
+-    case ColorID::MozColheaderhovertext:
+-    case ColorID::MozColheaderactivetext:
+       color = kWindowText;
+       break;
+     case ColorID::Buttonshadow:
+@@ -764,7 +757,6 @@ Maybe<nscolor> nsXPLookAndFeel::GenericDarkColor(ColorID aID) {
+     case ColorID::Field:
+     case ColorID::Buttonface:  // --in-content-button-background
+     case ColorID::Buttonhighlight:
+-    case ColorID::MozColheader:
+     case ColorID::Threedface:
+     case ColorID::MozCombobox:
+     case ColorID::MozCellhighlighttext:
+@@ -780,11 +772,9 @@ Maybe<nscolor> nsXPLookAndFeel::GenericDarkColor(ColorID aID) {
+       color = NS_ComposeColors(kWindowBackground, NS_RGBA(43, 42, 51, 102));
+       break;
+     case ColorID::MozButtonhoverface:  // --in-content-button-background-hover
+-    case ColorID::MozColheaderhover:
+       color = NS_RGB(82, 82, 94);
+       break;
+     case ColorID::MozButtonactiveface:  // --in-content-button-background-active
+-    case ColorID::MozColheaderactive:
+       color = NS_RGB(91, 91, 102);
+       break;
+     case ColorID::Highlight:
+diff --git a/widget/windows/nsLookAndFeel.cpp b/widget/windows/nsLookAndFeel.cpp
+index 41a4ce72b3e4..31ae1eb0fcda 100644
+--- a/widget/windows/nsLookAndFeel.cpp
++++ b/widget/windows/nsLookAndFeel.cpp
+@@ -213,9 +213,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+     case ColorID::MozButtonhoverface:
+     case ColorID::MozButtonactiveface:
+     case ColorID::MozButtondisabledface:
+-    case ColorID::MozColheader:
+-    case ColorID::MozColheaderhover:
+-    case ColorID::MozColheaderactive:
+       idx = COLOR_BTNFACE;
+       break;
+     case ColorID::Buttonhighlight:
+@@ -341,7 +338,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+     case ColorID::MozDialogtext:
+     case ColorID::MozColheadertext:
+     case ColorID::MozColheaderhovertext:
+-    case ColorID::MozColheaderactivetext:
+       idx = COLOR_WINDOWTEXT;
+       break;
+     case ColorID::MozNativehyperlinktext:
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index 04883a833fc3..1a8af27882e5 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -504,6 +504,7 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
+     case StyleAppearance::MenulistButton:
+       return Some(eUXCombobox);
+     case StyleAppearance::Treeheadercell:
++    case StyleAppearance::Treeheadersortarrow:
+       return Some(eUXHeader);
+     case StyleAppearance::Listbox:
+     case StyleAppearance::Treeview:
+@@ -777,6 +778,12 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
+ 
+       return NS_OK;
+     }
++    case StyleAppearance::Treeheadersortarrow: {
++      // XXX Probably will never work due to a bug in the Luna theme.
++      aPart = 4;
++      aState = 1;
++      return NS_OK;
++    }
+     case StyleAppearance::Treeheadercell: {
+       aPart = 1;
+       if (!aFrame) {

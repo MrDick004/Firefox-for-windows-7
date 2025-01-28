@@ -1,0 +1,24 @@
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index f605b50dcbf9..d0f16e400e44 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -972,19 +948,6 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
+     }
+   }
+ 
+-  {
+-    // Some of the chrome mask window styles can be added implicitly by
+-    // CreateWindowEx, but we really don't want that.
+-    // To be safe, only deal with those bits for now, instead of just
+-    // overriding with extendedStyle or style.
+-    // This can happen with non-native alert windows for example.
+-    const auto actualStyles = Styles::FromHWND(mWnd);
+-    auto newStyles = (actualStyles & ~kChromeStylesMask) |
+-                     (desiredStyles & kChromeStylesMask);
+-    if (newStyles != actualStyles) {
+-      SetWindowStyles(mWnd, newStyles);
+-    }
+-  }
+ 
+   if (!sWinCloakEventHook) {
+     MOZ_LOG(sCloakingLog, LogLevel::Info, ("Registering cloaking event hook"));

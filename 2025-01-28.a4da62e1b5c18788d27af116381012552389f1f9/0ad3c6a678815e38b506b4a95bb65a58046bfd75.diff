@@ -1,0 +1,668 @@
+diff --git a/build/workspace-hack/Cargo.toml b/build/workspace-hack/Cargo.toml
+index db1d0730e75f..1fb78348cf1b 100644
+--- a/build/workspace-hack/Cargo.toml
++++ b/build/workspace-hack/Cargo.toml
+@@ -216,13 +216,11 @@ features = [
+     "Win32_System_Memory",
+     "Win32_System_Pipes",
+     "Win32_System_ProcessStatus",
+-    "Win32_System_Registry",
+     "Win32_System_SystemInformation",
+     "Win32_System_SystemServices",
+     "Win32_System_Threading",
+     "Win32_System_WindowsProgramming",
+     "Win32_UI_Controls",
+-    "Win32_UI_HiDpi",
+     "Win32_UI_Input_KeyboardAndMouse",
+     "Win32_UI_Shell",
+     "Win32_UI_WindowsAndMessaging",
+diff --git a/toolkit/crashreporter/client/app/Cargo.toml b/toolkit/crashreporter/client/app/Cargo.toml
+index 4899535ebd7e..b2a345486718 100644
+--- a/toolkit/crashreporter/client/app/Cargo.toml
++++ b/toolkit/crashreporter/client/app/Cargo.toml
+@@ -47,11 +47,9 @@ features = [
+     "Win32_Graphics_Gdi",
+     "Win32_System_Com",
+     "Win32_System_LibraryLoader",
+-    "Win32_System_Registry",
+     "Win32_System_SystemServices",
+     "Win32_System_Threading",
+     "Win32_UI_Controls",
+-    "Win32_UI_HiDpi",
+     "Win32_UI_Input_KeyboardAndMouse",
+     "Win32_UI_Shell",
+     "Win32_UI_WindowsAndMessaging"
+diff --git a/toolkit/crashreporter/client/app/build.rs b/toolkit/crashreporter/client/app/build.rs
+index 63a267b2748b..9d15f1262a56 100644
+--- a/toolkit/crashreporter/client/app/build.rs
++++ b/toolkit/crashreporter/client/app/build.rs
+@@ -25,9 +25,9 @@ fn windows_manifest() {
+         // Use legacy active code page because GDI doesn't support per-process UTF8 (and older
+         // win10 may not support this setting anyway).
+         .active_code_page(manifest::ActiveCodePage::Legacy)
+-        // We support WM_DPICHANGED for scaling, but need to set our DPI awareness to receive the
+-        // messages.
+-        .dpi_awareness(manifest::DpiAwareness::PerMonitorV2);
++        // GDI scaling is not enabled by default but we need it to make the GDI-drawn text look
++        // nice on high-DPI displays.
++        .gdi_scaling(manifest::Setting::Enabled);
+ 
+     embed_manifest(manifest).expect("unable to embed windows manifest file");
+ 
+diff --git a/toolkit/crashreporter/client/app/src/data.rs b/toolkit/crashreporter/client/app/src/data.rs
+index 9b86261a199b..474da8966aec 100644
+--- a/toolkit/crashreporter/client/app/src/data.rs
++++ b/toolkit/crashreporter/client/app/src/data.rs
+@@ -135,15 +135,6 @@ impl<T> Synchronized<T> {
+         });
+     }
+ 
+-    /// Immediately call the closure on the current value and call it whenever the value changes.
+-    pub fn map_with<F: Fn(&T) + 'static>(&self, f: F) {
+-        // Hold the borrow to guarantee the value doesn't change until we are subscribed (just as a
+-        // measure of extra sanity; this should never occur).
+-        let borrow = self.borrow();
+-        f(&*borrow);
+-        self.on_change(f);
+-    }
+-
+     /// Create a new synchronized value which will update when this one changes.
+     pub fn mapped<U: 'static, F: Fn(&T) -> U + 'static>(&self, f: F) -> Synchronized<U> {
+         let s = Synchronized::new(f(&*self.borrow()));
+diff --git a/toolkit/crashreporter/client/app/src/ui/windows/dpi.rs b/toolkit/crashreporter/client/app/src/ui/windows/dpi.rs
+index a85561cd514f..e69de29bb2d1 100644
+--- a/toolkit/crashreporter/client/app/src/ui/windows/dpi.rs
++++ b/toolkit/crashreporter/client/app/src/ui/windows/dpi.rs
+@@ -1,63 +0,0 @@
+-/* This Source Code Form is subject to the terms of the Mozilla Public
+- * License, v. 2.0. If a copy of the MPL was not distributed with this
+- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+-
+-//! DPI management utilities.
+-
+-use windows_sys::Win32::{
+-    Foundation::HWND,
+-    UI::{HiDpi::GetDpiForWindow, WindowsAndMessaging::USER_DEFAULT_SCREEN_DPI as DEFAULT_DPI},
+-};
+-
+-// To simplify layout code (avoiding passing values through many functions), we provide an API
+-// which can set a contextual Dpi.
+-thread_local! {
+-    static CONTEXT_DPI: std::cell::Cell<Dpi> = Dpi::default().into();
+-}
+-
+-/// A DPI value.
+-#[derive(Clone, Copy, Debug)]
+-pub struct Dpi(u32);
+-
+-impl Default for Dpi {
+-    fn default() -> Self {
+-        Dpi(DEFAULT_DPI)
+-    }
+-}
+-
+-impl Dpi {
+-    /// Create a new Dpi.
+-    pub fn new(dpi: u32) -> Self {
+-        Dpi(dpi)
+-    }
+-
+-    /// Get the Dpi for the given window.
+-    pub fn for_window(hwnd: HWND) -> Self {
+-        Dpi(unsafe { GetDpiForWindow(hwnd) })
+-    }
+-
+-    /// Scale a pixel value according to this Dpi.
+-    pub fn scale(&self, value: u32) -> u32 {
+-        if self.0 == DEFAULT_DPI {
+-            value
+-        } else {
+-            (value as u64 * self.0 as u64 / DEFAULT_DPI as u64) as u32
+-        }
+-    }
+-
+-    /// Call the given capture with this Dpi set as the contextual Dpi.
+-    pub fn with_context<F, R>(&self, f: F) -> R
+-    where
+-        F: FnOnce() -> R,
+-    {
+-        let old = CONTEXT_DPI.replace(*self);
+-        let ret = f();
+-        CONTEXT_DPI.set(old);
+-        ret
+-    }
+-
+-    /// Scale a pixel value according to the contextual Dpi.
+-    pub fn context_scale(value: u32) -> u32 {
+-        CONTEXT_DPI.get().scale(value)
+-    }
+-}
++
+diff --git a/toolkit/crashreporter/client/app/src/ui/windows/font.rs b/toolkit/crashreporter/client/app/src/ui/windows/font.rs
+index bc7226eb35bc..3ec48316eb37 100644
+--- a/toolkit/crashreporter/client/app/src/ui/windows/font.rs
++++ b/toolkit/crashreporter/client/app/src/ui/windows/font.rs
+@@ -2,101 +2,21 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+-use super::Dpi;
+-use super::WideString;
+-use windows_sys::Win32::{
+-    Foundation::{ERROR_SUCCESS, S_OK},
+-    Graphics::Gdi,
+-    System::Registry,
+-    UI::Controls,
+-};
++use windows_sys::Win32::{Foundation::S_OK, Graphics::Gdi, UI::Controls};
+ 
+-/// The default font size to use.
+-///
+-/// `GetThemeSysFont` scales the font based on DPI and accessibility settings, however it only takes
+-/// those active at application startup into account (it won't scale correctly across monitors, nor
+-/// if the DPI of the current monitor changes). So we use a fixed size instead and scale that.
+-const DEFAULT_FONT_SIZE: i32 = -12;
+-
+-/// The set of fonts to use.
+-pub struct Fonts {
+-    pub normal: Font,
+-    pub bold: Font,
+-}
+-
+-/// The scale factor set by the windows 10 "make text bigger" accessibility setting.
+-#[derive(Clone, Copy, Debug)]
+-pub struct ScaleFactor(f32);
+-
+-impl ScaleFactor {
+-    /// Create a new scale factor.
+-    ///
+-    /// The factor will be clamped to [1,2.25], to match the
+-    /// [documentation](https://learn.microsoft.com/en-us/uwp/api/windows.ui.viewmanagement.uisettings.textscalefactor)
+-    /// and avoid any surprises.
+-    pub fn new(factor: f32) -> Self {
+-        ScaleFactor(factor.clamp(1., 2.25))
+-    }
+-
+-    /// Get the current scale factor setting from the registry.
+-    pub fn from_registry() -> Self {
+-        let key = WideString::new("SOFTWARE\\Microsoft\\Accessibility");
+-        let value = WideString::new("TextScaleFactor");
+-        let mut scale_factor: [u8; 4] = Default::default();
+-        let mut size: u32 = std::mem::size_of_val(&scale_factor) as u32;
+-        let mut reg_type: u32 = 0;
+-        let result = unsafe {
+-            Registry::RegGetValueW(
+-                Registry::HKEY_CURRENT_USER,
+-                key.pcwstr(),
+-                value.pcwstr(),
+-                Registry::RRF_RT_REG_DWORD,
+-                &mut reg_type,
+-                &mut scale_factor as *mut u8 as _,
+-                &mut size,
+-            )
+-        };
+-        let percent = if result == ERROR_SUCCESS {
+-            if reg_type == Registry::REG_DWORD_BIG_ENDIAN {
+-                u32::from_be_bytes(scale_factor)
+-            } else {
+-                u32::from_le_bytes(scale_factor)
+-            }
+-        } else {
+-            100
+-        };
+-        Self::new(percent as f32 / 100.)
+-    }
+-}
+-
+-impl Fonts {
+-    pub fn new(dpi: Dpi, scale_factor: ScaleFactor) -> Self {
+-        let builder = FontBuilder { dpi, scale_factor };
+-        Fonts {
+-            normal: builder.caption(),
+-            bold: builder.caption_bold().unwrap_or_else(|| builder.caption()),
+-        }
+-    }
+-}
+-
+-pub struct FontBuilder {
+-    dpi: Dpi,
+-    scale_factor: ScaleFactor,
+-}
++/// Windows font handle (`HFONT`).
++pub struct Font(Gdi::HFONT);
+ 
+-impl FontBuilder {
++impl Font {
+     /// Get the system theme caption font.
+     ///
+     /// Panics if the font cannot be retrieved.
+-    pub fn caption(&self) -> Font {
++    pub fn caption() -> Self {
+         unsafe {
+             let mut font = std::mem::zeroed::<Gdi::LOGFONTW>();
+             success!(hresult
+                 Controls::GetThemeSysFont(0, Controls::TMT_CAPTIONFONT as i32, &mut font)
+             );
+-            font.lfHeight = DEFAULT_FONT_SIZE;
+-            self.scale_font_height(&mut font.lfHeight);
+-            font.lfWidth = 0;
+             Font(success!(pointer Gdi::CreateFontIndirectW(&font)))
+         }
+     }
+@@ -104,15 +24,12 @@ impl FontBuilder {
+     /// Get the system theme bold caption font.
+     ///
+     /// Returns `None` if the font cannot be retrieved.
+-    pub fn caption_bold(&self) -> Option<Font> {
++    pub fn caption_bold() -> Option<Self> {
+         unsafe {
+             let mut font = std::mem::zeroed::<Gdi::LOGFONTW>();
+             if Controls::GetThemeSysFont(0, Controls::TMT_CAPTIONFONT as i32, &mut font) != S_OK {
+                 return None;
+             }
+-            font.lfHeight = DEFAULT_FONT_SIZE;
+-            self.scale_font_height(&mut font.lfHeight);
+-            font.lfWidth = 0;
+             font.lfWeight = Gdi::FW_BOLD as i32;
+ 
+             let ptr = Gdi::CreateFontIndirectW(&font);
+@@ -122,16 +39,8 @@ impl FontBuilder {
+             Some(Font(ptr))
+         }
+     }
+-
+-    fn scale_font_height(&self, height: &mut i32) {
+-        *height = (self.dpi.scale(height.abs() as u32) as f32 * self.scale_factor.0) as i32
+-            * if height.is_negative() { -1 } else { 1 };
+-    }
+ }
+ 
+-/// Windows font handle (`HFONT`).
+-pub struct Font(Gdi::HFONT);
+-
+ impl std::ops::Deref for Font {
+     type Target = Gdi::HFONT;
+ 
+diff --git a/toolkit/crashreporter/client/app/src/ui/windows/layout.rs b/toolkit/crashreporter/client/app/src/ui/windows/layout.rs
+index e145b9de2a69..a6de8792cec4 100644
+--- a/toolkit/crashreporter/client/app/src/ui/windows/layout.rs
++++ b/toolkit/crashreporter/client/app/src/ui/windows/layout.rs
+@@ -6,7 +6,7 @@
+ 
+ use super::{
+     model::{self, Alignment, Element, ElementStyle, Margin},
+-    Dpi, ElementRef, WideString,
++    ElementRef, WideString,
+ };
+ use crate::data::Property;
+ use std::collections::HashMap;
+@@ -29,7 +29,6 @@ pub(super) type ElementMapping = HashMap<ElementRef, HWND>;
+ /// disparate locations.
+ pub struct Layout<'a> {
+     elements: &'a ElementMapping,
+-    dpi: Dpi,
+     sizes: HashMap<ElementRef, Size>,
+     last_positioned: Option<HWND>,
+ }
+@@ -50,10 +49,9 @@ const CHECKBOX_MARGIN: Margin = Margin {
+ };
+ 
+ impl<'a> Layout<'a> {
+-    pub(super) fn new(elements: &'a ElementMapping, dpi: Dpi) -> Self {
++    pub(super) fn new(elements: &'a ElementMapping) -> Self {
+         Layout {
+             elements,
+-            dpi,
+             sizes: Default::default(),
+             last_positioned: None,
+         }
+@@ -61,14 +59,12 @@ impl<'a> Layout<'a> {
+ 
+     /// Perform a layout of the element and all child elements.
+     pub fn layout(mut self, element: &Element, max_width: u32, max_height: u32) {
+-        self.dpi.clone().with_context(|| {
+-            let max_size = Size {
+-                width: max_width,
+-                height: max_height,
+-            };
+-            self.resize(element, &max_size);
+-            self.reposition(element, &Position::default(), &max_size);
+-        })
++        let max_size = Size {
++            width: max_width,
++            height: max_height,
++        };
++        self.resize(element, &max_size);
++        self.reposition(element, &Position::default(), &max_size);
+     }
+ 
+     fn resize(&mut self, element: &Element, max_size: &Size) -> Size {
+@@ -130,7 +126,6 @@ impl<'a> Layout<'a> {
+                 content_size = Some(size);
+             }
+             VBox(model::VBox { items, spacing }) => {
+-                let spacing = Dpi::context_scale(*spacing);
+                 let mut height = 0;
+                 let mut max_width = 0;
+                 let mut remaining_size = inner_size.clone();
+@@ -165,7 +160,6 @@ impl<'a> Layout<'a> {
+                 spacing,
+                 affirmative_order: _,
+             }) => {
+-                let spacing = Dpi::context_scale(*spacing);
+                 let mut width = 0;
+                 let mut max_height = 0;
+                 let mut remaining_size = inner_size.clone();
+@@ -203,8 +197,8 @@ impl<'a> Layout<'a> {
+             Progress(model::Progress { .. }) => {
+                 // Min size recommended by windows uxguide
+                 content_size = Some(Size {
+-                    width: Dpi::context_scale(160),
+-                    height: Dpi::context_scale(15),
++                    width: 160,
++                    height: 15,
+                 });
+             }
+             // We don't support sizing by textbox content yet (need to read from the HWND due to
+@@ -279,7 +273,7 @@ impl<'a> Layout<'a> {
+                 let mut size = inner_size;
+                 for item in items {
+                     self.reposition(item, &position, &size);
+-                    let consumed = self.get_size(item).height + Dpi::context_scale(*spacing);
++                    let consumed = self.get_size(item).height + spacing;
+                     if item.style.vertical_alignment != Alignment::End {
+                         position.top += consumed;
+                     }
+@@ -296,7 +290,7 @@ impl<'a> Layout<'a> {
+                 let mut size = inner_size;
+                 for item in items {
+                     self.reposition(item, &position, &inner_size);
+-                    let consumed = self.get_size(item).width + Dpi::context_scale(*spacing);
++                    let consumed = self.get_size(item).width + spacing;
+                     if item.style.horizontal_alignment != Alignment::End {
+                         position.start += consumed;
+                     }
+@@ -383,21 +377,21 @@ impl Size {
+     pub fn inner_size(&self, style: &ElementStyle) -> Self {
+         let mut ret = self.less_margin(&style.margin);
+         if let Some(width) = style.horizontal_size_request {
+-            ret.width = Dpi::context_scale(width);
++            ret.width = width;
+         }
+         if let Some(height) = style.vertical_size_request {
+-            ret.height = Dpi::context_scale(height);
++            ret.height = height;
+         }
+         ret
+     }
+ 
+     pub fn from_content_size(&mut self, style: &ElementStyle, content_size: &Self) {
+-        if style.horizontal_size_request.map(Dpi::context_scale) < Some(content_size.width)
++        if style.horizontal_size_request < Some(content_size.width)
+             && style.horizontal_alignment != Alignment::Fill
+         {
+             self.width = content_size.width;
+         }
+-        if style.vertical_size_request.map(Dpi::context_scale) < Some(content_size.height)
++        if style.vertical_size_request < Some(content_size.height)
+             && style.vertical_alignment != Alignment::Fill
+         {
+             self.height = content_size.height;
+@@ -406,19 +400,15 @@ impl Size {
+ 
+     pub fn plus_margin(&self, margin: &Margin) -> Self {
+         let mut ret = self.clone();
+-        ret.width += Dpi::context_scale(margin.start + margin.end);
+-        ret.height += Dpi::context_scale(margin.top + margin.bottom);
++        ret.width += margin.start + margin.end;
++        ret.height += margin.top + margin.bottom;
+         ret
+     }
+ 
+     pub fn less_margin(&self, margin: &Margin) -> Self {
+         let mut ret = self.clone();
+-        ret.width = ret
+-            .width
+-            .saturating_sub(Dpi::context_scale(margin.start + margin.end));
+-        ret.height = ret
+-            .height
+-            .saturating_sub(Dpi::context_scale(margin.top + margin.bottom));
++        ret.width = ret.width.saturating_sub(margin.start + margin.end);
++        ret.height = ret.height.saturating_sub(margin.top + margin.bottom);
+         ret
+     }
+ }
+@@ -433,15 +423,15 @@ impl Position {
+     #[allow(dead_code)]
+     pub fn plus_margin(&self, margin: &Margin) -> Self {
+         let mut ret = self.clone();
+-        ret.start = ret.start.saturating_sub(Dpi::context_scale(margin.start));
+-        ret.top = ret.top.saturating_sub(Dpi::context_scale(margin.top));
++        ret.start = ret.start.saturating_sub(margin.start);
++        ret.top = ret.top.saturating_sub(margin.top);
+         ret
+     }
+ 
+     pub fn less_margin(&self, margin: &Margin) -> Self {
+         let mut ret = self.clone();
+-        ret.start += Dpi::context_scale(margin.start);
+-        ret.top += Dpi::context_scale(margin.top);
++        ret.start += margin.start;
++        ret.top += margin.top;
+         ret
+     }
+ }
+diff --git a/toolkit/crashreporter/client/app/src/ui/windows/mod.rs b/toolkit/crashreporter/client/app/src/ui/windows/mod.rs
+index 6e77f8eec3e1..c2f396b80d1d 100644
+--- a/toolkit/crashreporter/client/app/src/ui/windows/mod.rs
++++ b/toolkit/crashreporter/client/app/src/ui/windows/mod.rs
+@@ -22,9 +22,8 @@
+ extern "C" {}
+ 
+ use super::model::{self, Application, Element, ElementStyle, TypedElement};
+-use crate::data::{Property, Synchronized};
+-use dpi::Dpi;
+-use font::Fonts;
++use crate::data::Property;
++use font::Font;
+ use once_cell::sync::Lazy;
+ use quit_token::QuitToken;
+ use std::cell::RefCell;
+@@ -62,7 +61,6 @@ macro_rules! success {
+     }};
+ }
+ 
+-mod dpi;
+ mod font;
+ mod gdi;
+ mod layout;
+@@ -320,8 +318,6 @@ impl CustomWindowClass for AppWindow {
+         let model = me.renderer.model();
+         match umsg {
+             win::WM_CREATE => {
+-                me.renderer.set_dpi(Dpi::for_window(hwnd));
+-
+                 if let Some(close) = &model.close {
+                     close.subscribe(move |&()| unsafe {
+                         win::SendMessageW(hwnd, win::WM_CLOSE, 0, 0);
+@@ -362,8 +358,8 @@ impl CustomWindowClass for AppWindow {
+             }
+             win::WM_GETMINMAXINFO => {
+                 let minmaxinfo = unsafe { (lparam as *mut win::MINMAXINFO).as_mut().unwrap() };
+-                minmaxinfo.ptMinTrackSize.x = me.renderer.min_width().try_into().unwrap();
+-                minmaxinfo.ptMinTrackSize.y = me.renderer.min_height().try_into().unwrap();
++                minmaxinfo.ptMinTrackSize.x = me.renderer.min_size.0.try_into().unwrap();
++                minmaxinfo.ptMinTrackSize.y = me.renderer.min_size.1.try_into().unwrap();
+                 return Some(0);
+             }
+             win::WM_SIZE => {
+@@ -377,31 +373,7 @@ impl CustomWindowClass for AppWindow {
+                 }
+                 return Some(0);
+             }
+-            win::WM_DPICHANGED => {
+-                // When DPI changes, recompute the layout and move the window.
+-                let rect: &RECT = unsafe { (lparam as *const RECT).as_ref() }
+-                    .expect("null RECT pointer in WM_DPICHANGED");
+-                let dpi = loword(wparam as _) as u32;
+-
+-                let width = rect.right - rect.left;
+-                let height = rect.bottom - rect.top;
+-
+-                me.renderer.set_dpi(Dpi::new(dpi));
+-                // This wil send WM_SIZE, which will take care of the new layout.
+-                unsafe {
+-                    win::SetWindowPos(
+-                        hwnd,
+-                        win::HWND_TOP,
+-                        rect.left,
+-                        rect.top,
+-                        width,
+-                        height,
+-                        win::SWP_NOZORDER | win::SWP_NOACTIVATE,
+-                    )
+-                };
+-                return Some(0);
+-            }
+-            win::WM_GETFONT => return Some(me.renderer.font()),
++            win::WM_GETFONT => return Some(**me.renderer.font() as _),
+             win::WM_COMMAND => {
+                 let child = lparam as HWND;
+                 let windows = me.renderer.windows.borrow();
+@@ -463,20 +435,17 @@ struct WindowRendererInner {
+     /// changes. Unfortunately the win32 API doesn't have any nice ways to automatically perform
+     /// layout.
+     pub model: RefCell<Pin<Box<model::Window>>>,
+-    min_size: (u32, u32),
++    pub min_size: (u32, u32),
+     /// Mapping between model elements and windows.
+     ///
+     /// Element references pertain to elements in `model`.
+     pub windows: RefCell<twoway::TwoWay<ElementRef, HWND>>,
+-    pub dpi: Synchronized<Dpi>,
+-    pub fonts: Synchronized<Fonts>,
++    pub font: Font,
++    pub bold_font: Font,
+ }
+ 
+ impl WindowRenderer {
+     pub fn new(module: HINSTANCE, model: model::Window, style: &model::ElementStyle) -> Self {
+-        let dpi: Synchronized<Dpi> = Default::default();
+-        let scale_factor = font::ScaleFactor::from_registry();
+-        let fonts = dpi.mapped(move |dpi| Fonts::new(*dpi, scale_factor));
+         WindowRenderer {
+             inner: Rc::new(WindowRendererInner {
+                 module,
+@@ -486,8 +455,8 @@ impl WindowRenderer {
+                     style.vertical_size_request.unwrap_or(0),
+                 ),
+                 windows: Default::default(),
+-                dpi,
+-                fonts,
++                font: Font::caption(),
++                bold_font: Font::caption_bold().unwrap_or_else(Font::caption),
+             }),
+         }
+     }
+@@ -501,16 +470,9 @@ impl WindowRenderer {
+         }
+     }
+ 
+-    pub fn set_dpi(&self, dpi: Dpi) {
+-        *self.dpi.borrow_mut() = dpi;
+-    }
+-
+     pub fn layout(&self, element: &Element, max_width: u32, max_height: u32) {
+-        layout::Layout::new(
+-            self.inner.windows.borrow().forward(),
+-            *self.inner.dpi.borrow(),
+-        )
+-        .layout(element, max_width, max_height);
++        layout::Layout::new(self.inner.windows.borrow().forward())
++            .layout(element, max_width, max_height);
+     }
+ 
+     pub fn model(&self) -> std::cell::Ref<'_, model::Window> {
+@@ -521,16 +483,8 @@ impl WindowRenderer {
+         std::cell::RefMut::map(self.inner.model.borrow_mut(), |b| &mut **b)
+     }
+ 
+-    pub fn font(&self) -> Gdi::HFONT {
+-        *self.inner.fonts.borrow().normal
+-    }
+-
+-    pub fn min_width(&self) -> u32 {
+-        self.inner.dpi.borrow().scale(self.min_size.0)
+-    }
+-
+-    pub fn min_height(&self) -> u32 {
+-        self.inner.dpi.borrow().scale(self.min_size.1)
++    pub fn font(&self) -> &Font {
++        &self.inner.font
+     }
+ }
+ 
+@@ -604,7 +558,7 @@ impl<'a> WindowChildRenderer<'a> {
+ 
+     fn render_child(&mut self, element: &Element) {
+         if let Some(mut window) = self.render_element_type(&element.element_type) {
+-            window.set_default_font(&self.renderer.fonts, |fonts| &fonts.normal);
++            window.set_default_font(&self.renderer.font);
+ 
+             // Store the element to handle mapping.
+             self.renderer
+@@ -687,7 +641,7 @@ impl<'a> WindowChildRenderer<'a> {
+                     }
+                 };
+                 if *bold {
+-                    window.set_font(&self.renderer.fonts, |fonts| &fonts.bold);
++                    window.set_font(&self.renderer.bold_font);
+                 }
+                 Some(window.generic())
+             }
+diff --git a/toolkit/crashreporter/client/app/src/ui/windows/window.rs b/toolkit/crashreporter/client/app/src/ui/windows/window.rs
+index f57a15262ec0..0188ca821625 100644
+--- a/toolkit/crashreporter/client/app/src/ui/windows/window.rs
++++ b/toolkit/crashreporter/client/app/src/ui/windows/window.rs
+@@ -4,9 +4,8 @@
+ 
+ //! Types and helpers relating to windows and window classes.
+ 
+-use super::font::{Font, Fonts};
++use super::Font;
+ use super::WideString;
+-use crate::data::Synchronized;
+ use std::cell::RefCell;
+ use windows_sys::Win32::{
+     Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+@@ -298,26 +297,15 @@ impl<W> Window<W> {
+     }
+ 
+     /// Set a window's font.
+-    pub fn set_font(
+-        &mut self,
+-        fonts: &Synchronized<Fonts>,
+-        font: impl Fn(&Fonts) -> &Font + 'static,
+-    ) {
+-        let handle = self.handle;
+-        fonts.map_with(move |fonts| unsafe {
+-            win::SendMessageW(handle, win::WM_SETFONT, **font(fonts) as _, 1 as _);
+-        });
++    pub fn set_font(&mut self, font: &Font) {
++        unsafe { win::SendMessageW(self.handle, win::WM_SETFONT, **font as _, 1 as _) };
+         self.font_set = true;
+     }
+ 
+     /// Set a window's font if not already set.
+-    pub fn set_default_font(
+-        &mut self,
+-        fonts: &Synchronized<Fonts>,
+-        font: impl Fn(&Fonts) -> &Font + 'static,
+-    ) {
++    pub fn set_default_font(&mut self, font: &Font) {
+         if !self.font_set {
+-            self.set_font(fonts, font);
++            self.set_font(font);
+         }
+     }
+ }

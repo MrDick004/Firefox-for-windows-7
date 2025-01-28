@@ -1,0 +1,1 @@
+Bug 1843842 part 1 - Always use GetSystemTimePreciseAsFileTime on Windows. r=arai,emk    2023/7/18 15:17:07    61864dd98bb1fb4bf734853b3ea95ae0701400ec

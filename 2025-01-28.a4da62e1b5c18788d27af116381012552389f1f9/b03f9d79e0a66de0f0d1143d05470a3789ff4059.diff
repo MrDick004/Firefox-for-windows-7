@@ -1,0 +1,1595 @@
+diff --git a/accessible/xul/XULFormControlAccessible.cpp b/accessible/xul/XULFormControlAccessible.cpp
+index ec87c4a2c1b2..038f93dd68ac 100644
+--- a/accessible/xul/XULFormControlAccessible.cpp
++++ b/accessible/xul/XULFormControlAccessible.cpp
+@@ -20,6 +20,7 @@
+ #include "nsIDOMXULRadioGroupElement.h"
+ #include "nsIDOMXULSelectCntrlItemEl.h"
+ #include "nsIFrame.h"
++#include "nsITextControlFrame.h"
+ #include "nsMenuPopupFrame.h"
+ #include "nsNameSpaceManager.h"
+ #include "mozilla/dom/Element.h"
+diff --git a/dom/base/Document.cpp b/dom/base/Document.cpp
+index 234b4866e352..18763ebed172 100644
+--- a/dom/base/Document.cpp
++++ b/dom/base/Document.cpp
+@@ -425,7 +425,6 @@
+ #include "nsStringIterator.h"
+ #include "nsStyleSheetService.h"
+ #include "nsStyleStruct.h"
+-#include "nsTextControlFrame.h"
+ #include "nsSubDocumentFrame.h"
+ #include "nsTextNode.h"
+ #include "nsUnicharUtils.h"
+@@ -13972,8 +13971,9 @@ already_AddRefed<nsDOMCaretPosition> Document::CaretPositionFromPoint(
+     nsINode* nonChrome =
+         node->AsContent()->FindFirstNonChromeOnlyAccessContent();
+     HTMLTextAreaElement* textArea = HTMLTextAreaElement::FromNode(nonChrome);
+-    nsTextControlFrame* textFrame =
++    nsITextControlFrame* textFrame =
+         do_QueryFrame(nonChrome->AsContent()->GetPrimaryFrame());
++
+     if (!textFrame) {
+       return nullptr;
+     }
+diff --git a/dom/html/HTMLButtonElement.cpp b/dom/html/HTMLButtonElement.cpp
+index fc08ae453636..7d7fa7f54885 100644
+--- a/dom/html/HTMLButtonElement.cpp
++++ b/dom/html/HTMLButtonElement.cpp
+@@ -15,6 +15,7 @@
+ #include "nsPresContext.h"
+ #include "nsIFormControl.h"
+ #include "nsIFrame.h"
++#include "nsIFormControlFrame.h"
+ #include "mozilla/dom/Document.h"
+ #include "mozilla/ContentEvents.h"
+ #include "mozilla/FocusModel.h"
+@@ -146,7 +147,9 @@ bool HTMLButtonElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
+ }
+ 
+ bool HTMLButtonElement::IsDisabledForEvents(WidgetEvent* aEvent) {
+-  return IsElementDisabledForEvents(aEvent, GetPrimaryFrame());
++  nsIFormControlFrame* formControlFrame = GetFormControlFrame(false);
++  nsIFrame* formFrame = do_QueryFrame(formControlFrame);
++  return IsElementDisabledForEvents(aEvent, formFrame);
+ }
+ 
+ void HTMLButtonElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
+diff --git a/dom/html/HTMLFormElement.cpp b/dom/html/HTMLFormElement.cpp
+index 5ed8e521cd9f..9b0928dab784 100644
+--- a/dom/html/HTMLFormElement.cpp
++++ b/dom/html/HTMLFormElement.cpp
+@@ -38,6 +38,7 @@
+ #include "nsFocusManager.h"
+ #include "nsGkAtoms.h"
+ #include "nsHTMLDocument.h"
++#include "nsIFormControlFrame.h"
+ #include "nsInterfaceHashtable.h"
+ #include "nsPresContext.h"
+ #include "nsQueryObject.h"
+diff --git a/dom/html/HTMLInputElement.cpp b/dom/html/HTMLInputElement.cpp
+index 55fabb3019cf..7b401c92c762 100644
+--- a/dom/html/HTMLInputElement.cpp
++++ b/dom/html/HTMLInputElement.cpp
+@@ -47,7 +47,6 @@
+ #include "nsIStringBundle.h"
+ #include "nsFocusManager.h"
+ #include "nsColorControlFrame.h"
+-#include "nsFileControlFrame.h"
+ #include "nsNumberControlFrame.h"
+ #include "nsSearchControlFrame.h"
+ #include "nsPIDOMWindow.h"
+@@ -60,6 +59,8 @@
+ #include "mozilla/dom/Document.h"
+ #include "mozilla/dom/HTMLDataListElement.h"
+ #include "mozilla/dom/HTMLOptionElement.h"
++#include "nsIFormControlFrame.h"
++#include "nsITextControlFrame.h"
+ #include "nsIFrame.h"
+ #include "nsRangeFrame.h"
+ #include "nsError.h"
+@@ -2573,8 +2574,11 @@ void HTMLInputElement::AfterSetFilesOrDirectories(bool aSetValueChanged) {
+   // No need to flush here, if there's no frame at this point we
+   // don't need to force creation of one just to tell it about this
+   // new value.  We just want the display to update as needed.
+-  if (nsFileControlFrame* f = do_QueryFrame(GetPrimaryFrame())) {
+-    f->SelectedFilesUpdated();
++  nsIFormControlFrame* formControlFrame = GetFormControlFrame(false);
++  if (formControlFrame) {
++    nsAutoString readableValue;
++    GetDisplayFileName(readableValue);
++    formControlFrame->SetFormProperty(nsGkAtoms::value, readableValue);
+   }
+ 
+   // Grab the full path here for any chrome callers who access our .value via a
+@@ -3102,11 +3106,11 @@ void HTMLInputElement::Select() {
+                            TextControlState::ScrollAfterSelection::No);
+ }
+ 
+-void HTMLInputElement::SelectAll() {
+-  // FIXME(emilio): Should we try to call Select(), which will avoid flushing?
+-  if (nsTextControlFrame* tf =
+-          do_QueryFrame(GetPrimaryFrame(FlushType::Frames))) {
+-    tf->SelectAll();
++void HTMLInputElement::SelectAll(nsPresContext* aPresContext) {
++  nsIFormControlFrame* formControlFrame = GetFormControlFrame(true);
++
++  if (formControlFrame) {
++    formControlFrame->SetFormProperty(nsGkAtoms::select, u""_ns);
+   }
+ }
+ 
+@@ -3183,9 +3187,8 @@ void HTMLInputElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
+ 
+   // Initialize the editor if needed.
+   if (NeedToInitializeEditorForEvent(aVisitor)) {
+-    if (nsTextControlFrame* tcf = do_QueryFrame(GetPrimaryFrame())) {
+-      tcf->EnsureEditorInitialized();
+-    }
++    nsITextControlFrame* textControlFrame = do_QueryFrame(GetPrimaryFrame());
++    if (textControlFrame) textControlFrame->EnsureEditorInitialized();
+   }
+ 
+   if (CheckActivationBehaviorPreconditions(aVisitor)) {
+@@ -3214,10 +3217,10 @@ void HTMLInputElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
+   if (mType == FormControlType::InputRange &&
+       (aVisitor.mEvent->mMessage == eFocus ||
+        aVisitor.mEvent->mMessage == eBlur)) {
+-    // We handle focus here.
+-    // FIXME(emilio): Why is this needed? If it is it should be moved to
+-    // nsRangeFrame::ElementStateChanged.
+-    if (nsIFrame* frame = GetPrimaryFrame()) {
++    // Just as nsGenericHTMLFormControlElementWithState::GetEventTargetParent
++    // calls nsIFormControlFrame::SetFocus, we handle focus here.
++    nsIFrame* frame = GetPrimaryFrame();
++    if (frame) {
+       frame->InvalidateFrameSubtree();
+     }
+   }
+@@ -3772,7 +3775,9 @@ nsresult HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
+                 return bool(lastFocusMethod & nsIFocusManager::FLAG_BYKEY);
+               }();
+               if (shouldSelectAllOnFocus) {
+-                SelectAll();
++                RefPtr<nsPresContext> presContext =
++                    GetPresContext(eForComposedDoc);
++                SelectAll(presContext);
+               }
+             }
+           }
+diff --git a/dom/html/HTMLInputElement.h b/dom/html/HTMLInputElement.h
+index 73f830a63754..0d52d07e21cc 100644
+--- a/dom/html/HTMLInputElement.h
++++ b/dom/html/HTMLInputElement.h
+@@ -978,7 +978,7 @@ class HTMLInputElement final : public TextControlElement,
+ 
+   void ResultForDialogSubmit(nsAString& aResult) override;
+ 
+-  MOZ_CAN_RUN_SCRIPT void SelectAll();
++  void SelectAll(nsPresContext* aPresContext);
+   bool IsImage() const {
+     return AttrValueIs(kNameSpaceID_None, nsGkAtoms::type, nsGkAtoms::image,
+                        eIgnoreCase);
+diff --git a/dom/html/HTMLOptGroupElement.cpp b/dom/html/HTMLOptGroupElement.cpp
+index 2ef9747bdce0..9a160b430c6f 100644
+--- a/dom/html/HTMLOptGroupElement.cpp
++++ b/dom/html/HTMLOptGroupElement.cpp
+@@ -12,6 +12,7 @@
+ #include "nsGkAtoms.h"
+ #include "nsStyleConsts.h"
+ #include "nsIFrame.h"
++#include "nsIFormControlFrame.h"
+ 
+ NS_IMPL_NS_NEW_HTML_ELEMENT(OptGroup)
+ 
+diff --git a/dom/html/HTMLOptionElement.cpp b/dom/html/HTMLOptionElement.cpp
+index 9fc034918bbf..5a9762de89f5 100644
+--- a/dom/html/HTMLOptionElement.cpp
++++ b/dom/html/HTMLOptionElement.cpp
+@@ -15,6 +15,7 @@
+ #include "nsISelectControlFrame.h"
+ 
+ // Notify/query select frame for selected state
++#include "nsIFormControlFrame.h"
+ #include "mozilla/dom/Document.h"
+ #include "nsNodeInfoManager.h"
+ #include "nsCOMPtr.h"
+diff --git a/dom/html/HTMLSelectElement.cpp b/dom/html/HTMLSelectElement.cpp
+index 2edd7b3c089d..e300ea863b59 100644
+--- a/dom/html/HTMLSelectElement.cpp
++++ b/dom/html/HTMLSelectElement.cpp
+@@ -27,6 +27,7 @@
+ #include "nsGkAtoms.h"
+ #include "nsComboboxControlFrame.h"
+ #include "mozilla/dom/Document.h"
++#include "nsIFormControlFrame.h"
+ #include "nsIFrame.h"
+ #include "nsListControlFrame.h"
+ #include "nsISelectControlFrame.h"
+@@ -555,7 +556,15 @@ int32_t HTMLSelectElement::GetFirstChildOptionIndex(nsIContent* aOptions,
+ }
+ 
+ nsISelectControlFrame* HTMLSelectElement::GetSelectFrame() {
+-  return do_QueryFrame(GetPrimaryFrame());
++  nsIFormControlFrame* form_control_frame = GetFormControlFrame(false);
++
++  nsISelectControlFrame* select_frame = nullptr;
++
++  if (form_control_frame) {
++    select_frame = do_QueryFrame(form_control_frame);
++  }
++
++  return select_frame;
+ }
+ 
+ void HTMLSelectElement::Add(
+diff --git a/dom/html/HTMLTextAreaElement.cpp b/dom/html/HTMLTextAreaElement.cpp
+index 3cceef9ac082..c3ecdb363136 100644
+--- a/dom/html/HTMLTextAreaElement.cpp
++++ b/dom/html/HTMLTextAreaElement.cpp
+@@ -25,8 +25,10 @@
+ #include "nsIConstraintValidation.h"
+ #include "nsIControllers.h"
+ #include "mozilla/dom/Document.h"
++#include "nsIFormControlFrame.h"
+ #include "nsIFormControl.h"
+ #include "nsIFrame.h"
++#include "nsITextControlFrame.h"
+ #include "nsLayoutUtils.h"
+ #include "nsLinebreakConverter.h"
+ #include "nsPresContext.h"
+@@ -116,15 +118,19 @@ void HTMLTextAreaElement::Select() {
+     }
+   }
+ 
+-  SetSelectionRange(0, UINT32_MAX, Optional<nsAString>(), IgnoreErrors());
++  SetSelectionRange(0, UINT32_MAX, mozilla::dom::Optional<nsAString>(),
++                    IgnoreErrors());
+ }
+ 
+-void HTMLTextAreaElement::SelectAll() {
+-  // FIXME(emilio): Should we try to call Select(), which will avoid flushing?
+-  if (nsTextControlFrame* tf =
+-          do_QueryFrame(GetPrimaryFrame(FlushType::Frames))) {
+-    tf->SelectAll();
++NS_IMETHODIMP
++HTMLTextAreaElement::SelectAll(nsPresContext* aPresContext) {
++  nsIFormControlFrame* formControlFrame = GetFormControlFrame(true);
++
++  if (formControlFrame) {
++    formControlFrame->SetFormProperty(nsGkAtoms::select, u""_ns);
+   }
++
++  return NS_OK;
+ }
+ 
+ bool HTMLTextAreaElement::IsHTMLFocusable(IsFocusableFlags aFlags,
+@@ -413,7 +419,9 @@ nsMapRuleToAttributesFunc HTMLTextAreaElement::GetAttributeMappingFunction()
+ }
+ 
+ bool HTMLTextAreaElement::IsDisabledForEvents(WidgetEvent* aEvent) {
+-  return IsElementDisabledForEvents(aEvent, GetPrimaryFrame());
++  nsIFormControlFrame* formControlFrame = GetFormControlFrame(false);
++  nsIFrame* formFrame = do_QueryFrame(formControlFrame);
++  return IsElementDisabledForEvents(aEvent, formFrame);
+ }
+ 
+ void HTMLTextAreaElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
+diff --git a/dom/html/HTMLTextAreaElement.h b/dom/html/HTMLTextAreaElement.h
+index 90e6775cf2a4..78cb5be775eb 100644
+--- a/dom/html/HTMLTextAreaElement.h
++++ b/dom/html/HTMLTextAreaElement.h
+@@ -321,7 +321,7 @@ class HTMLTextAreaElement final : public TextControlElement,
+   /** The state of the text editor (selection controller and the editor) **/
+   TextControlState* mState;
+ 
+-  MOZ_CAN_RUN_SCRIPT void SelectAll();
++  NS_IMETHOD SelectAll(nsPresContext* aPresContext);
+   /**
+    * Get the value, whether it is from the content or the frame.
+    * @param aValue the value [out]
+diff --git a/dom/html/TextControlState.cpp b/dom/html/TextControlState.cpp
+index 0f4cecf414cf..8112cdb3f216 100644
+--- a/dom/html/TextControlState.cpp
++++ b/dom/html/TextControlState.cpp
+@@ -15,6 +15,7 @@
+ #include "nsCOMPtr.h"
+ #include "nsView.h"
+ #include "nsCaret.h"
++#include "nsITextControlFrame.h"
+ #include "nsFocusManager.h"
+ #include "nsContentCreatorFunctions.h"
+ #include "nsTextControlFrame.h"
+@@ -60,6 +61,7 @@ namespace mozilla {
+ using namespace dom;
+ using ValueSetterOption = TextControlState::ValueSetterOption;
+ using ValueSetterOptions = TextControlState::ValueSetterOptions;
++using SelectionDirection = nsITextControlFrame::SelectionDirection;
+ 
+ /*****************************************************************************
+  * TextControlElement
+@@ -1262,9 +1264,10 @@ class MOZ_STACK_CLASS AutoTextControlHandlingState {
+     }
+     // The new value never includes line breaks caused by hard-wrap.
+     // So, mCachedValue can always cache the new value.
+-    nsTextControlFrame* textControlFrame =
++    nsITextControlFrame* textControlFrame =
+         do_QueryFrame(mTextControlFrame.GetFrame());
+-    return textControlFrame->CacheValue(mSettingValue, fallible)
++    return static_cast<nsTextControlFrame*>(textControlFrame)
++                   ->CacheValue(mSettingValue, fallible)
+                ? NS_OK
+                : NS_ERROR_OUT_OF_MEMORY;
+   }
+@@ -2396,7 +2399,8 @@ void TextControlState::UnbindFromFrame(nsTextControlFrame* aFrame) {
+     uint32_t start = 0, end = 0;
+     GetSelectionRange(&start, &end, IgnoreErrors());
+ 
+-    SelectionDirection direction = GetSelectionDirection(IgnoreErrors());
++    nsITextControlFrame::SelectionDirection direction =
++        GetSelectionDirection(IgnoreErrors());
+ 
+     SelectionProperties& props = GetSelectionProperties();
+     props.SetMaxLength(value.Length());
+diff --git a/dom/html/TextControlState.h b/dom/html/TextControlState.h
+index 02b063914984..3cbe85c77df3 100644
+--- a/dom/html/TextControlState.h
++++ b/dom/html/TextControlState.h
+@@ -17,6 +17,7 @@
+ #include "mozilla/WeakPtr.h"
+ #include "mozilla/dom/Nullable.h"
+ #include "nsCycleCollectionParticipant.h"
++#include "nsITextControlFrame.h"
+ #include "nsITimer.h"
+ 
+ class nsTextControlFrame;
+@@ -33,12 +34,6 @@ class TextEditor;
+ class TextInputListener;
+ class TextInputSelectionController;
+ 
+-enum class SelectionDirection : uint8_t {
+-  None,
+-  Forward,
+-  Backward,
+-};
+-
+ namespace dom {
+ enum class SelectionMode : uint8_t;
+ class Element;
+@@ -195,6 +190,7 @@ class TextControlState final : public SupportsWeakPtr {
+  public:
+   using Element = dom::Element;
+   using HTMLInputElement = dom::HTMLInputElement;
++  using SelectionDirection = nsITextControlFrame::SelectionDirection;
+ 
+   static TextControlState* Construct(TextControlElement* aOwningElement);
+ 
+@@ -404,7 +400,8 @@ class TextControlState final : public SupportsWeakPtr {
+                          ErrorResult& aRv);
+ 
+   // Get the selection direction
+-  SelectionDirection GetSelectionDirection(ErrorResult& aRv);
++  nsITextControlFrame::SelectionDirection GetSelectionDirection(
++      ErrorResult& aRv);
+ 
+   enum class ScrollAfterSelection { No, Yes };
+ 
+@@ -418,8 +415,8 @@ class TextControlState final : public SupportsWeakPtr {
+   //
+   // If we have a frame, this method will scroll the selection into view.
+   MOZ_CAN_RUN_SCRIPT void SetSelectionRange(
+-      uint32_t aStart, uint32_t aEnd, SelectionDirection aDirection,
+-      ErrorResult& aRv,
++      uint32_t aStart, uint32_t aEnd,
++      nsITextControlFrame::SelectionDirection aDirection, ErrorResult& aRv,
+       ScrollAfterSelection aScroll = ScrollAfterSelection::Yes);
+ 
+   // Set the selection range, but with an optional string for the direction.
+diff --git a/dom/html/nsGenericHTMLElement.cpp b/dom/html/nsGenericHTMLElement.cpp
+index 378d5855e956..e70f89557955 100644
+--- a/dom/html/nsGenericHTMLElement.cpp
++++ b/dom/html/nsGenericHTMLElement.cpp
+@@ -53,6 +53,7 @@
+ #include "nsString.h"
+ #include "nsGkAtoms.h"
+ #include "nsDOMCSSDeclaration.h"
++#include "nsITextControlFrame.h"
+ #include "nsIFormControl.h"
+ #include "mozilla/dom/HTMLFormElement.h"
+ #include "nsFocusManager.h"
+@@ -1109,6 +1110,32 @@ nsMapRuleToAttributesFunc nsGenericHTMLElement::GetAttributeMappingFunction()
+   return &MapCommonAttributesInto;
+ }
+ 
++nsIFormControlFrame* nsGenericHTMLElement::GetFormControlFrame(
++    bool aFlushFrames) {
++  auto flushType = aFlushFrames ? FlushType::Frames : FlushType::None;
++  nsIFrame* frame = GetPrimaryFrame(flushType);
++  if (!frame) {
++    return nullptr;
++  }
++
++  if (nsIFormControlFrame* f = do_QueryFrame(frame)) {
++    return f;
++  }
++
++  // If we have generated content, the primary frame will be a wrapper frame...
++  // Our real frame will be in its child list.
++  //
++  // FIXME(emilio): I don't think that's true... See bug 155957 for test-cases
++  // though, we should figure out whether this is still needed.
++  for (nsIFrame* kid : frame->PrincipalChildList()) {
++    if (nsIFormControlFrame* f = do_QueryFrame(kid)) {
++      return f;
++    }
++  }
++
++  return nullptr;
++}
++
+ static constexpr nsAttrValue::EnumTable kDivAlignTable[] = {
+     {"left", StyleTextAlign::MozLeft},
+     {"right", StyleTextAlign::MozRight},
+@@ -2610,6 +2637,46 @@ bool nsGenericHTMLFormControlElement::IsHTMLFocusable(IsFocusableFlags aFlags,
+   return false;
+ }
+ 
++void nsGenericHTMLFormControlElement::GetEventTargetParent(
++    EventChainPreVisitor& aVisitor) {
++  if (aVisitor.mEvent->IsTrusted() && (aVisitor.mEvent->mMessage == eFocus ||
++                                       aVisitor.mEvent->mMessage == eBlur)) {
++    // We have to handle focus/blur event to change focus states in
++    // PreHandleEvent to prevent it breaks event target chain creation.
++    aVisitor.mWantsPreHandleEvent = true;
++  }
++  nsGenericHTMLFormElement::GetEventTargetParent(aVisitor);
++}
++
++nsresult nsGenericHTMLFormControlElement::PreHandleEvent(
++    EventChainVisitor& aVisitor) {
++  if (aVisitor.mEvent->IsTrusted()) {
++    switch (aVisitor.mEvent->mMessage) {
++      case eFocus: {
++        // Check to see if focus has bubbled up from a form control's
++        // child textfield or button.  If that's the case, don't focus
++        // this parent file control -- leave focus on the child.
++        nsIFormControlFrame* formControlFrame = GetFormControlFrame(true);
++        if (formControlFrame &&
++            aVisitor.mEvent->mOriginalTarget == static_cast<nsINode*>(this)) {
++          formControlFrame->SetFocus(true, true);
++        }
++        break;
++      }
++      case eBlur: {
++        nsIFormControlFrame* formControlFrame = GetFormControlFrame(true);
++        if (formControlFrame) {
++          formControlFrame->SetFocus(false, false);
++        }
++        break;
++      }
++      default:
++        break;
++    }
++  }
++  return nsGenericHTMLFormElement::PreHandleEvent(aVisitor);
++}
++
+ HTMLFieldSetElement* nsGenericHTMLFormControlElement::GetFieldSet() {
+   return GetFieldSetInternal();
+ }
+diff --git a/dom/html/nsGenericHTMLElement.h b/dom/html/nsGenericHTMLElement.h
+index 012c2e88525a..6c2c4c2d5d4f 100644
+--- a/dom/html/nsGenericHTMLElement.h
++++ b/dom/html/nsGenericHTMLElement.h
+@@ -23,6 +23,7 @@
+ #include <cstdint>
+ 
+ class nsDOMTokenList;
++class nsIFormControlFrame;
+ class nsIFrame;
+ class nsILayoutHistoryState;
+ class nsIURI;
+@@ -393,6 +394,17 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
+    */
+   void GetBaseTarget(nsAString& aBaseTarget) const;
+ 
++  /**
++   * Get the primary form control frame for this element.  Same as
++   * GetPrimaryFrame(), except it QI's to nsIFormControlFrame.
++   *
++   * @param aFlush whether to flush out frames so that they're up to date.
++   * @return the primary frame as nsIFormControlFrame
++   */
++  nsIFormControlFrame* GetFormControlFrame(bool aFlushFrames);
++
++  //----------------------------------------
++
+   /**
+    * Parse an alignment attribute (top/middle/bottom/baseline)
+    *
+@@ -1182,6 +1194,10 @@ class nsGenericHTMLFormControlElement : public nsGenericHTMLFormElement,
+   bool IsHTMLFocusable(mozilla::IsFocusableFlags, bool* aIsFocusable,
+                        int32_t* aTabIndex) override;
+ 
++  // EventTarget
++  void GetEventTargetParent(mozilla::EventChainPreVisitor& aVisitor) override;
++  nsresult PreHandleEvent(mozilla::EventChainVisitor& aVisitor) override;
++
+   // nsIFormControl
+   mozilla::dom::HTMLFieldSetElement* GetFieldSet() override;
+   mozilla::dom::HTMLFormElement* GetForm() const override { return mForm; }
+diff --git a/layout/forms/moz.build b/layout/forms/moz.build
+index 56f0a5ef6793..93ec0a430c20 100644
+--- a/layout/forms/moz.build
++++ b/layout/forms/moz.build
+@@ -11,7 +11,9 @@ MOCHITEST_MANIFESTS += ["test/mochitest.toml"]
+ MOCHITEST_CHROME_MANIFESTS += ["test/chrome.toml"]
+ 
+ EXPORTS += [
++    "nsIFormControlFrame.h",
+     "nsISelectControlFrame.h",
++    "nsITextControlFrame.h",
+ ]
+ 
+ UNIFIED_SOURCES += [
+diff --git a/layout/forms/nsCheckboxRadioFrame.cpp b/layout/forms/nsCheckboxRadioFrame.cpp
+index 3712d89674ef..cbe199a9c6cc 100644
+--- a/layout/forms/nsCheckboxRadioFrame.cpp
++++ b/layout/forms/nsCheckboxRadioFrame.cpp
+@@ -29,6 +29,7 @@ nsCheckboxRadioFrame::~nsCheckboxRadioFrame() = default;
+ NS_IMPL_FRAMEARENA_HELPERS(nsCheckboxRadioFrame)
+ 
+ NS_QUERYFRAME_HEAD(nsCheckboxRadioFrame)
++  NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
+ NS_QUERYFRAME_TAIL_INHERITING(nsAtomicContainerFrame)
+ 
+ nscoord nsCheckboxRadioFrame::DefaultSize() {
+@@ -136,6 +137,8 @@ void nsCheckboxRadioFrame::Reflow(nsPresContext* aPresContext,
+   FinishAndStoreOverflow(&aDesiredSize);
+ }
+ 
++void nsCheckboxRadioFrame::SetFocus(bool aOn, bool aRepaint) {}
++
+ nsresult nsCheckboxRadioFrame::HandleEvent(nsPresContext* aPresContext,
+                                            WidgetGUIEvent* aEvent,
+                                            nsEventStatus* aEventStatus) {
+@@ -145,3 +148,8 @@ nsresult nsCheckboxRadioFrame::HandleEvent(nsPresContext* aPresContext,
+   }
+   return NS_OK;
+ }
++
++nsresult nsCheckboxRadioFrame::SetFormProperty(nsAtom* aName,
++                                               const nsAString& aValue) {
++  return NS_OK;
++}
+diff --git a/layout/forms/nsCheckboxRadioFrame.h b/layout/forms/nsCheckboxRadioFrame.h
+index 08f183d6ee64..6b1a90292535 100644
+--- a/layout/forms/nsCheckboxRadioFrame.h
++++ b/layout/forms/nsCheckboxRadioFrame.h
+@@ -8,13 +8,15 @@
+ #define nsCheckboxRadioFrame_h___
+ 
+ #include "mozilla/Attributes.h"
++#include "nsIFormControlFrame.h"
+ #include "nsAtomicContainerFrame.h"
+ #include "nsDisplayList.h"
+ 
+ /**
+  * nsCheckboxRadioFrame is used for radio buttons and checkboxes.
+  */
+-class nsCheckboxRadioFrame final : public nsAtomicContainerFrame {
++class nsCheckboxRadioFrame final : public nsAtomicContainerFrame,
++                                   public nsIFormControlFrame {
+  public:
+   NS_DECL_QUERYFRAME
+   NS_DECL_FRAMEARENA_HELPERS(nsCheckboxRadioFrame)
+@@ -64,6 +66,13 @@ class nsCheckboxRadioFrame final : public nsAtomicContainerFrame {
+               const ReflowInput& aReflowInput,
+               nsReflowStatus& aStatus) override;
+ 
++  // new behavior
++
++  void SetFocus(bool aOn = true, bool aRepaint = false) override;
++
++  // nsIFormControlFrame
++  nsresult SetFormProperty(nsAtom* aName, const nsAString& aValue) override;
++
+ #ifdef DEBUG_FRAME_DUMP
+   nsresult GetFrameName(nsAString& aResult) const override {
+     return MakeFrameName(u"CheckboxRadio"_ns, aResult);
+diff --git a/layout/forms/nsColorControlFrame.h b/layout/forms/nsColorControlFrame.h
+index 736f8e381554..a85816324f80 100644
+--- a/layout/forms/nsColorControlFrame.h
++++ b/layout/forms/nsColorControlFrame.h
+@@ -33,18 +33,19 @@ class nsColorControlFrame final : public nsHTMLButtonControlFrame,
+   NS_DECL_FRAMEARENA_HELPERS(nsColorControlFrame)
+ 
+ #ifdef DEBUG_FRAME_DUMP
+-  nsresult GetFrameName(nsAString& aResult) const override;
++  virtual nsresult GetFrameName(nsAString& aResult) const override;
+ #endif
+ 
+   // nsIAnonymousContentCreator
+-  nsresult CreateAnonymousContent(nsTArray<ContentInfo>& aElements) override;
+-  void AppendAnonymousContentTo(nsTArray<nsIContent*>& aElements,
+-                                uint32_t aFilter) override;
++  virtual nsresult CreateAnonymousContent(
++      nsTArray<ContentInfo>& aElements) override;
++  virtual void AppendAnonymousContentTo(nsTArray<nsIContent*>& aElements,
++                                        uint32_t aFilter) override;
+ 
+   // nsIFrame
+-  nsresult AttributeChanged(int32_t aNameSpaceID, nsAtom* aAttribute,
+-                            int32_t aModType) override;
+-  nsContainerFrame* GetContentInsertionFrame() override;
++  virtual nsresult AttributeChanged(int32_t aNameSpaceID, nsAtom* aAttribute,
++                                    int32_t aModType) override;
++  virtual nsContainerFrame* GetContentInsertionFrame() override;
+ 
+   // Refresh the color swatch, using associated input's value
+   nsresult UpdateColor();
+diff --git a/layout/forms/nsComboboxControlFrame.h b/layout/forms/nsComboboxControlFrame.h
+index 028942b0538c..a379a188f971 100644
+--- a/layout/forms/nsComboboxControlFrame.h
++++ b/layout/forms/nsComboboxControlFrame.h
+@@ -8,6 +8,7 @@
+ #define nsComboboxControlFrame_h___
+ 
+ #include "mozilla/Attributes.h"
++#include "nsIFormControlFrame.h"
+ #include "nsIAnonymousContentCreator.h"
+ #include "nsISelectControlFrame.h"
+ #include "nsIRollupListener.h"
+@@ -71,6 +72,11 @@ class nsComboboxControlFrame final : public nsHTMLButtonControlFrame,
+   }
+ #endif
+ 
++  // nsIFormControlFrame
++  nsresult SetFormProperty(nsAtom* aName, const nsAString& aValue) final {
++    return NS_OK;
++  }
++
+   /**
+    * @note This method might destroy |this|.
+    */
+diff --git a/layout/forms/nsFileControlFrame.cpp b/layout/forms/nsFileControlFrame.cpp
+index 9cf454347200..6b7c2179be84 100644
+--- a/layout/forms/nsFileControlFrame.cpp
++++ b/layout/forms/nsFileControlFrame.cpp
+@@ -162,8 +162,11 @@ void nsFileControlFrame::AppendAnonymousContentTo(
+ NS_QUERYFRAME_HEAD(nsFileControlFrame)
+   NS_QUERYFRAME_ENTRY(nsFileControlFrame)
+   NS_QUERYFRAME_ENTRY(nsIAnonymousContentCreator)
++  NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
+ NS_QUERYFRAME_TAIL_INHERITING(nsBlockFrame)
+ 
++void nsFileControlFrame::SetFocus(bool aOn, bool aRepaint) {}
++
+ static void AppendBlobImplAsDirectory(nsTArray<OwningFileOrDirectory>& aArray,
+                                       BlobImpl* aBlobImpl,
+                                       nsIContent* aContent) {
+@@ -382,11 +385,15 @@ nsresult nsFileControlFrame::GetFrameName(nsAString& aResult) const {
+ }
+ #endif
+ 
+-void nsFileControlFrame::SelectedFilesUpdated() {
+-  if (MiddleCroppingBlockFrame* f =
+-          do_QueryFrame(mTextContent->GetPrimaryFrame())) {
+-    f->UpdateDisplayedValueToUncroppedValue(true);
++nsresult nsFileControlFrame::SetFormProperty(nsAtom* aName,
++                                             const nsAString& aValue) {
++  if (nsGkAtoms::value == aName) {
++    if (MiddleCroppingBlockFrame* f =
++            do_QueryFrame(mTextContent->GetPrimaryFrame())) {
++      f->UpdateDisplayedValueToUncroppedValue(true);
++    }
+   }
++  return NS_OK;
+ }
+ 
+ #ifdef ACCESSIBILITY
+diff --git a/layout/forms/nsFileControlFrame.h b/layout/forms/nsFileControlFrame.h
+index 2ced848f37f7..94ffe3ec9a2e 100644
+--- a/layout/forms/nsFileControlFrame.h
++++ b/layout/forms/nsFileControlFrame.h
+@@ -9,8 +9,10 @@
+ 
+ #include "mozilla/Attributes.h"
+ #include "nsBlockFrame.h"
++#include "nsIFormControlFrame.h"
+ #include "nsIDOMEventListener.h"
+ #include "nsIAnonymousContentCreator.h"
++#include "nsCOMPtr.h"
+ 
+ namespace mozilla::dom {
+ class FileList;
+@@ -19,6 +21,7 @@ class DataTransfer;
+ }  // namespace mozilla::dom
+ 
+ class nsFileControlFrame final : public nsBlockFrame,
++                                 public nsIFormControlFrame,
+                                  public nsIAnonymousContentCreator {
+   using Element = mozilla::dom::Element;
+ 
+@@ -36,7 +39,9 @@ class nsFileControlFrame final : public nsBlockFrame,
+               const ReflowInput& aReflowInput,
+               nsReflowStatus& aStatus) override;
+ 
+-  void SelectedFilesUpdated();
++  // nsIFormControlFrame
++  nsresult SetFormProperty(nsAtom* aName, const nsAString& aValue) override;
++  void SetFocus(bool aOn, bool aRepaint) override;
+ 
+   void Destroy(DestroyContext&) override;
+ 
+diff --git a/layout/forms/nsHTMLButtonControlFrame.cpp b/layout/forms/nsHTMLButtonControlFrame.cpp
+index 10dd208b6d19..00b8283c4ac9 100644
+--- a/layout/forms/nsHTMLButtonControlFrame.cpp
++++ b/layout/forms/nsHTMLButtonControlFrame.cpp
+@@ -11,6 +11,7 @@
+ #include "nsIFrameInlines.h"
+ #include "nsContainerFrame.h"
+ #include "nsPresContextInlines.h"
++#include "nsIFormControlFrame.h"
+ #include "nsPresContext.h"
+ #include "nsLayoutUtils.h"
+ #include "nsGkAtoms.h"
+@@ -51,6 +52,7 @@ void nsHTMLButtonControlFrame::Init(nsIContent* aContent,
+ 
+ NS_QUERYFRAME_HEAD(nsHTMLButtonControlFrame)
+   NS_QUERYFRAME_ENTRY(nsHTMLButtonControlFrame)
++  NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
+ NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
+ 
+ #ifdef ACCESSIBILITY
+@@ -59,6 +61,8 @@ a11y::AccType nsHTMLButtonControlFrame::AccessibleType() {
+ }
+ #endif
+ 
++void nsHTMLButtonControlFrame::SetFocus(bool aOn, bool aRepaint) {}
++
+ nsresult nsHTMLButtonControlFrame::HandleEvent(nsPresContext* aPresContext,
+                                                WidgetGUIEvent* aEvent,
+                                                nsEventStatus* aEventStatus) {
+@@ -455,6 +459,15 @@ nscoord nsHTMLButtonControlFrame::SynthesizeFallbackBaseline(
+   return Baseline::SynthesizeBOffsetFromMarginBox(this, aWM, aBaselineGroup);
+ }
+ 
++nsresult nsHTMLButtonControlFrame::SetFormProperty(nsAtom* aName,
++                                                   const nsAString& aValue) {
++  if (nsGkAtoms::value == aName) {
++    return mContent->AsElement()->SetAttr(kNameSpaceID_None, nsGkAtoms::value,
++                                          aValue, true);
++  }
++  return NS_OK;
++}
++
+ ComputedStyle* nsHTMLButtonControlFrame::GetAdditionalComputedStyle(
+     int32_t aIndex) const {
+   if (aIndex == 0) {
+diff --git a/layout/forms/nsHTMLButtonControlFrame.h b/layout/forms/nsHTMLButtonControlFrame.h
+index 3de30c20372b..c5c3775d21a6 100644
+--- a/layout/forms/nsHTMLButtonControlFrame.h
++++ b/layout/forms/nsHTMLButtonControlFrame.h
+@@ -9,11 +9,13 @@
+ 
+ #include "nsContainerFrame.h"
+ #include "nsCSSRenderingBorders.h"
++#include "nsIFormControlFrame.h"
+ 
+ class gfxContext;
+ class nsPresContext;
+ 
+-class nsHTMLButtonControlFrame : public nsContainerFrame {
++class nsHTMLButtonControlFrame : public nsContainerFrame,
++                                 public nsIFormControlFrame {
+  public:
+   explicit nsHTMLButtonControlFrame(ComputedStyle* aStyle,
+                                     nsPresContext* aPresContext)
+@@ -68,6 +70,10 @@ class nsHTMLButtonControlFrame : public nsContainerFrame {
+   }
+ #endif
+ 
++  // nsIFormControlFrame
++  void SetFocus(bool aOn, bool aRepaint) override;
++  nsresult SetFormProperty(nsAtom* aName, const nsAString& aValue) override;
++
+   // Inserted child content gets its frames parented by our child block
+   nsContainerFrame* GetContentInsertionFrame() override {
+     return PrincipalChildList().FirstChild()->GetContentInsertionFrame();
+diff --git a/layout/forms/nsIFormControlFrame.h b/layout/forms/nsIFormControlFrame.h
+new file mode 100644
+index 000000000000..45b7c63aa485
+--- /dev/null
++++ b/layout/forms/nsIFormControlFrame.h
+@@ -0,0 +1,41 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim: set ts=8 sts=2 et sw=2 tw=80: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef nsIFormControlFrame_h___
++#define nsIFormControlFrame_h___
++
++#include "nsQueryFrame.h"
++#include "nsStringFwd.h"
++
++class nsAtom;
++
++/**
++ * nsIFormControlFrame is the common interface for frames of form controls. It
++ * provides a uniform way of creating widgets, resizing, and painting.
++ * @see nsLeafFrame and its base classes for more info
++ */
++class nsIFormControlFrame : public nsQueryFrame {
++ public:
++  NS_DECL_QUERYFRAME_TARGET(nsIFormControlFrame)
++
++  /**
++   *
++   * @param aOn
++   * @param aRepaint
++   */
++  virtual void SetFocus(bool aOn = true, bool aRepaint = false) = 0;
++
++  /**
++   * Set a property on the form control frame.
++   *
++   * @param aName name of the property to set
++   * @param aValue value of the property
++   * @returns NS_OK if the property name is valid, otherwise an error code
++   */
++  virtual nsresult SetFormProperty(nsAtom* aName, const nsAString& aValue) = 0;
++};
++
++#endif
+diff --git a/layout/forms/nsITextControlFrame.h b/layout/forms/nsITextControlFrame.h
+new file mode 100644
+index 000000000000..a1c1df1e2e5b
+--- /dev/null
++++ b/layout/forms/nsITextControlFrame.h
+@@ -0,0 +1,44 @@
++/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim: set ts=8 sts=2 et sw=2 tw=80: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef nsITextControlFrame_h___
++#define nsITextControlFrame_h___
++
++#include "nsIFormControlFrame.h"
++#include "mozilla/AlreadyAddRefed.h"
++
++class nsISelectionController;
++class nsFrameSelection;
++
++namespace mozilla {
++class TextEditor;
++}  // namespace mozilla
++
++// FIXME(emilio): This has only one implementation, seems it could be removed...
++class nsITextControlFrame : public nsIFormControlFrame {
++ public:
++  NS_DECL_QUERYFRAME_TARGET(nsITextControlFrame)
++
++  enum class SelectionDirection : uint8_t { None, Forward, Backward };
++
++  virtual already_AddRefed<mozilla::TextEditor> GetTextEditor() = 0;
++
++  MOZ_CAN_RUN_SCRIPT NS_IMETHOD
++  SetSelectionRange(uint32_t aSelectionStart, uint32_t aSelectionEnd,
++                    SelectionDirection = SelectionDirection::None) = 0;
++
++  NS_IMETHOD GetOwnedSelectionController(nsISelectionController** aSelCon) = 0;
++  virtual nsFrameSelection* GetOwnedFrameSelection() = 0;
++
++  /**
++   * Ensure editor is initialized with the proper flags and the default value.
++   * @throws NS_ERROR_NOT_INITIALIZED if mEditor has not been created
++   * @throws various and sundry other things
++   */
++  virtual nsresult EnsureEditorInitialized() = 0;
++};
++
++#endif
+diff --git a/layout/forms/nsImageControlFrame.cpp b/layout/forms/nsImageControlFrame.cpp
+index 95d10989399b..8207a427f154 100644
+--- a/layout/forms/nsImageControlFrame.cpp
++++ b/layout/forms/nsImageControlFrame.cpp
+@@ -8,6 +8,7 @@
+ 
+ #include "mozilla/MouseEvents.h"
+ #include "mozilla/PresShell.h"
++#include "nsIFormControlFrame.h"
+ #include "nsPresContext.h"
+ #include "nsGkAtoms.h"
+ #include "nsStyleConsts.h"
+@@ -16,7 +17,8 @@
+ 
+ using namespace mozilla;
+ 
+-class nsImageControlFrame final : public nsImageFrame {
++class nsImageControlFrame final : public nsImageFrame,
++                                  public nsIFormControlFrame {
+  public:
+   explicit nsImageControlFrame(ComputedStyle* aStyle,
+                                nsPresContext* aPresContext);
+@@ -44,6 +46,10 @@ class nsImageControlFrame final : public nsImageFrame {
+ #endif
+ 
+   Cursor GetCursor(const nsPoint&) final;
++
++  // nsIFormContromFrame
++  void SetFocus(bool aOn, bool aRepaint) final;
++  nsresult SetFormProperty(nsAtom* aName, const nsAString& aValue) final;
+ };
+ 
+ nsImageControlFrame::nsImageControlFrame(ComputedStyle* aStyle,
+@@ -73,6 +79,7 @@ void nsImageControlFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
+ }
+ 
+ NS_QUERYFRAME_HEAD(nsImageControlFrame)
++  NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
+ NS_QUERYFRAME_TAIL_INHERITING(nsImageFrame)
+ 
+ #ifdef ACCESSIBILITY
+@@ -127,6 +134,8 @@ nsresult nsImageControlFrame::HandleEvent(nsPresContext* aPresContext,
+   return nsImageFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
+ }
+ 
++void nsImageControlFrame::SetFocus(bool aOn, bool aRepaint) {}
++
+ nsIFrame::Cursor nsImageControlFrame::GetCursor(const nsPoint&) {
+   StyleCursorKind kind = StyleUI()->Cursor().keyword;
+   if (kind == StyleCursorKind::Auto) {
+@@ -134,3 +143,8 @@ nsIFrame::Cursor nsImageControlFrame::GetCursor(const nsPoint&) {
+   }
+   return Cursor{kind, AllowCustomCursorImage::Yes};
+ }
++
++nsresult nsImageControlFrame::SetFormProperty(nsAtom* aName,
++                                              const nsAString& aValue) {
++  return NS_OK;
++}
+diff --git a/layout/forms/nsListControlFrame.cpp b/layout/forms/nsListControlFrame.cpp
+index cd125525723b..a5a17972a73b 100644
+--- a/layout/forms/nsListControlFrame.cpp
++++ b/layout/forms/nsListControlFrame.cpp
+@@ -36,6 +36,9 @@
+ using namespace mozilla;
+ using namespace mozilla::dom;
+ 
++// Static members
++nsListControlFrame* nsListControlFrame::mFocused = nullptr;
++
+ //---------------------------------------------------------
+ nsListControlFrame* NS_NewListControlFrame(PresShell* aPresShell,
+                                            ComputedStyle* aStyle) {
+@@ -102,10 +105,6 @@ HTMLOptionElement* nsListControlFrame::GetCurrentOption() const {
+   return mEventListener->GetCurrentOption();
+ }
+ 
+-bool nsListControlFrame::IsFocused() const {
+-  return Select().State().HasState(ElementState::FOCUS);
+-}
+-
+ /**
+  * This is called by the SelectsAreaFrame, which is the same
+  * as the frame returned by GetOptionsContainer. It's the frame which is
+@@ -114,9 +113,7 @@ bool nsListControlFrame::IsFocused() const {
+  * frame
+  */
+ void nsListControlFrame::PaintFocus(DrawTarget* aDrawTarget, nsPoint aPt) {
+-  if (!IsFocused()) {
+-    return;
+-  }
++  if (mFocused != this) return;
+ 
+   nsIFrame* containerFrame = GetOptionsContainer();
+   if (!containerFrame) {
+@@ -160,12 +157,16 @@ void nsListControlFrame::PaintFocus(DrawTarget* aDrawTarget, nsPoint aPt) {
+ }
+ 
+ void nsListControlFrame::InvalidateFocus() {
+-  if (nsIFrame* containerFrame = GetOptionsContainer()) {
++  if (mFocused != this) return;
++
++  nsIFrame* containerFrame = GetOptionsContainer();
++  if (containerFrame) {
+     containerFrame->InvalidateFrame();
+   }
+ }
+ 
+ NS_QUERYFRAME_HEAD(nsListControlFrame)
++  NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
+   NS_QUERYFRAME_ENTRY(nsISelectControlFrame)
+   NS_QUERYFRAME_ENTRY(nsListControlFrame)
+ NS_QUERYFRAME_TAIL_INHERITING(ScrollContainerFrame)
+@@ -735,10 +736,16 @@ void nsListControlFrame::ResetList(bool aAllowScrolling) {
+   // Combobox will redisplay itself with the OnOptionSelected event
+ }
+ 
+-void nsListControlFrame::ElementStateChanged(ElementState aStates) {
+-  if (aStates.HasState(ElementState::FOCUS)) {
+-    InvalidateFocus();
++void nsListControlFrame::SetFocus(bool aOn, bool aRepaint) {
++  InvalidateFocus();
++
++  if (aOn) {
++    mFocused = this;
++  } else {
++    mFocused = nullptr;
+   }
++
++  InvalidateFocus();
+ }
+ 
+ void nsListControlFrame::GetOptionText(uint32_t aIndex, nsAString& aStr) {
+@@ -947,6 +954,21 @@ class AsyncReset final : public Runnable {
+   bool mScroll;
+ };
+ 
++nsresult nsListControlFrame::SetFormProperty(nsAtom* aName,
++                                             const nsAString& aValue) {
++  if (nsGkAtoms::selected == aName) {
++    return NS_ERROR_INVALID_ARG;  // Selected is readonly according to spec.
++  } else if (nsGkAtoms::selectedindex == aName) {
++    // You shouldn't be calling me for this!!!
++    return NS_ERROR_INVALID_ARG;
++  }
++
++  // We should be told about selectedIndex by the DOM element through
++  // OnOptionSelected
++
++  return NS_OK;
++}
++
+ bool nsListControlFrame::ReflowFinished() {
+   if (mNeedToReset && !mReflowWasInterrupted) {
+     mNeedToReset = false;
+@@ -1015,7 +1037,7 @@ nscoord nsListControlFrame::CalcIntrinsicBSize(nscoord aBSizeOfARow,
+ 
+ #ifdef ACCESSIBILITY
+ void nsListControlFrame::FireMenuItemActiveEvent(nsIContent* aPreviousOption) {
+-  if (!IsFocused()) {
++  if (mFocused != this) {
+     return;
+   }
+ 
+diff --git a/layout/forms/nsListControlFrame.h b/layout/forms/nsListControlFrame.h
+index 4d0b33b34d25..cd7c10a97451 100644
+--- a/layout/forms/nsListControlFrame.h
++++ b/layout/forms/nsListControlFrame.h
+@@ -9,6 +9,7 @@
+ #include "mozilla/Attributes.h"
+ #include "mozilla/ScrollContainerFrame.h"
+ #include "mozilla/StaticPtr.h"
++#include "nsIFormControlFrame.h"
+ #include "nsISelectControlFrame.h"
+ #include "nsSelectsAreaFrame.h"
+ 
+@@ -32,9 +33,10 @@ class HTMLOptionsCollection;
+  */
+ 
+ class nsListControlFrame final : public mozilla::ScrollContainerFrame,
++                                 public nsIFormControlFrame,
+                                  public nsISelectControlFrame {
+  public:
+-  using HTMLOptionElement = mozilla::dom::HTMLOptionElement;
++  typedef mozilla::dom::HTMLOptionElement HTMLOptionElement;
+ 
+   friend nsListControlFrame* NS_NewListControlFrame(
+       mozilla::PresShell* aPresShell, ComputedStyle* aStyle);
+@@ -79,7 +81,11 @@ class nsListControlFrame final : public mozilla::ScrollContainerFrame,
+   nsresult GetFrameName(nsAString& aResult) const final;
+ #endif
+ 
+-  void ElementStateChanged(mozilla::dom::ElementState aStates) final;
++  // nsIFormControlFrame
++  nsresult SetFormProperty(nsAtom* aName, const nsAString& aValue) final;
++  MOZ_CAN_RUN_SCRIPT_BOUNDARY
++  void SetFocus(bool aOn = true, bool aRepaint = false) final;
++
+   bool ShouldPropagateComputedBSizeToScrolledContent() const final;
+ 
+   // for accessibility purposes
+@@ -147,7 +153,7 @@ class nsListControlFrame final : public mozilla::ScrollContainerFrame,
+   HTMLOptionElement* GetOption(uint32_t aIndex) const;
+ 
+   // Helper
+-  bool IsFocused() const;
++  bool IsFocused() { return this == mFocused; }
+ 
+   /**
+    * Function to paint the focus rect when our nsSelectsAreaFrame is painting.
+@@ -325,7 +331,7 @@ class nsListControlFrame final : public mozilla::ScrollContainerFrame,
+ 
+   RefPtr<mozilla::HTMLSelectEventListener> mEventListener;
+ 
+-  static nsListControlFrame* sFocused;
++  static nsListControlFrame* mFocused;
+ };
+ 
+ #endif /* nsListControlFrame_h___ */
+diff --git a/layout/forms/nsNumberControlFrame.h b/layout/forms/nsNumberControlFrame.h
+index 846f0c420be7..b0d0c4a4153a 100644
+--- a/layout/forms/nsNumberControlFrame.h
++++ b/layout/forms/nsNumberControlFrame.h
+@@ -10,9 +10,11 @@
+ #include "mozilla/Attributes.h"
+ #include "nsContainerFrame.h"
+ #include "nsTextControlFrame.h"
++#include "nsIFormControlFrame.h"
+ #include "nsIAnonymousContentCreator.h"
+ #include "nsCOMPtr.h"
+ 
++class nsITextControlFrame;
+ class nsPresContext;
+ 
+ namespace mozilla {
+diff --git a/layout/forms/nsSearchControlFrame.h b/layout/forms/nsSearchControlFrame.h
+index 416c76f7462c..b507277368d5 100644
+--- a/layout/forms/nsSearchControlFrame.h
++++ b/layout/forms/nsSearchControlFrame.h
+@@ -12,6 +12,7 @@
+ 
+ #include "nsTextControlFrame.h"
+ 
++class nsITextControlFrame;
+ class nsPresContext;
+ 
+ namespace mozilla {
+diff --git a/layout/forms/nsTextControlFrame.cpp b/layout/forms/nsTextControlFrame.cpp
+index 622de4b33d58..7ee1f160b348 100644
+--- a/layout/forms/nsTextControlFrame.cpp
++++ b/layout/forms/nsTextControlFrame.cpp
+@@ -49,6 +49,8 @@
+ #include "mozilla/Try.h"
+ #include "nsFrameSelection.h"
+ 
++#define DEFAULT_COLUMN_WIDTH 20
++
+ using namespace mozilla;
+ using namespace mozilla::dom;
+ 
+@@ -61,7 +63,9 @@ NS_IMPL_FRAMEARENA_HELPERS(nsTextControlFrame)
+ 
+ NS_QUERYFRAME_HEAD(nsTextControlFrame)
+   NS_QUERYFRAME_ENTRY(nsTextControlFrame)
++  NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
+   NS_QUERYFRAME_ENTRY(nsIAnonymousContentCreator)
++  NS_QUERYFRAME_ENTRY(nsITextControlFrame)
+   NS_QUERYFRAME_ENTRY(nsIStatefulFrame)
+ NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
+ 
+@@ -298,6 +302,20 @@ nsresult nsTextControlFrame::EnsureEditorInitialized() {
+     // for why this is needed.
+     mozilla::dom::AutoNoJSAPI nojsapi;
+ 
++    // Make sure that we try to focus the content even if the method fails
++    class EnsureSetFocus {
++     public:
++      explicit EnsureSetFocus(nsTextControlFrame* aFrame) : mFrame(aFrame) {}
++      ~EnsureSetFocus() {
++        if (nsFocusManager::GetFocusedElementStatic() == mFrame->GetContent())
++          mFrame->SetFocus(true, false);
++      }
++
++     private:
++      nsTextControlFrame* mFrame;
++    };
++    EnsureSetFocus makeSureSetFocusHappens(this);
++
+ #ifdef DEBUG
+     // Make sure we are not being called again until we're finished.
+     // If reentrancy happens, just pretend that we don't have an editor.
+@@ -327,7 +345,7 @@ nsresult nsTextControlFrame::EnsureEditorInitialized() {
+         position = val.Length();
+       }
+ 
+-      SetSelectionEndPoints(position, position, SelectionDirection::None);
++      SetSelectionEndPoints(position, position);
+     }
+   }
+   NS_ENSURE_STATE(weakFrame.IsAlive());
+@@ -747,7 +765,13 @@ void nsTextControlFrame::ReflowTextControlChild(
+ }
+ 
+ // IMPLEMENTING NS_IFORMCONTROLFRAME
+-void nsTextControlFrame::OnFocus() {
++void nsTextControlFrame::SetFocus(bool aOn, bool aRepaint) {
++  // If 'dom.placeholeder.show_on_focus' preference is 'false', focusing or
++  // blurring the frame can have an impact on the placeholder visibility.
++  if (!aOn) {
++    return;
++  }
++
+   nsISelectionController* selCon = GetSelectionController();
+   if (!selCon) {
+     return;
+@@ -789,6 +813,30 @@ void nsTextControlFrame::OnFocus() {
+   }
+ }
+ 
++nsresult nsTextControlFrame::SetFormProperty(nsAtom* aName,
++                                             const nsAString& aValue) {
++  if (!mIsProcessing) {  // some kind of lock.
++    mIsProcessing = true;
++    if (nsGkAtoms::select == aName) {
++      // Select all the text.
++      //
++      // XXX: This is lame, we can't call editor's SelectAll method
++      //      because that triggers AutoCopies in unix builds.
++      //      Instead, we have to call our own homegrown version
++      //      of select all which merely builds a range that selects
++      //      all of the content and adds that to the selection.
++
++      AutoWeakFrame weakThis = this;
++      SelectAllOrCollapseToEndOfText(true);  // NOTE: can destroy the world
++      if (!weakThis.IsAlive()) {
++        return NS_OK;
++      }
++    }
++    mIsProcessing = false;
++  }
++  return NS_OK;
++}
++
+ already_AddRefed<TextEditor> nsTextControlFrame::GetTextEditor() {
+   if (NS_WARN_IF(NS_FAILED(EnsureEditorInitialized()))) {
+     return nullptr;
+@@ -840,7 +888,7 @@ void nsTextControlFrame::ScrollSelectionIntoViewAsync(
+       ScrollAxis(), ScrollAxis(), flags);
+ }
+ 
+-nsresult nsTextControlFrame::SelectAll() {
++nsresult nsTextControlFrame::SelectAllOrCollapseToEndOfText(bool aSelect) {
+   nsresult rv = EnsureEditorInitialized();
+   if (NS_WARN_IF(NS_FAILED(rv))) {
+     return rv;
+@@ -854,7 +902,7 @@ nsresult nsTextControlFrame::SelectAll() {
+ 
+   uint32_t length = text->Length();
+ 
+-  rv = SetSelectionInternal(text, 0, text, length, SelectionDirection::None);
++  rv = SetSelectionInternal(text, aSelect ? 0 : length, text, length);
+   NS_ENSURE_SUCCESS(rv, rv);
+ 
+   ScrollSelectionIntoViewAsync();
+@@ -862,7 +910,8 @@ nsresult nsTextControlFrame::SelectAll() {
+ }
+ 
+ nsresult nsTextControlFrame::SetSelectionEndPoints(
+-    uint32_t aSelStart, uint32_t aSelEnd, SelectionDirection aDirection) {
++    uint32_t aSelStart, uint32_t aSelEnd,
++    nsITextControlFrame::SelectionDirection aDirection) {
+   NS_ASSERTION(aSelStart <= aSelEnd, "Invalid selection offsets!");
+ 
+   if (aSelStart > aSelEnd) {
+@@ -895,8 +944,9 @@ nsresult nsTextControlFrame::SetSelectionEndPoints(
+ }
+ 
+ NS_IMETHODIMP
+-nsTextControlFrame::SetSelectionRange(uint32_t aSelStart, uint32_t aSelEnd,
+-                                      SelectionDirection aDirection) {
++nsTextControlFrame::SetSelectionRange(
++    uint32_t aSelStart, uint32_t aSelEnd,
++    nsITextControlFrame::SelectionDirection aDirection) {
+   nsresult rv = EnsureEditorInitialized();
+   NS_ENSURE_SUCCESS(rv, rv);
+ 
+@@ -998,10 +1048,6 @@ void nsTextControlFrame::ElementStateChanged(dom::ElementState aStates) {
+                                     dom::ElementState::DISABLED)) {
+     HandleReadonlyOrDisabledChange();
+   }
+-  if (aStates.HasState(dom::ElementState::FOCUS) &&
+-      mContent->AsElement()->State().HasState(dom::ElementState::FOCUS)) {
+-    OnFocus();
+-  }
+   return nsContainerFrame::ElementStateChanged(aStates);
+ }
+ 
+diff --git a/layout/forms/nsTextControlFrame.h b/layout/forms/nsTextControlFrame.h
+index f9807ce55883..57b2fe08ef2f 100644
+--- a/layout/forms/nsTextControlFrame.h
++++ b/layout/forms/nsTextControlFrame.h
+@@ -12,6 +12,7 @@
+ #include "nsContainerFrame.h"
+ #include "nsIAnonymousContentCreator.h"
+ #include "nsIContent.h"
++#include "nsITextControlFrame.h"
+ #include "nsIStatefulFrame.h"
+ 
+ class nsISelectionController;
+@@ -22,7 +23,6 @@ class ScrollContainerFrame;
+ class TextEditor;
+ class TextControlState;
+ enum class PseudoStyleType : uint8_t;
+-enum class SelectionDirection : uint8_t;
+ namespace dom {
+ class Element;
+ }  // namespace dom
+@@ -30,6 +30,7 @@ class Element;
+ 
+ class nsTextControlFrame : public nsContainerFrame,
+                            public nsIAnonymousContentCreator,
++                           public nsITextControlFrame,
+                            public nsIStatefulFrame {
+   using Element = mozilla::dom::Element;
+ 
+@@ -109,14 +110,23 @@ class nsTextControlFrame : public nsContainerFrame,
+   void BuildDisplayList(nsDisplayListBuilder* aBuilder,
+                         const nsDisplayListSet& aLists) override;
+ 
+-  MOZ_CAN_RUN_SCRIPT_BOUNDARY already_AddRefed<mozilla::TextEditor>
+-  GetTextEditor();
++  //==== BEGIN NSIFORMCONTROLFRAME
++  MOZ_CAN_RUN_SCRIPT_BOUNDARY void SetFocus(bool aOn, bool aRepaint) override;
++  MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult
++  SetFormProperty(nsAtom* aName, const nsAString& aValue) override;
++
++  //==== END NSIFORMCONTROLFRAME
++
++  //==== NSITEXTCONTROLFRAME
+ 
+-  MOZ_CAN_RUN_SCRIPT NS_IMETHOD SetSelectionRange(uint32_t aSelectionStart,
+-                                                  uint32_t aSelectionEnd,
+-                                                  mozilla::SelectionDirection);
+-  NS_IMETHOD GetOwnedSelectionController(nsISelectionController** aSelCon);
+-  nsFrameSelection* GetOwnedFrameSelection() {
++  MOZ_CAN_RUN_SCRIPT_BOUNDARY already_AddRefed<mozilla::TextEditor>
++  GetTextEditor() override;
++  MOZ_CAN_RUN_SCRIPT NS_IMETHOD
++  SetSelectionRange(uint32_t aSelectionStart, uint32_t aSelectionEnd,
++                    SelectionDirection = SelectionDirection::None) override;
++  NS_IMETHOD GetOwnedSelectionController(
++      nsISelectionController** aSelCon) override;
++  nsFrameSelection* GetOwnedFrameSelection() override {
+     return ControlElement()->GetConstFrameSelection();
+   }
+   nsISelectionController* GetSelectionController() {
+@@ -130,7 +140,7 @@ class nsTextControlFrame : public nsContainerFrame,
+    * @throws NS_ERROR_NOT_INITIALIZED if mEditor has not been created
+    * @throws various and sundry other things
+    */
+-  MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult EnsureEditorInitialized();
++  MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult EnsureEditorInitialized() override;
+ 
+   //==== END NSITEXTCONTROLFRAME
+ 
+@@ -158,7 +168,6 @@ class nsTextControlFrame : public nsContainerFrame,
+   void ScrollSelectionIntoViewAsync(ScrollAncestors = ScrollAncestors::No);
+ 
+  protected:
+-  MOZ_CAN_RUN_SCRIPT_BOUNDARY void OnFocus();
+   MOZ_CAN_RUN_SCRIPT_BOUNDARY void HandleReadonlyOrDisabledChange();
+ 
+   /**
+@@ -208,8 +217,6 @@ class nsTextControlFrame : public nsContainerFrame,
+ 
+ #undef DEFINE_TEXTCTRL_CONST_FORWARDER
+ 
+-  MOZ_CAN_RUN_SCRIPT nsresult SelectAll();
+-
+  protected:
+   class EditorInitializer;
+   friend class EditorInitializer;
+@@ -274,13 +281,13 @@ class nsTextControlFrame : public nsContainerFrame,
+ 
+  private:
+   // helper methods
+-  MOZ_CAN_RUN_SCRIPT nsresult SetSelectionInternal(nsINode* aStartNode,
+-                                                   uint32_t aStartOffset,
+-                                                   nsINode* aEndNode,
+-                                                   uint32_t aEndOffset,
+-                                                   mozilla::SelectionDirection);
+-  MOZ_CAN_RUN_SCRIPT nsresult SetSelectionEndPoints(
+-      uint32_t aSelStart, uint32_t aSelEnd, mozilla::SelectionDirection);
++  MOZ_CAN_RUN_SCRIPT nsresult SetSelectionInternal(
++      nsINode* aStartNode, uint32_t aStartOffset, nsINode* aEndNode,
++      uint32_t aEndOffset, SelectionDirection = SelectionDirection::None);
++  MOZ_CAN_RUN_SCRIPT nsresult SelectAllOrCollapseToEndOfText(bool aSelect);
++  MOZ_CAN_RUN_SCRIPT nsresult
++  SetSelectionEndPoints(uint32_t aSelStart, uint32_t aSelEnd,
++                        SelectionDirection = SelectionDirection::None);
+ 
+   void FinishedInitializer() { RemoveProperty(TextControlInitializer()); }
+ 
+diff --git a/layout/generic/FrameClasses.py b/layout/generic/FrameClasses.py
+index cd157f58e07c..595396189444 100644
+--- a/layout/generic/FrameClasses.py
++++ b/layout/generic/FrameClasses.py
+@@ -181,6 +181,7 @@ FRAME_CLASSES = [
+     AbstractFrame("SVGPaintServerFrame"),
+     # Interfaces (for FrameIID use)
+     AbstractFrame("nsIAnonymousContentCreator"),
++    AbstractFrame("nsIFormControlFrame"),
+     AbstractFrame("nsIMathMLFrame"),
+     AbstractFrame("nsIPercentBSizeObserver"),
+     AbstractFrame("nsIPopupContainer"),
+@@ -191,4 +192,5 @@ FRAME_CLASSES = [
+     AbstractFrame("ISVGSVGFrame"),
+     AbstractFrame("nsITableCellLayout"),
+     AbstractFrame("nsITableLayout"),
++    AbstractFrame("nsITextControlFrame"),
+ ]
+diff --git a/layout/generic/ScrollContainerFrame.cpp b/layout/generic/ScrollContainerFrame.cpp
+index 18277a463897..08db0be3bd2c 100644
+--- a/layout/generic/ScrollContainerFrame.cpp
++++ b/layout/generic/ScrollContainerFrame.cpp
+@@ -29,6 +29,7 @@
+ #include "nsScrollbarFrame.h"
+ #include "nsINode.h"
+ #include "nsIScrollbarMediator.h"
++#include "nsITextControlFrame.h"
+ #include "nsILayoutHistoryState.h"
+ #include "nsNodeInfoManager.h"
+ #include "nsContentCreatorFunctions.h"
+diff --git a/layout/generic/nsFontInflationData.cpp b/layout/generic/nsFontInflationData.cpp
+index 229c2178db4c..daa61d91f226 100644
+--- a/layout/generic/nsFontInflationData.cpp
++++ b/layout/generic/nsFontInflationData.cpp
+@@ -234,7 +234,8 @@ void nsFontInflationData::UpdateISize(const ReflowInput& aReflowInput) {
+   // FIXME: Should probably only scan the text that's actually going to
+   // be inflated!
+ 
+-  if (aFrame->IsTextInputFrame()) {
++  nsIFormControlFrame* fcf = do_QueryFrame(aFrame);
++  if (fcf) {
+     return aFrame;
+   }
+ 
+diff --git a/layout/generic/nsIFrame.cpp b/layout/generic/nsIFrame.cpp
+index 34b0115ec8e9..96a6b17dd554 100644
+--- a/layout/generic/nsIFrame.cpp
++++ b/layout/generic/nsIFrame.cpp
+@@ -59,7 +59,6 @@
+ #include "nsFlexContainerFrame.h"
+ #include "nsFocusManager.h"
+ #include "nsFrameList.h"
+-#include "nsTextControlFrame.h"
+ #include "nsPlaceholderFrame.h"
+ #include "nsIBaseWindow.h"
+ #include "nsIContent.h"
+@@ -93,6 +92,7 @@
+ #include "nsFieldSetFrame.h"
+ #include "nsFrameTraversal.h"
+ #include "nsRange.h"
++#include "nsITextControlFrame.h"
+ #include "nsNameSpaceManager.h"
+ #include "nsIPercentBSizeObserver.h"
+ #include "nsStyleStructInlines.h"
+@@ -8036,24 +8036,29 @@ inline static bool FormControlShrinksForPercentSize(const nsIFrame* aFrame) {
+     return false;
+   }
+ 
+-  switch (aFrame->Type()) {
+-    case LayoutFrameType::Meter:
+-    case LayoutFrameType::Progress:
+-    case LayoutFrameType::Range:
+-    case LayoutFrameType::TextInput:
+-    case LayoutFrameType::ColorControl:
+-    case LayoutFrameType::ComboboxControl:
+-    case LayoutFrameType::ListControl:
+-    case LayoutFrameType::CheckboxRadio:
+-    case LayoutFrameType::FileControl:
+-    case LayoutFrameType::ImageControl:
+-      return true;
+-    default:
+-      // Buttons (GfxButtonControl / HTMLButtonControl) don't have this
+-      // shrinking behavior.  (Note that color inputs do, even though they
+-      // inherit from button, so we can't use do_QueryFrame here.)
+-      return false;
++  LayoutFrameType fType = aFrame->Type();
++  if (fType == LayoutFrameType::Meter || fType == LayoutFrameType::Progress ||
++      fType == LayoutFrameType::Range) {
++    // progress, meter and range do have this shrinking behavior
++    // FIXME: Maybe these should be nsIFormControlFrame?
++    return true;
+   }
++
++  if (!static_cast<nsIFormControlFrame*>(do_QueryFrame(aFrame))) {
++    // Not a form control.  This includes fieldsets, which do not
++    // shrink.
++    return false;
++  }
++
++  if (fType == LayoutFrameType::GfxButtonControl ||
++      fType == LayoutFrameType::HTMLButtonControl) {
++    // Buttons don't have this shrinking behavior.  (Note that color
++    // inputs do, even though they inherit from button, so we can't use
++    // do_QueryFrame here.)
++    return false;
++  }
++
++  return true;
+ }
+ 
+ bool nsIFrame::IsPercentageResolvedAgainstZero(
+@@ -8509,7 +8514,8 @@ nsresult nsIFrame::GetSelectionController(nsPresContext* aPresContext,
+ 
+   nsIFrame* frame = this;
+   while (frame && frame->HasAnyStateBits(NS_FRAME_INDEPENDENT_SELECTION)) {
+-    if (nsTextControlFrame* tcf = do_QueryFrame(frame)) {
++    nsITextControlFrame* tcf = do_QueryFrame(frame);
++    if (tcf) {
+       return tcf->GetOwnedSelectionController(aSelCon);
+     }
+     frame = frame->GetParent();
+@@ -8528,7 +8534,8 @@ already_AddRefed<nsFrameSelection> nsIFrame::GetFrameSelection() {
+ const nsFrameSelection* nsIFrame::GetConstFrameSelection() const {
+   nsIFrame* frame = const_cast<nsIFrame*>(this);
+   while (frame && frame->HasAnyStateBits(NS_FRAME_INDEPENDENT_SELECTION)) {
+-    if (nsTextControlFrame* tcf = do_QueryFrame(frame)) {
++    nsITextControlFrame* tcf = do_QueryFrame(frame);
++    if (tcf) {
+       return tcf->GetOwnedFrameSelection();
+     }
+     frame = frame->GetParent();
+@@ -8916,9 +8923,9 @@ static nsContentAndOffset FindLineBreakingFrame(nsIFrame* aFrame,
+     return result;
+   }
+ 
+-  // Treat form controls and other replaced inline level elements as inline
+-  // leaves.
+-  if (aFrame->IsReplaced() && aFrame->IsInlineOutside() &&
++  // Treat form controls as inline leaves
++  // XXX we really need a way to determine whether a frame is inline-level
++  if (static_cast<nsIFormControlFrame*>(do_QueryFrame(aFrame)) &&
+       !aFrame->IsBrFrame() && !aFrame->IsTextFrame()) {
+     return result;
+   }
+diff --git a/toolkit/components/find/nsFind.cpp b/toolkit/components/find/nsFind.cpp
+index 3e31b5e72cc4..33abe40da1a2 100644
+--- a/toolkit/components/find/nsFind.cpp
++++ b/toolkit/components/find/nsFind.cpp
+@@ -11,6 +11,7 @@
+ #include "nsIContent.h"
+ #include "nsINode.h"
+ #include "nsIFrame.h"
++#include "nsITextControlFrame.h"
+ #include "nsIFormControl.h"
+ #include "nsTextFragment.h"
+ #include "nsString.h"
+diff --git a/toolkit/components/find/nsWebBrowserFind.cpp b/toolkit/components/find/nsWebBrowserFind.cpp
+index e2c4bf8f39ed..39553579eb02 100644
+--- a/toolkit/components/find/nsWebBrowserFind.cpp
++++ b/toolkit/components/find/nsWebBrowserFind.cpp
+@@ -19,6 +19,7 @@
+ #include "mozilla/dom/Document.h"
+ #include "nsISelectionController.h"
+ #include "nsIFrame.h"
++#include "nsITextControlFrame.h"
+ #include "nsReadableUtils.h"
+ #include "nsIContent.h"
+ #include "nsIObserverService.h"
+@@ -31,6 +32,7 @@
+ #include "mozilla/Services.h"
+ #include "mozilla/dom/Element.h"
+ #include "mozilla/dom/Selection.h"
++#include "nsISimpleEnumerator.h"
+ #include "nsComponentManagerUtils.h"
+ #include "nsContentUtils.h"
+ #include "nsGenericHTMLElement.h"
+@@ -324,16 +326,14 @@ void nsWebBrowserFind::SetSelectionAndScroll(nsPIDOMWindowOuter* aWindow,
+ 
+   // since the match could be an anonymous textnode inside a
+   // <textarea> or text <input>, we need to get the outer frame
+-  nsIFrame* tcFrame = nullptr;
++  nsITextControlFrame* tcFrame = nullptr;
+   for (; content; content = content->GetParent()) {
+     if (!content->IsInNativeAnonymousSubtree()) {
+       nsIFrame* f = content->GetPrimaryFrame();
+       if (!f) {
+         return;
+       }
+-      if (f->IsTextInputFrame()) {
+-        tcFrame = f;
+-      }
++      tcFrame = do_QueryFrame(f);
+       break;
+     }
+   }

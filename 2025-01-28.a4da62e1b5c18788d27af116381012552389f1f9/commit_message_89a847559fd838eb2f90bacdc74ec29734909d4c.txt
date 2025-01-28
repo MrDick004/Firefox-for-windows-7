@@ -1,0 +1,1 @@
+Bug 1900225: Part 4 - Add geo.prompt.open_system_prefs to block opening system preferences r=gstoll    2024-08-28 06:47:32    12e74ba7546b462b0d6a3712efea29ee8c92f5f9

@@ -1,0 +1,1 @@
+Bug 1930292 - Stop setting non-zero chromemargin values. r=win-reviewers,handyman,firefox-desktop-core-reviewers ,dao    2024-11-28 20:12:49    c8eb5e0df1a1bf679013b6bee4a784002057b15c

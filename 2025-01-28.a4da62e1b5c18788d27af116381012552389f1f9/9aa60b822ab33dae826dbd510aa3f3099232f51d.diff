@@ -1,0 +1,1209 @@
+diff --git a/browser/themes/windows/browser-aero.css b/browser/themes/windows/browser-aero.css
+index ff578478b53f..163d2166e63b 100644
+--- a/browser/themes/windows/browser-aero.css
++++ b/browser/themes/windows/browser-aero.css
+@@ -37,8 +37,12 @@
+   }
+ }
+ 
++.titlebar-buttonbox,
+ .titlebar-button {
+   appearance: none !important;
++}
++
++.titlebar-button {
+   border: none;
+   margin: 0 !important;
+   padding: 8px 17px;
+diff --git a/browser/themes/windows/browser.css b/browser/themes/windows/browser.css
+index cf2c519d67f5..95d6cfefd978 100644
+--- a/browser/themes/windows/browser.css
++++ b/browser/themes/windows/browser.css
+@@ -111,6 +111,11 @@
+ }
+ 
+ .titlebar-buttonbox {
++  /* For all Windows configurations except for Windows Aero and Windows Aero Basic,
++   * the default -moz-default-appearance of -moz-window-button-box and
++   * -moz-window-button-box-maximized adds unwanted margins to the button box. We
++   * special case Windows Aero and Windows Aero Basic in browser-aero.css.
++   */
+   appearance: none;
+   /* The button box must appear on top of the navigator-toolbox in order for
+    * click and hover mouse events to work properly for the button in the restored
+diff --git a/gfx/layers/wr/WebRenderLayerManager.cpp b/gfx/layers/wr/WebRenderLayerManager.cpp
+index 6ea61b23b648..f1ec1c11bdc1 100644
+--- a/gfx/layers/wr/WebRenderLayerManager.cpp
++++ b/gfx/layers/wr/WebRenderLayerManager.cpp
+@@ -387,6 +387,13 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
+     }
+   }
+ 
++  mWidget->AddWindowOverlayWebRenderCommands(WrBridge(), *mDLBuilder,
++                                             resourceUpdates);
++  if (dumpEnabled) {
++    printf_stderr("(window overlay)\n");
++    Unused << mDLBuilder->Dump(/*indent*/ 1, Some(builderDumpIndex), Nothing());
++  }
++
+   if (AsyncPanZoomEnabled()) {
+     if (mIsFirstPaint) {
+       mScrollData.SetIsFirstPaint(true);
+diff --git a/gfx/webrender_bindings/RenderCompositorANGLE.cpp b/gfx/webrender_bindings/RenderCompositorANGLE.cpp
+index c911132b6dc6..2ea2bf112496 100644
+--- a/gfx/webrender_bindings/RenderCompositorANGLE.cpp
++++ b/gfx/webrender_bindings/RenderCompositorANGLE.cpp
+@@ -69,7 +69,16 @@ UniquePtr<RenderCompositor> RenderCompositorANGLE::Create(
+ RenderCompositorANGLE::RenderCompositorANGLE(
+     const RefPtr<widget::CompositorWidget>& aWidget,
+     RefPtr<gl::GLContext>&& aGL)
+-    : RenderCompositor(aWidget), mGL(aGL) {
++    : RenderCompositor(aWidget),
++      mGL(aGL),
++      mEGLConfig(nullptr),
++      mEGLSurface(nullptr),
++      mUseTripleBuffering(false),
++      mUseAlpha(false),
++      mUseNativeCompositor(true),
++      mUsePartialPresent(false),
++      mFullRender(false),
++      mDisablingNativeCompositor(false) {
+   MOZ_ASSERT(mGL);
+   LOG("RenderCompositorANGLE::RenderCompositorANGLE()");
+ }
+@@ -345,12 +354,15 @@ void RenderCompositorANGLE::CreateSwapChainForDCompIfPossible(
+   // It does not support triple buffering.
+   const bool useTripleBuffering =
+       gfx::gfxVars::UseWebRenderTripleBufferingWin() && !UseCompositor();
++  // Non Glass window is common since Windows 10.
++  bool useAlpha = false;
+   RefPtr<IDXGISwapChain1> swapChain1 =
+-      CreateSwapChainForDComp(useTripleBuffering);
++      CreateSwapChainForDComp(useTripleBuffering, useAlpha);
+   if (swapChain1) {
+     mSwapChain = swapChain1;
+     mSwapChain1 = swapChain1;
+     mUseTripleBuffering = useTripleBuffering;
++    mUseAlpha = useAlpha;
+     mDCLayerTree->SetDefaultSwapChain(swapChain1);
+   } else {
+     // Clear CLayerTree on falire
+@@ -359,7 +371,7 @@ void RenderCompositorANGLE::CreateSwapChainForDCompIfPossible(
+ }
+ 
+ RefPtr<IDXGISwapChain1> RenderCompositorANGLE::CreateSwapChainForDComp(
+-    bool aUseTripleBuffering) {
++    bool aUseTripleBuffering, bool aUseAlpha) {
+   HRESULT hr;
+   RefPtr<IDXGIDevice> dxgiDevice;
+   mDevice->QueryInterface((IDXGIDevice**)getter_AddRefs(dxgiDevice));
+@@ -398,7 +410,7 @@ RefPtr<IDXGISwapChain1> RenderCompositorANGLE::CreateSwapChainForDComp(
+   // DXGI_SCALING_NONE caused swap chain creation failure.
+   desc.Scaling = DXGI_SCALING_STRETCH;
+   desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+-  const bool alpha = ShouldUseAlpha();
++  const bool alpha = ShouldUseAlpha() || aUseAlpha;
+  // See if we need to use transparency.
+  desc.AlphaMode =
+      alpha ? DXGI_ALPHA_MODE_PREMULTIPLIED : DXGI_ALPHA_MODE_IGNORE;
+@@ -415,6 +432,33 @@ RefPtr<IDXGISwapChain1> RenderCompositorANGLE::CreateSwapChainForDComp(
+         return false;
+       }
+     }
++    if (mDCLayerTree) {
++      bool useAlpha = mWidget->AsWindows()->HasGlass();
++      // When Alpha usage is changed, SwapChain needs to be recreatd.
++      if (useAlpha != mUseAlpha) {
++        DestroyEGLSurface();
++        mBufferSize.reset();
++
++        RefPtr<IDXGISwapChain1> swapChain1 =
++            CreateSwapChainForDComp(mUseTripleBuffering, useAlpha);
++        if (swapChain1) {
++          mSwapChain = swapChain1;
++          mUseAlpha = useAlpha;
++          mDCLayerTree->SetDefaultSwapChain(swapChain1);
++          // When alpha is used, we want to disable partial present.
++          // See Bug 1595027.
++          if (useAlpha) {
++            mFullRender = true;
++          }
++        } else {
++          gfxCriticalNote << "Failed to re-create SwapChain";
++          RenderThread::Get()->HandleWebRenderError(
++              WebRenderError::NEW_SURFACE);
++          return false;
++        }
++      }
++    }
++
+     if (!ResizeBufferIfNeeded()) {
+       return false;
+     }
+@@ -453,7 +499,14 @@ RenderedFrameId RenderCompositorANGLE::EndFrame(
+     const UINT flags = 0;
+ 
+     const LayoutDeviceIntSize& bufferSize = mBufferSize.ref();
+-    if (mUsePartialPresent && mSwapChain1) {
++
++    // During high contrast mode, alpha is used. In this case,
++    // IDXGISwapChain1::Present1 shows nothing with compositor window.
++    // In this case, we want to disable partial present by full render.
++    // See Bug 1595027
++    MOZ_ASSERT_IF(mUsePartialPresent && mUseAlpha, mFullRender);
++
++    if (mUsePartialPresent && !mUseAlpha && mSwapChain1) {
+       // Clear full render flag.
+       mFullRender = false;
+       // If there is no diry rect, we skip SwapChain present.
+@@ -879,19 +932,26 @@ void RenderCompositorANGLE::EnableNativeCompositor(bool aEnable) {
+ }
+ 
+ bool RenderCompositorANGLE::RecreateNonNativeCompositorSwapChain() {
++  bool useAlpha = mWidget->AsWindows()->HasGlass();
+   DestroyEGLSurface();
+   mBufferSize.reset();
+ 
+   RefPtr<IDXGISwapChain1> swapChain1 =
+-      CreateSwapChainForDComp(mUseTripleBuffering);
++      CreateSwapChainForDComp(mUseTripleBuffering, useAlpha);
+   if (!swapChain1) {
+     return false;
+   }
+     mSwapChain = swapChain1;
++    mUseAlpha = useAlpha;
+   mSwapChain1 = swapChain1;
+   if (mDCLayerTree) {
+     mDCLayerTree->SetDefaultSwapChain(swapChain1);
+   }
++    // When alpha is used, we want to disable partial present.
++    // See Bug 1595027.
++    if (useAlpha) {
++      mFullRender = true;
++    }
+   return ResizeBufferIfNeeded();
+ }
+ 
+diff --git a/gfx/webrender_bindings/RenderCompositorANGLE.h b/gfx/webrender_bindings/RenderCompositorANGLE.h
+index ccf37d1d6ba1..cb1203e3fe4b 100644
+--- a/gfx/webrender_bindings/RenderCompositorANGLE.h
++++ b/gfx/webrender_bindings/RenderCompositorANGLE.h
+@@ -121,18 +121,20 @@ class RenderCompositorANGLE : public RenderCompositor {
+   ID3D11Device* GetDeviceOfEGLDisplay(nsACString& aError);
+   bool CreateSwapChain(nsACString& aError);
+   void CreateSwapChainForDCompIfPossible(IDXGIFactory2* aDXGIFactory2);
+-  RefPtr<IDXGISwapChain1> CreateSwapChainForDComp(bool aUseTripleBuffering);
++  RefPtr<IDXGISwapChain1> CreateSwapChainForDComp(bool aUseTripleBuffering,
++                                                  bool aUseAlpha);
+   RefPtr<ID3D11Query> GetD3D11Query();
+   void ReleaseNativeCompositorResources();
+   HWND GetCompositorHwnd();
+   bool ShouldUseAlpha() const;
+ 
+   RefPtr<gl::GLContext> mGL;
+ 
+-  EGLConfig mEGLConfig = nullptr;
+-  EGLSurface mEGLSurface = nullptr;
++  EGLConfig mEGLConfig;
++  EGLSurface mEGLSurface;
+ 
+-  bool mUseTripleBuffering = false;
++  bool mUseTripleBuffering;
++  bool mUseAlpha;
+ 
+   RefPtr<ID3D11Device> mDevice;
+   RefPtr<ID3D11DeviceContext> mCtx;
+@@ -146,11 +148,11 @@ class RenderCompositorANGLE : public RenderCompositor {
+   RenderedFrameId mLastCompletedFrameId;
+ 
+   Maybe<LayoutDeviceIntSize> mBufferSize;
+-  bool mUseNativeCompositor = true;
+-  bool mUsePartialPresent = false;
+-  bool mFullRender = false;
++  bool mUseNativeCompositor;
++  bool mUsePartialPresent;
++  bool mFullRender;
+   // Used to know a timing of disabling native compositor.
+-  bool mDisablingNativeCompositor = false;
++  bool mDisablingNativeCompositor;
+   bool mFirstPresent = true;
+   // Wether we're currently using alpha.
+   bool mSwapChainUsingAlpha = false;
+diff --git a/layout/base/PresShell.cpp b/layout/base/PresShell.cpp
+index 34e36ab91ff0..4be594d9ade6 100644
+--- a/layout/base/PresShell.cpp
++++ b/layout/base/PresShell.cpp
+@@ -5442,8 +5442,14 @@ PresShell::CanvasBackground PresShell::ComputeCanvasBackground() const {
+   nscolor color = NS_RGBA(0, 0, 0, 0);
+   bool drawBackgroundImage = false;
+   bool drawBackgroundColor = false;
+-  if (!bgFrame->IsThemed()) {
+-    // Ignore the CSS background-color if -moz-appearance is used.
++  const nsStyleDisplay* disp = bgFrame->StyleDisplay();
++  StyleAppearance appearance = disp->EffectiveAppearance();
++  if (bgFrame->IsThemed(disp) &&
++      appearance != StyleAppearance::MozWinBorderlessGlass) {
++    // Ignore the CSS background-color if -moz-appearance is used and it is
++    // not one of the glass values. (Windows 7 Glass has traditionally not
++    // overridden background colors, so we preserve that behavior for now.)
++  } else {
+     color = nsCSSRendering::DetermineBackgroundColor(
+         aCanvas->PresContext(), bgFrame->Style(), aCanvas, drawBackgroundImage,
+         drawBackgroundColor);
+diff --git a/layout/base/nsLayoutUtils.cpp b/layout/base/nsLayoutUtils.cpp
+index 64108c06cdd9..1bfd2ba4a43a 100644
+--- a/layout/base/nsLayoutUtils.cpp
++++ b/layout/base/nsLayoutUtils.cpp
+@@ -3445,10 +3445,14 @@ void nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext, nsIFrame* aFrame,
+   // glass boundaries on Windows. Also set up the window dragging region.
+   if ((aFlags & PaintFrameFlags::WidgetLayers) &&
+       !(aFlags & PaintFrameFlags::DocumentRelative)) {
+-    if (nsIWidget* widget = aFrame->GetNearestWidget()) {
+-      const nsRegion& opaqueRegion = builder->GetWindowOpaqueRegion();
++    nsIWidget* widget = aFrame->GetNearestWidget();
++    if (widget) {
++      nsRegion opaqueRegion;
++      opaqueRegion.And(builder->GetWindowExcludeGlassRegion(),
++                       builder->GetWindowOpaqueRegion());
+       widget->UpdateOpaqueRegion(LayoutDeviceIntRegion::FromUnknownRegion(
+           opaqueRegion.ToNearestPixels(presContext->AppUnitsPerDevPixel())));
++
+       widget->UpdateWindowDraggingRegion(builder->GetWindowDraggingRegion());
+     }
+   }
+@@ -6898,6 +6902,13 @@ widget::TransparencyMode nsLayoutUtils::GetFrameTransparency(
+     return TransparencyMode::Transparent;
+   }
+ 
++  StyleAppearance appearance =
++      aCSSRootFrame->StyleDisplay()->EffectiveAppearance();
++
++  if (appearance == StyleAppearance::MozWinBorderlessGlass) {
++    return TransparencyMode::BorderlessGlass;
++  }
++
+   nsITheme::Transparency transparency;
+   if (aCSSRootFrame->IsThemed(&transparency)) {
+     return transparency == nsITheme::eTransparent
+diff --git a/layout/painting/RetainedDisplayListBuilder.cpp b/layout/painting/RetainedDisplayListBuilder.cpp
+index 3e968b21a713..3e3b8e9a9455 100644
+--- a/layout/painting/RetainedDisplayListBuilder.cpp
++++ b/layout/painting/RetainedDisplayListBuilder.cpp
+@@ -224,6 +224,10 @@ bool RetainedDisplayListBuilder::PreProcessDisplayList(
+         aList->mOldItems[i].mItem = nullptr;
+       }
+ 
++      if (item->IsGlassItem() && item == mBuilder.GetGlassDisplayItem()) {
++        mBuilder.ClearGlassDisplayItem();
++      }
++
+       item->Destroy(&mBuilder);
+       Metrics()->mRemovedItems++;
+ 
+@@ -475,6 +479,20 @@ class MergeState {
+           oldItem->SetBuildingRect(aNewItem->GetBuildingRect());
+         }
+ 
++        if (destItem == aNewItem) {
++          if (oldItem->IsGlassItem() &&
++              oldItem == mBuilder->Builder()->GetGlassDisplayItem()) {
++            mBuilder->Builder()->ClearGlassDisplayItem();
++          }
++        }  // aNewItem can't be the glass item on the builder yet.
++
++        if (destItem->IsGlassItem()) {
++          if (destItem != oldItem ||
++              destItem != mBuilder->Builder()->GetGlassDisplayItem()) {
++            mBuilder->Builder()->SetGlassDisplayItem(destItem);
++          }
++        }
++
+         MergeChildLists(aNewItem, oldItem, destItem);
+ 
+         AutoTArray<MergedListIndex, 2> directPredecessors =
+@@ -491,6 +509,9 @@ class MergeState {
+       }
+     }
+     mResultIsModified = true;
++    if (aNewItem->IsGlassItem()) {
++      mBuilder->Builder()->SetGlassDisplayItem(aNewItem);
++    }
+     return Some(AddNewNode(aNewItem, Nothing(), Span<MergedListIndex>(),
+                            aPreviousItem));
+   }
+@@ -667,6 +688,11 @@ class MergeState {
+                       nsTArray<MergedListIndex>&& aDirectPredecessors) {
+     nsDisplayItem* item = mOldItems[aNode.val].mItem;
+     if (mOldItems[aNode.val].IsChanged()) {
++      if (item && item->IsGlassItem() &&
++          item == mBuilder->Builder()->GetGlassDisplayItem()) {
++        mBuilder->Builder()->ClearGlassDisplayItem();
++      }
++
+       mOldItems[aNode.val].Discard(mBuilder, std::move(aDirectPredecessors));
+       mResultIsModified = true;
+     } else {
+diff --git a/layout/painting/nsDisplayList.cpp b/layout/painting/nsDisplayList.cpp
+index 5a11ad5a28c3..228eb3cf3fb6 100644
+--- a/layout/painting/nsDisplayList.cpp
++++ b/layout/painting/nsDisplayList.cpp
+@@ -651,6 +651,7 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
+       mCurrentContainerASR(nullptr),
+       mCurrentFrame(aReferenceFrame),
+       mCurrentReferenceFrame(aReferenceFrame),
++      mGlassDisplayItem(nullptr),
+       mScrollInfoItemsForHoisting(nullptr),
+       mFirstClipChainToDestroy(nullptr),
+       mTableBackgroundSet(nullptr),
+@@ -660,6 +661,7 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
+       mFilterASR(nullptr),
+       mDirtyRect(-1, -1, -1, -1),
+       mBuildingExtraPagesForPageNum(0),
++      mHasGlassItemDuringPartial(false),
+       mMode(aMode),
+       mContainsBlendMode(false),
+       mIsBuildingScrollbar(false),
+@@ -857,6 +859,46 @@ void nsDisplayListBuilder::MarkFrameForDisplayIfVisible(
+   MarkFrameForDisplayIfVisibleInternal(aFrame, aStopAtFrame);
+ }
+ 
++void nsDisplayListBuilder::SetGlassDisplayItem(nsDisplayItem* aItem) {
++  // Web pages or extensions could trigger the "Multiple glass backgrounds
++  // found?" warning by using -moz-appearance:win-borderless-glass etc on their
++  // own elements (as long as they are root frames, which is rare as each doc
++  // only gets one near the root). We only care about the first one, since that
++  // will be the background of the root window.
++
++  if (IsPartialUpdate()) {
++    if (aItem->Frame()->Style()->IsRootElementStyle()) {
++#ifdef DEBUG
++      if (mHasGlassItemDuringPartial) {
++        NS_WARNING("Multiple glass backgrounds found?");
++      } else
++#endif
++          if (!mHasGlassItemDuringPartial) {
++        mHasGlassItemDuringPartial = true;
++        aItem->SetIsGlassItem();
++      }
++    }
++    return;
++  }
++
++  if (aItem->Frame()->Style()->IsRootElementStyle()) {
++#ifdef DEBUG
++    if (mGlassDisplayItem) {
++      NS_WARNING("Multiple glass backgrounds found?");
++    } else
++#endif
++        if (!mGlassDisplayItem) {
++      mGlassDisplayItem = aItem;
++      mGlassDisplayItem->SetIsGlassItem();
++    }
++  }
++}
++
++bool nsDisplayListBuilder::NeedToForceTransparentSurfaceForItem(
++    nsDisplayItem* aItem) {
++  return aItem == mGlassDisplayItem;
++}
++
+ void nsDisplayListBuilder::SetIsRelativeToLayoutViewport() {
+   mIsRelativeToLayoutViewport = true;
+   UpdateShouldBuildAsyncZoomContainer();
+@@ -1785,6 +1827,7 @@ void nsDisplayListBuilder::AddSizeOfExcludingThis(nsWindowSizes& aSizes) const {
+   MallocSizeOf mallocSizeOf = aSizes.mState.mMallocSizeOf;
+   n += mDocumentWillChangeBudgets.ShallowSizeOfExcludingThis(mallocSizeOf);
+   n += mFrameWillChangeBudgets.ShallowSizeOfExcludingThis(mallocSizeOf);
++  n += mWindowExcludeGlassRegion.SizeOfExcludingThis(mallocSizeOf);
+   n += mRetainedWindowDraggingRegion.SizeOfExcludingThis(mallocSizeOf);
+   n += mRetainedWindowNoDraggingRegion.SizeOfExcludingThis(mallocSizeOf);
+   n += mRetainedWindowOpaqueRegion.SizeOfExcludingThis(mallocSizeOf);
+@@ -1855,13 +1898,19 @@ void nsDisplayListBuilder::WeakFrameRegion::RemoveModifiedFramesAndRects() {
+ void nsDisplayListBuilder::RemoveModifiedWindowRegions() {
+   mRetainedWindowDraggingRegion.RemoveModifiedFramesAndRects();
+   mRetainedWindowNoDraggingRegion.RemoveModifiedFramesAndRects();
++  mWindowExcludeGlassRegion.RemoveModifiedFramesAndRects();
+   mRetainedWindowOpaqueRegion.RemoveModifiedFramesAndRects();
++
++  mHasGlassItemDuringPartial = false;
+ }
+ 
+ void nsDisplayListBuilder::ClearRetainedWindowRegions() {
+   mRetainedWindowDraggingRegion.Clear();
+   mRetainedWindowNoDraggingRegion.Clear();
++  mWindowExcludeGlassRegion.Clear();
+   mRetainedWindowOpaqueRegion.Clear();
++
++  mGlassDisplayItem = nullptr;
+ }
+ 
+ const uint32_t gWillChangeAreaMultiplier = 3;
+@@ -3083,6 +3132,13 @@ static void DealWithWindowsAppearanceHacks(nsIFrame* aFrame,
+     return;
+   }
+ 
++  if (defaultAppearance == StyleAppearance::MozWinExcludeGlass) {
++    // Check for frames that are marked as a part of the region used in
++    // calculating glass margins on Windows.
++    aBuilder->AddWindowExcludeGlassRegion(
++        aFrame, nsRect(aBuilder->ToReferenceFrame(aFrame), aFrame->GetSize()));
++  }
++
+   if (auto type = disp.GetWindowButtonType()) {
+     if (auto* widget = aFrame->GetNearestWidget()) {
+       auto rect = LayoutDevicePixel::FromAppUnitsToNearest(
+@@ -3670,6 +3726,10 @@ void nsDisplayThemedBackground::Init(nsDisplayListBuilder* aBuilder) {
+     RegisterThemeGeometry(aBuilder, this, StyleFrame(), type);
+   }
+ 
++  if (mAppearance == StyleAppearance::MozWinBorderlessGlass) {
++    aBuilder->SetGlassDisplayItem(this);
++  }
++
+   mBounds = GetBoundsInternal();
+ }
+ 
+@@ -3701,6 +3761,9 @@ nsRegion nsDisplayThemedBackground::GetOpaqueRegion(
+ 
+ Maybe<nscolor> nsDisplayThemedBackground::IsUniform(
+     nsDisplayListBuilder* aBuilder) const {
++  if (mAppearance == StyleAppearance::MozWinBorderlessGlass) {
++    return Some(NS_RGBA(0, 0, 0, 0));
++  }
+   return Nothing();
+ }
+ 
+diff --git a/layout/painting/nsDisplayList.h b/layout/painting/nsDisplayList.h
+index c4f9df4f141f..501644867b22 100644
+--- a/layout/painting/nsDisplayList.h
++++ b/layout/painting/nsDisplayList.h
+@@ -1438,6 +1438,32 @@ class nsDisplayListBuilder {
+     return displayData ? displayData.ptr() : nullptr;
+   }
+ 
++  /**
++   * Accumulates the bounds of box frames that have moz-appearance
++   * -moz-win-exclude-glass style. Used in setting glass margins on
++   * Windows.
++   *
++   * We set the window opaque region (from which glass margins are computed)
++   * to the intersection of the glass region specified here and the opaque
++   * region computed during painting. So the excluded glass region actually
++   * *limits* the extent of the opaque area reported to Windows. We limit it
++   * so that changes to the computed opaque region (which can vary based on
++   * region optimizations and the placement of UI elements) outside the
++   * -moz-win-exclude-glass area don't affect the glass margins reported to
++   * Windows; changing those margins willy-nilly can cause the Windows 7 glass
++   * haze effect to jump around disconcertingly.
++   */
++  void AddWindowExcludeGlassRegion(nsIFrame* aFrame, const nsRect& aBounds) {
++    mWindowExcludeGlassRegion.Add(aFrame, aBounds);
++  }
++
++  /**
++   * Returns the window exclude glass region.
++   */
++  nsRegion GetWindowExcludeGlassRegion() const {
++    return mWindowExcludeGlassRegion.ToRegion();
++  }
++
+   /**
+    * Accumulates opaque stuff into the window opaque region.
+    */
+@@ -1457,6 +1483,12 @@ class nsDisplayListBuilder {
+                                     : mWindowOpaqueRegion;
+   }
+ 
++  void SetGlassDisplayItem(nsDisplayItem* aItem);
++  void ClearGlassDisplayItem() { mGlassDisplayItem = nullptr; }
++  nsDisplayItem* GetGlassDisplayItem() { return mGlassDisplayItem; }
++
++  bool NeedToForceTransparentSurfaceForItem(nsDisplayItem* aItem);
++
+   /**
+    * mContainsBlendMode is true if we processed a display item that
+    * has a blend mode attached. We do this so we can insert a
+@@ -1762,6 +1794,11 @@ class nsDisplayListBuilder {
+   // The reference frame for mCurrentFrame.
+   const nsIFrame* mCurrentReferenceFrame;
+ 
++  // The display item for the Windows window glass background, if any
++  // Set during full display list builds or during display list merging only,
++  // partial display list builds don't touch this.
++  nsDisplayItem* mGlassDisplayItem;
++
+   // A temporary list that we append scroll info items to while building
+   // display items for the contents of frames with SVG effects.
+   // Only non-null when ShouldBuildScrollInfoItemsForHoisting() is true.
+@@ -1808,6 +1845,7 @@ class nsDisplayListBuilder {
+   AutoTArray<RefPtr<nsCaret>, 1> mPaintedCarets;
+ 
+   // Tracked regions used for retained display list.
++  WeakFrameRegion mWindowExcludeGlassRegion;
+   WeakFrameRegion mRetainedWindowDraggingRegion;
+   WeakFrameRegion mRetainedWindowNoDraggingRegion;
+ 
+@@ -1847,6 +1885,10 @@ class nsDisplayListBuilder {
+ 
+   uint8_t mBuildingExtraPagesForPageNum;
+ 
++  // If we've encountered a glass item yet, only used during partial display
++  // list builds.
++  bool mHasGlassItemDuringPartial;
++
+   nsDisplayListBuilderMode mMode;
+   static uint32_t sPaintSequenceNumber;
+ 
+@@ -2557,6 +2599,9 @@ class nsDisplayItem {
+   void SetPainted() { mItemFlags += ItemFlag::Painted; }
+ #endif
+ 
++  void SetIsGlassItem() { mItemFlags += ItemFlag::IsGlassItem; }
++  bool IsGlassItem() { return mItemFlags.contains(ItemFlag::IsGlassItem); }
++
+   /**
+    * Function to create the WebRenderCommands.
+    * We should check if the layer state is
+@@ -2804,6 +2849,7 @@ class nsDisplayItem {
+     Combines3DTransformWithAncestors,
+     ForceNotVisible,
+     HasHitTestInfo,
++    IsGlassItem,
+ #ifdef MOZ_DUMP_PAINTING
+     // True if this frame has been painted.
+     Painted,
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index c1e3949081ae..5696e678ecfa 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1639,6 +1639,11 @@ pub enum Appearance {
+     MozWinMediaToolbox,
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     MozWinBrowsertabbarToolbox,
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    MozWinBorderlessGlass,
++    /// -moz-apperance style used in setting proper glass margins.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    MozWinExcludeGlass,
+ 
+     /// Mac help button.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+@@ -1648,6 +1653,8 @@ pub enum Appearance {
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     MozWindowButtonBox,
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    MozWindowButtonBoxMaximized,
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     MozWindowButtonClose,
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     MozWindowButtonMaximize,
+diff --git a/widget/InitData.h b/widget/InitData.h
+index 0249ea47e5cf..8b8ce45b986b 100644
+--- a/widget/InitData.h
++++ b/widget/InitData.h
+@@ -74,8 +74,11 @@ enum class BorderStyle : int16_t {
+ MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(BorderStyle)
+ 
+ enum class TransparencyMode : uint8_t {
+-  Opaque = 0,   // Fully opaque
+-  Transparent,  // Parts of the window may be transparent
++  Opaque = 0,       // Fully opaque
++  Transparent,      // Parts of the window may be transparent
++  BorderlessGlass,  // Transparent parts of the window has windows 7
++                    // glass effect, without a border around opaque
++                    // areas.
+   // If you add to the end here, you must update the serialization code in
+   // WidgetMessageUtils.h
+ };
+diff --git a/widget/WidgetMessageUtils.h b/widget/WidgetMessageUtils.h
+index 5a3cd1eb7cb7..d7ae0a17b48d 100644
+--- a/widget/WidgetMessageUtils.h
++++ b/widget/WidgetMessageUtils.h
+@@ -43,7 +43,7 @@ struct ParamTraits<mozilla::widget::TransparencyMode>
+     : ContiguousEnumSerializerInclusive<
+           mozilla::widget::TransparencyMode,
+           mozilla::widget::TransparencyMode::Opaque,
+-          mozilla::widget::TransparencyMode::Transparent> {};
++          mozilla::widget::TransparencyMode::BorderlessGlass> {};
+ 
+ template <>
+ struct ParamTraits<nsCursor>
+diff --git a/widget/nsIWidget.h b/widget/nsIWidget.h
+index c4e762750959..e84be2f2f4e4 100644
+--- a/widget/nsIWidget.h
++++ b/widget/nsIWidget.h
+@@ -1217,6 +1217,14 @@ class nsIWidget : public nsISupports {
+    */
+   virtual void PrepareWindowEffects() = 0;
+ 
++  /**
++   * Called on the main thread at the end of WebRender display list building.
++   */
++  virtual void AddWindowOverlayWebRenderCommands(
++      mozilla::layers::WebRenderBridgeChild* aWrBridge,
++      mozilla::wr::DisplayListBuilder& aBuilder,
++      mozilla::wr::IpcResourceUpdateQueue& aResources) {}
++
+   /**
+    * Called when Gecko knows which themed widgets exist in this window.
+    * The passed array contains an entry for every themed widget of the right
+diff --git a/widget/tests/browser/browser_test_fullscreen_size.js b/widget/tests/browser/browser_test_fullscreen_size.js
+index dace46603c5f..c358d335d83b 100644
+--- a/widget/tests/browser/browser_test_fullscreen_size.js
++++ b/widget/tests/browser/browser_test_fullscreen_size.js
+@@ -40,7 +40,7 @@ add_task(async function fullscreen_size_moz_appearance() {
+   const style = win.document.createElement("style");
+   style.innerHTML = `
+     #main-window {
+-      -moz-appearance: button;
++      -moz-appearance: -moz-win-borderless-glass;
+     }
+   `;
+   win.document.head.appendChild(style);
+diff --git a/widget/windows/CompositorWidgetParent.cpp b/widget/windows/CompositorWidgetParent.cpp
+index b25d30d9d546..0196f3d6a4e3 100644
+--- a/widget/windows/CompositorWidgetParent.cpp
++++ b/widget/windows/CompositorWidgetParent.cpp
+@@ -118,6 +118,13 @@ bool CompositorWidgetParent::InitCompositor(layers::Compositor* aCompositor) {
+   return true;
+ }
+ 
++bool CompositorWidgetParent::HasGlass() const {
++  MOZ_ASSERT(layers::CompositorThreadHolder::IsInCompositorThread() ||
++             wr::RenderThread::IsInRenderThread());
++
++  return mTransparencyMode == uint32_t(TransparencyMode::BorderlessGlass);
++}
++
+ bool CompositorWidgetParent::IsHidden() const { return ::IsIconic(mWnd); }
+ 
+ mozilla::ipc::IPCResult CompositorWidgetParent::RecvInitialize(
+diff --git a/widget/windows/CompositorWidgetParent.h b/widget/windows/CompositorWidgetParent.h
+index 0f91fa7ccb3e..a16914cbc46a 100644
+--- a/widget/windows/CompositorWidgetParent.h
++++ b/widget/windows/CompositorWidgetParent.h
+@@ -45,6 +45,8 @@ class CompositorWidgetParent final : public PCompositorWidgetParent,
+   bool InitCompositor(layers::Compositor* aCompositor) override;
+   bool IsHidden() const override;
+ 
++  bool HasGlass() const override;
++
+   nsSizeMode GetWindowSizeMode() const override;
+   bool GetWindowIsFullyOccluded() const override;
+ 
+diff --git a/widget/windows/InProcessWinCompositorWidget.cpp b/widget/windows/InProcessWinCompositorWidget.cpp
+index de491b734b5e..89729f7f0a59 100644
+--- a/widget/windows/InProcessWinCompositorWidget.cpp
++++ b/widget/windows/InProcessWinCompositorWidget.cpp
+@@ -292,6 +292,12 @@ bool InProcessWinCompositorWidget::GetWindowIsFullyOccluded() const {
+   return isFullyOccluded;
+ }
+ 
++bool InProcessWinCompositorWidget::HasGlass() const {
++  MOZ_ASSERT(layers::CompositorThreadHolder::IsInCompositorThread() ||
++             wr::RenderThread::IsInRenderThread());
++  return TransparencyModeIs(TransparencyMode::BorderlessGlass);
++}
++
+ void InProcessWinCompositorWidget::ClearTransparentWindow() {
+   gfx::CriticalSectionAutoEnter presentLock(&mPresentLock);
+   MutexAutoLock lock(mTransparentSurfaceLock);
+diff --git a/widget/windows/InProcessWinCompositorWidget.h b/widget/windows/InProcessWinCompositorWidget.h
+index e28720446129..5c0d34e13f6f 100644
+--- a/widget/windows/InProcessWinCompositorWidget.h
++++ b/widget/windows/InProcessWinCompositorWidget.h
+@@ -62,6 +62,8 @@ class InProcessWinCompositorWidget final
+     return mTransparentSurfaceLock;
+   }
+ 
++  bool HasGlass() const override;
++
+   nsSizeMode GetWindowSizeMode() const override;
+   bool GetWindowIsFullyOccluded() const override;
+ 
+diff --git a/widget/windows/WinCompositorWidget.h b/widget/windows/WinCompositorWidget.h
+index fef967380cba..e734beeb4482 100644
+--- a/widget/windows/WinCompositorWidget.h
++++ b/widget/windows/WinCompositorWidget.h
+@@ -77,6 +77,8 @@ class WinCompositorWidget : public CompositorWidget {
+   bool HasFxrOutputHandler() const { return !!mFxrHandler; }
+   FxROutputHandler* GetFxrOutputHandler() const { return mFxrHandler.get(); }
+ 
++  virtual bool HasGlass() const = 0;
++
+   virtual nsSizeMode GetWindowSizeMode() const = 0;
+   virtual bool GetWindowIsFullyOccluded() const = 0;
+ 
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index 9cbc26bf0431..0b495540c4ab 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -746,6 +746,9 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
+     case StyleAppearance::MozWindowButtonMinimize:
+     case StyleAppearance::MozWindowButtonMaximize:
+     case StyleAppearance::MozWindowButtonRestore:
++    case StyleAppearance::MozWindowButtonBox:
++    case StyleAppearance::MozWindowButtonBoxMaximized:
++    case StyleAppearance::MozWinBorderlessGlass:
+       return Some(eUXWindowFrame);
+     default:
+       return Nothing();
+@@ -1296,6 +1299,12 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
+       aState = GetWindowFrameButtonState(aFrame,
+                                          GetContentState(aFrame, aAppearance));
+       return NS_OK;
++    case StyleAppearance::MozWindowButtonBox:
++    case StyleAppearance::MozWindowButtonBoxMaximized:
++    case StyleAppearance::MozWinBorderlessGlass:
++      aPart = -1;
++      aState = 0;
++      return NS_OK;
+     default:
+       aPart = 0;
+       aState = 0;
+@@ -1363,6 +1372,13 @@ nsNativeThemeWin::DrawWidgetBackground(gfxContext* aContext, nsIFrame* aFrame,
+       // through here and call the theme library we'll get aero
+       // basic bitmaps.
+       return NS_OK;
++    case StyleAppearance::MozWinBorderlessGlass:
++      // Nothing to draw, this is the glass background.
++      return NS_OK;
++    case StyleAppearance::MozWindowButtonBox:
++    case StyleAppearance::MozWindowButtonBoxMaximized:
++      // We handle these through nsIWidget::UpdateThemeGeometries
++      return NS_OK;
+     default:
+       break;
+   }
+@@ -1739,7 +1755,8 @@ LayoutDeviceIntMargin nsNativeThemeWin::GetWidgetBorder(
+       aAppearance == StyleAppearance::Menuitemtext ||
+       aAppearance == StyleAppearance::Separator ||
+       aAppearance == StyleAppearance::MozWindowTitlebar ||
+-      aAppearance == StyleAppearance::MozWindowTitlebarMaximized)
++      aAppearance == StyleAppearance::MozWindowTitlebarMaximized ||
++      aAppearance == StyleAppearance::MozWinBorderlessGlass)
+     return result;  // Don't worry about it.
+ 
+   int32_t part, state;
+@@ -1801,6 +1818,21 @@ bool nsNativeThemeWin::GetWidgetPadding(nsDeviceContext* aContext,
+ 
+   bool ok = true;
+ 
++  if (aAppearance == StyleAppearance::MozWindowButtonBox ||
++      aAppearance == StyleAppearance::MozWindowButtonBoxMaximized) {
++    aResult->SizeTo(0, 0, 0, 0);
++
++    // aero glass doesn't display custom buttons
++    if (gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled()) return true;
++
++    // button padding for standard windows
++    if (aAppearance == StyleAppearance::MozWindowButtonBox) {
++      aResult->top = GetSystemMetrics(SM_CXFRAME);
++    }
++    ScaleForFrameDPI(aResult, aFrame);
++    return ok;
++  }
++
+   // Content padding
+   if (aAppearance == StyleAppearance::MozWindowTitlebar ||
+       aAppearance == StyleAppearance::MozWindowTitlebarMaximized) {
+@@ -1994,6 +2026,7 @@ LayoutDeviceIntSize nsNativeThemeWin::GetMinimumWidgetSize(
+     case StyleAppearance::Listbox:
+     case StyleAppearance::Treeview:
+     case StyleAppearance::Menuitemtext:
++    case StyleAppearance::MozWinBorderlessGlass:
+       return {};  // Don't worry about it.
+     default:
+       break;
+@@ -2112,7 +2145,8 @@ nsNativeThemeWin::WidgetStateChanged(nsIFrame* aFrame,
+       aAppearance == StyleAppearance::ProgressBar ||
+       aAppearance == StyleAppearance::Tabpanels ||
+       aAppearance == StyleAppearance::Tabpanel ||
+-      aAppearance == StyleAppearance::Separator) {
++      aAppearance == StyleAppearance::Separator ||
++      aAppearance == StyleAppearance::MozWinBorderlessGlass) {
+     return false;
+   }
+ 
+@@ -2235,6 +2269,17 @@ bool nsNativeThemeWin::WidgetAppearanceDependsOnWindowFocus(
+   }
+ }
+ 
++nsITheme::ThemeGeometryType nsNativeThemeWin::ThemeGeometryTypeForWidget(
++    nsIFrame* aFrame, StyleAppearance aAppearance) {
++  switch (aAppearance) {
++    case StyleAppearance::MozWindowButtonBox:
++    case StyleAppearance::MozWindowButtonBoxMaximized:
++      return eThemeGeometryTypeWindowButtons;
++    default:
++      return eThemeGeometryTypeUnknown;
++  }
++}
++
+ nsITheme::Transparency nsNativeThemeWin::GetWidgetTransparency(
+     nsIFrame* aFrame, StyleAppearance aAppearance) {
+   if (IsWidgetNonNative(aFrame, aAppearance) != NonNative::No) {
+@@ -2242,6 +2287,7 @@ nsITheme::Transparency nsNativeThemeWin::GetWidgetTransparency(
+   }
+ 
+   switch (aAppearance) {
++    case StyleAppearance::MozWinBorderlessGlass:
+     case StyleAppearance::ProgressBar:
+     case StyleAppearance::Progresschunk:
+     case StyleAppearance::Range:
+@@ -2318,6 +2364,8 @@ bool nsNativeThemeWin::ClassicThemeSupportsWidget(nsIFrame* aFrame,
+     case StyleAppearance::MozWindowButtonMinimize:
+     case StyleAppearance::MozWindowButtonMaximize:
+     case StyleAppearance::MozWindowButtonRestore:
++    case StyleAppearance::MozWindowButtonBox:
++    case StyleAppearance::MozWindowButtonBoxMaximized:
+       return true;
+     default:
+       return false;
+diff --git a/widget/windows/nsNativeThemeWin.h b/widget/windows/nsNativeThemeWin.h
+index 00eff1622e0a..f56e5f9bc70e 100644
+--- a/widget/windows/nsNativeThemeWin.h
++++ b/widget/windows/nsNativeThemeWin.h
+@@ -89,6 +89,10 @@ class nsNativeThemeWin : public Theme {
+ 
+   bool WidgetAppearanceDependsOnWindowFocus(StyleAppearance) override;
+ 
++  enum { eThemeGeometryTypeWindowButtons = eThemeGeometryTypeUnknown + 1 };
++  ThemeGeometryType ThemeGeometryTypeForWidget(nsIFrame*,
++                                               StyleAppearance) override;
++
+   nsNativeThemeWin();
+ 
+  protected:
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 7210c89d599a..7b6344135ac2 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -366,6 +366,11 @@ static NS_DEFINE_CID(kCClipboardCID, NS_CLIPBOARD_CID);
+ // General purpose user32.dll hook object
+ MOZ_RUNINIT static WindowsDllInterceptor sUser32Intercept;
+ 
++// 2 pixel offset for TransparencyMode::BorderlessGlass which equals the size of
++// the default window border Windows paints. Glass will be extended inward
++// this distance to remove the border.
++static const int32_t kGlassMarginAdjustment = 2;
++
+ // When the client area is extended out into the default window frame area,
+ // this is the minimum amount of space along the edge of resizable windows
+ // we will always display a resize cursor in, regardless of the underlying
+@@ -1362,7 +1367,10 @@ DWORD nsWindow::WindowStyle() {
+       break;
+ 
+     case WindowType::Popup:
+-      style = WS_OVERLAPPED | WS_POPUP;
++      style = WS_POPUP;
++      if (!HasGlass()) {
++        style |= WS_OVERLAPPED;
++      }
+       break;
+ 
+     default:
+@@ -1843,8 +1851,9 @@ bool nsWindow::IsVisible() const { return mIsVisible; }
+ // operations.
+ // XXX this is apparently still needed in Windows 7 and later
+ void nsWindow::ClearThemeRegion() {
+-  if (mWindowType == WindowType::Popup && !IsPopupWithTitleBar() &&
+-      (mPopupType == PopupType::Tooltip || mPopupType == PopupType::Panel)) {
++  if (!HasGlass() &&
++      (mWindowType == WindowType::Popup && !IsPopupWithTitleBar() &&
++       (mPopupType == PopupType::Tooltip || mPopupType == PopupType::Panel))) {
+     SetWindowRgn(mWnd, nullptr, false);
+   }
+ }
+@@ -3244,6 +3253,30 @@ void nsWindow::SetTransparencyMode(TransparencyMode aMode) {
+   window->SetWindowTranslucencyInner(aMode);
+ }
+ 
++void nsWindow::UpdateOpaqueRegion(const LayoutDeviceIntRegion& aOpaqueRegion) {
++  if (!HasGlass() || GetParent()) return;
++
++  // If there is no opaque region or hidechrome=true, set margins
++  // to support a full sheet of glass. Comments in MSDN indicate
++  // all values must be set to -1 to get a full sheet of glass.
++  MARGINS margins = {-1, -1, -1, -1};
++  if (!aOpaqueRegion.IsEmpty()) {
++    LayoutDeviceIntRect clientBounds = GetClientBounds();
++    // Find the largest rectangle and use that to calculate the inset.
++    LayoutDeviceIntRect largest = aOpaqueRegion.GetLargestRectangle();
++    margins.cxLeftWidth = largest.X();
++    margins.cxRightWidth = clientBounds.Width() - largest.XMost();
++    margins.cyBottomHeight = clientBounds.Height() - largest.YMost();
++    margins.cyTopHeight = largest.Y();
++  }
++
++  // Only update glass area if there are changes
++  if (memcmp(&mGlassMargins, &margins, sizeof mGlassMargins)) {
++    mGlassMargins = margins;
++    UpdateGlass();
++  }
++}
++
+ /**************************************************************
+  *
+  * SECTION: nsIWidget::UpdateWindowDraggingRegion
+@@ -3260,6 +3293,42 @@ void nsWindow::UpdateWindowDraggingRegion(
+   mDraggableRegion = aRegion;
+ }
+ 
++void nsWindow::UpdateGlass() {
++  MARGINS margins = mGlassMargins;
++
++  // DWMNCRP_USEWINDOWSTYLE - The non-client rendering area is
++  //                          rendered based on the window style.
++  // DWMNCRP_ENABLED        - The non-client area rendering is
++  //                          enabled; the window style is ignored.
++  DWMNCRENDERINGPOLICY policy = DWMNCRP_USEWINDOWSTYLE;
++  switch (mTransparencyMode) {
++    case TransparencyMode::BorderlessGlass:
++      // Only adjust if there is some opaque rectangle
++      if (margins.cxLeftWidth >= 0) {
++        margins.cxLeftWidth += kGlassMarginAdjustment;
++        margins.cyTopHeight += kGlassMarginAdjustment;
++        margins.cxRightWidth += kGlassMarginAdjustment;
++        margins.cyBottomHeight += kGlassMarginAdjustment;
++      }
++      policy = DWMNCRP_ENABLED;
++      break;
++    default:
++      break;
++  }
++
++  MOZ_LOG(gWindowsLog, LogLevel::Info,
++          ("glass margins: left:%d top:%d right:%d bottom:%d\n",
++           margins.cxLeftWidth, margins.cyTopHeight, margins.cxRightWidth,
++           margins.cyBottomHeight));
++
++  // Extends the window frame behind the client area
++  if (gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled()) {
++    DwmExtendFrameIntoClientArea(mWnd, &margins);
++    DwmSetWindowAttribute(mWnd, DWMWA_NCRENDERING_POLICY, &policy,
++                          sizeof policy);
++  }
++}
++
+ /**************************************************************
+  *
+  * SECTION: nsIWidget::HideWindowChrome
+@@ -4175,6 +4244,47 @@ nsresult nsWindow::OnDefaultButtonLoaded(
+   return NS_OK;
+ }
+ 
++void nsWindow::UpdateThemeGeometries(
++    const nsTArray<ThemeGeometry>& aThemeGeometries) {
++  RefPtr<WebRenderLayerManager> layerManager =
++      GetWindowRenderer() ? GetWindowRenderer()->AsWebRender() : nullptr;
++  if (!layerManager) {
++    return;
++  }
++
++  if (!HasGlass() ||
++      !gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled()) {
++    return;
++  }
++
++  mWindowButtonsRect = Nothing();
++
++  if (!IsWin10OrLater()) {
++    for (size_t i = 0; i < aThemeGeometries.Length(); i++) {
++      if (aThemeGeometries[i].mType ==
++          nsNativeThemeWin::eThemeGeometryTypeWindowButtons) {
++        LayoutDeviceIntRect bounds = aThemeGeometries[i].mRect;
++        // Extend the bounds by one pixel to the right, because that's how much
++        // the actual window button shape extends past the client area of the
++        // window (and overlaps the right window frame).
++        bounds.SetWidth(bounds.Width() + 1);
++        if (!mWindowButtonsRect) {
++          mWindowButtonsRect = Some(bounds);
++        }
++      }
++    }
++  }
++}
++
++void nsWindow::AddWindowOverlayWebRenderCommands(
++    layers::WebRenderBridgeChild* aWrBridge, wr::DisplayListBuilder& aBuilder,
++    wr::IpcResourceUpdateQueue& aResources) {
++  if (mWindowButtonsRect) {
++    wr::LayoutRect rect = wr::ToLayoutRect(*mWindowButtonsRect);
++    aBuilder.PushClearRect(rect);
++  }
++}
++
+ uint32_t nsWindow::GetMaxTouchPoints() const {
+   return WinUtils::GetMaxTouchPoints();
+ }
+@@ -4998,6 +5108,10 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+   // Glass hit testing w/custom transparent margins
+   LRESULT dwmHitResult;
+   if (mCustomNonClient &&
++      gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled() &&
++      /* We don't do this for win10 glass with a custom titlebar,
++       * in order to avoid the caption buttons breaking. */
++      !(IsWin10OrLater() && HasGlass()) &&
+       DwmDefWindowProc(mWnd, msg, wParam, lParam, &dwmHitResult)) {
+     *aRetValue = dwmHitResult;
+     return true;
+@@ -5941,7 +6055,7 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+         mDraggingWindowWithMouse = true;
+       }
+ 
+-      if (IsWindowButton(int32_t(wParam)) && mCustomNonClient) {
++      if (IsWindowButton(int32_t(wParam)) && mCustomNonClient && !mWindowButtonsRect) {
+         DispatchMouseEvent(eMouseDown, wParamFromGlobalMouseState(),
+                            lParamToClient(lParam), false, MouseButton::ePrimary,
+                            MOUSE_INPUT_SOURCE(), nullptr, IsNonclient::Yes);
+@@ -6147,6 +6261,7 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+       // TODO: Why is NotifyThemeChanged needed, what does it affect? And can we
+       // make it more granular by tweaking the ChangeKind we pass?
+       NotifyThemeChanged(widget::ThemeChangeKind::StyleAndLayout);
++      UpdateGlass();
+       Invalidate(true, true, true);
+       break;
+ 
+@@ -7704,11 +7819,28 @@ void nsWindow::SetWindowTranslucencyInner(TransparencyMode aMode) {
+   }
+   ::SetWindowLongPtrW(mWnd, GWL_EXSTYLE, exStyle);
+ 
++  if (HasGlass()) memset(&mGlassMargins, 0, sizeof mGlassMargins);
+   mTransparencyMode = aMode;
+ 
+   if (mCompositorWidgetDelegate) {
+     mCompositorWidgetDelegate->UpdateTransparency(aMode);
+   }
++  UpdateGlass();
++
++  // Clear window by transparent black when compositor window is used in GPU
++  // process and non-client area rendering by DWM is enabled.
++  // It is for showing non-client area rendering. See nsWindow::UpdateGlass().
++  if (HasGlass() && GetWindowRenderer()->AsKnowsCompositor() &&
++      GetWindowRenderer()->AsKnowsCompositor()->GetUseCompositorWnd()) {
++    HDC hdc;
++    RECT rect;
++    hdc = ::GetWindowDC(mWnd);
++    ::GetWindowRect(mWnd, &rect);
++    ::MapWindowPoints(nullptr, mWnd, (LPPOINT)&rect, 2);
++    ::FillRect(hdc, &rect,
++               reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
++    ReleaseDC(mWnd, hdc);
++  }
+ }
+ 
+ /**************************************************************
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index 0554af3181ad..8ae8dd3f1f4e 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -275,11 +275,14 @@ class nsWindow final : public nsBaseWidget {
+   TextEventDispatcherListener* GetNativeTextEventDispatcherListener() override;
+   void SetTransparencyMode(TransparencyMode aMode) override;
+   TransparencyMode GetTransparencyMode() override;
++  void UpdateOpaqueRegion(const LayoutDeviceIntRegion& aOpaqueRegion) override;
+   nsresult SetNonClientMargins(const LayoutDeviceIntMargin&) override;
+   void SetResizeMargin(mozilla::LayoutDeviceIntCoord aResizeMargin) override;
+   void UpdateWindowDraggingRegion(
+       const LayoutDeviceIntRegion& aRegion) override;
+ 
++  void UpdateThemeGeometries(
++      const nsTArray<ThemeGeometry>& aThemeGeometries) override;
+   uint32_t GetMaxTouchPoints() const override;
+   void SetIsEarlyBlankWindow(bool) override;
+ 
+@@ -546,6 +549,9 @@ class nsWindow final : public nsBaseWidget {
+   void ResetLayout();
+   void InvalidateNonClientRegion();
+   HRGN ExcludeNonClientFromPaintRegion(HRGN aRegion);
++  bool HasGlass() const {
++    return mTransparencyMode == TransparencyMode::BorderlessGlass;
++  }
+   HWND GetOwnerWnd() const { return ::GetWindow(mWnd, GW_OWNER); }
+   bool IsOwnerForegroundWindow() const {
+     HWND owner = GetOwnerWnd();
+@@ -646,6 +652,7 @@ class nsWindow final : public nsBaseWidget {
+   TransparencyMode GetWindowTranslucencyInner() const {
+     return mTransparencyMode;
+   }
++  void UpdateGlass();
+   bool IsSimulatedClientArea(int32_t clientX, int32_t clientY);
+   bool IsWindowButton(int32_t hitTestResult);
+ 
+@@ -666,6 +673,11 @@ class nsWindow final : public nsBaseWidget {
+                                          HDC aDC);
+   nsIWidgetListener* GetPaintListener();
+ 
++  void AddWindowOverlayWebRenderCommands(
++      mozilla::layers::WebRenderBridgeChild* aWrBridge,
++      mozilla::wr::DisplayListBuilder& aBuilder,
++      mozilla::wr::IpcResourceUpdateQueue& aResourceUpdates) override;
++
+   void CreateCompositor() override;
+   void DestroyCompositor() override;
+   void RequestFxrOutput() override;
+@@ -829,6 +841,7 @@ class nsWindow final : public nsBaseWidget {
+   // Transparency
+   TransparencyMode mTransparencyMode = TransparencyMode::Opaque;
+   nsIntRegion mPossiblyTransparentRegion;
++  MARGINS mGlassMargins = {0, 0, 0, 0};
+ 
+   // Win7 Gesture processing and management
+   nsWinGesture mGesture;
+@@ -857,6 +870,9 @@ class nsWindow final : public nsBaseWidget {
+   //  painting too rapidly in response to frequent input events.
+   TimeStamp mLastPaintEndTime;
+ 
++  // The location of the window buttons in the window.
++  mozilla::Maybe<LayoutDeviceIntRect> mWindowButtonsRect;
++
+   // Caching for hit test results (in client coordinates)
+   LayoutDeviceIntPoint mCachedHitTestPoint;
+   TimeStamp mCachedHitTestTime;
+diff --git a/widget/windows/nsWindowGfx.cpp b/widget/windows/nsWindowGfx.cpp
+index 5a80aa21355a..8df90a63c9a2 100644
+--- a/widget/windows/nsWindowGfx.cpp
++++ b/widget/windows/nsWindowGfx.cpp
+@@ -175,6 +175,20 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel) {
+   KnowsCompositor* knowsCompositor = renderer->AsKnowsCompositor();
+   WebRenderLayerManager* layerManager = renderer->AsWebRender();
+ 
++  // Clear window by transparent black when compositor window is used in GPU
++  // process and non-client area rendering by DWM is enabled.
++  // It is for showing non-client area rendering. See nsWindow::UpdateGlass().
++  if (HasGlass() && knowsCompositor && knowsCompositor->GetUseCompositorWnd()) {
++    HDC hdc;
++    RECT rect;
++    hdc = ::GetWindowDC(mWnd);
++    ::GetWindowRect(mWnd, &rect);
++    ::MapWindowPoints(nullptr, mWnd, (LPPOINT)&rect, 2);
++    ::FillRect(hdc, &rect,
++               reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
++    ReleaseDC(mWnd, hdc);
++  }
++
+   if (mClearNCEdge) {
+     // We need to clear this edge of the non-client region to black (once).
+     HDC hdc;
+@@ -312,15 +326,16 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel) {
+         // don't need to double buffer with anything but GDI
+         BufferMode doubleBuffering = mozilla::layers::BufferMode::BUFFER_NONE;
+         switch (mTransparencyMode) {
++          case TransparencyMode::BorderlessGlass:
++          default:
++            // If we're not doing translucency, then double buffer
++            doubleBuffering = mozilla::layers::BufferMode::BUFFERED;
++            break;
+           case TransparencyMode::Transparent:
+             // If we're rendering with translucency, we're going to be
+             // rendering the whole window; make sure we clear it first
+           dt->ClearRect(Rect(dt->GetRect()));
+             break;
+-          default:
+-            // If we're not doing translucency, then double buffer
+-            doubleBuffering = mozilla::layers::BufferMode::BUFFERED;
+-            break;
+         }
+ 
+         gfxContext thebesContext(dt);

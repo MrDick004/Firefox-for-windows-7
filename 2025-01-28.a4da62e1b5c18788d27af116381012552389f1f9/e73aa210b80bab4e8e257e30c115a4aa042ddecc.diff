@@ -1,0 +1,29 @@
+diff --git a/gfx/layers/d3d11/GpuProcessD3D11TextureMap.cpp b/gfx/layers/d3d11/GpuProcessD3D11TextureMap.cpp
+index 4cedf9163557..d26632859d04 100644
+--- a/gfx/layers/d3d11/GpuProcessD3D11TextureMap.cpp
++++ b/gfx/layers/d3d11/GpuProcessD3D11TextureMap.cpp
+@@ -50,8 +50,7 @@ void GpuProcessD3D11TextureMap::Register(
+     RefPtr<ZeroCopyUsageInfo> aUsageInfo,
+     RefPtr<gfx::FileHandleWrapper> aSharedHandle) {
+   MonitorAutoLock lock(mMonitor);
+-  Register(lock, aTextureId, aTexture, aArrayIndex, aSize, aUsageInfo,
+-           aSharedHandle);
++  Register(lock, aTextureId, aTexture, aArrayIndex, aSize, aUsageInfo, nullptr);
+ }
+ void GpuProcessD3D11TextureMap::Register(
+     const MonitorAutoLock& aProofOfLock, GpuProcessTextureId aTextureId,
+diff --git a/gfx/layers/d3d11/TextureD3D11.cpp b/gfx/layers/d3d11/TextureD3D11.cpp
+index af6ac38849dd..a719210619b1 100644
+--- a/gfx/layers/d3d11/TextureD3D11.cpp
++++ b/gfx/layers/d3d11/TextureD3D11.cpp
+@@ -631,8 +631,8 @@ D3D11TextureData* D3D11TextureData::Create(IntSize aSize, SurfaceFormat aFormat,
+   RefPtr<gfx::FileHandleWrapper> handle =
+       new gfx::FileHandleWrapper(UniqueFileHandle(sharedHandle));
+ 
+-  D3D11TextureData* data =
+-      new D3D11TextureData(texture11, 0, handle, aSize, aFormat, aFlags);
++  D3D11TextureData* data = new D3D11TextureData(texture11, 0, std::move(handle),
++                                                aSize, aFormat, aFlags);
+ 
+   texture11->GetDevice(getter_AddRefs(device));
+   if (XRE_IsGPUProcess() &&
