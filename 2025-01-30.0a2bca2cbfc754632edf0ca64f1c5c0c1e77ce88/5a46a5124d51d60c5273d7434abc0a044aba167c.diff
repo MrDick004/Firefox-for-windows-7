@@ -1,0 +1,229 @@
+
+
+diff --git a/ipc/mscom/EnsureMTA.cpp b/ipc/mscom/EnsureMTA.cpp
+index 49d8446fa2892..33dfe018d2e1f 100644
+--- a/ipc/mscom/EnsureMTA.cpp
++++ b/ipc/mscom/EnsureMTA.cpp
+@@ -107,6 +107,66 @@ EnsureMTA::EnsureMTA() {
+   SyncDispatchToPersistentThread(runnable);
+ }
+ 
++/* static */
++RefPtr<EnsureMTA::CreateInstanceAgileRefPromise>
++EnsureMTA::CreateInstanceInternal(REFCLSID aClsid, REFIID aIid) {
++  MOZ_ASSERT(IsCurrentThreadExplicitMTA());
++
++  RefPtr<IUnknown> iface;
++  HRESULT hr = wrapped::CoCreateInstance(aClsid, nullptr, CLSCTX_INPROC_SERVER,
++                                         aIid, getter_AddRefs(iface));
++  if (FAILED(hr)) {
++    return CreateInstanceAgileRefPromise::CreateAndReject(hr, __func__);
++  }
++
++  // We need to use the two argument constructor for AgileReference because our
++  // RefPtr is not parameterized on the specific interface being requested.
++  AgileReference agileRef(aIid, iface);
++  if (!agileRef) {
++    return CreateInstanceAgileRefPromise::CreateAndReject(agileRef.GetHResult(),
++                                                          __func__);
++  }
++
++  return CreateInstanceAgileRefPromise::CreateAndResolve(std::move(agileRef),
++                                                         __func__);
++}
++
++/* static */
++RefPtr<EnsureMTA::CreateInstanceAgileRefPromise> EnsureMTA::CreateInstance(
++    REFCLSID aClsid, REFIID aIid) {
++  MOZ_ASSERT(IsCOMInitializedOnCurrentThread());
++
++  const bool isClassOk = IsClassThreadAwareInprocServer(aClsid);
++  MOZ_ASSERT(isClassOk,
++             "mozilla::mscom::EnsureMTA::CreateInstance is not "
++             "safe/performant/necessary to use with this CLSID. This CLSID "
++             "either does not support creation from within a multithreaded "
++             "apartment, or it is not an in-process server.");
++  if (!isClassOk) {
++    return CreateInstanceAgileRefPromise::CreateAndReject(CO_E_NOT_SUPPORTED,
++                                                          __func__);
++  }
++
++  if (IsCurrentThreadExplicitMTA()) {
++    // It's safe to immediately call CreateInstanceInternal
++    return CreateInstanceInternal(aClsid, aIid);
++  }
++
++  // aClsid and aIid are references. Make local copies that we can put into the
++  // lambda in case the sources of aClsid or aIid are not static data
++  CLSID localClsid = aClsid;
++  IID localIid = aIid;
++
++  auto invoker = [localClsid,
++                  localIid]() -> RefPtr<CreateInstanceAgileRefPromise> {
++    return CreateInstanceInternal(localClsid, localIid);
++  };
++
++  nsCOMPtr<nsIThread> mtaThread(GetPersistentMTAThread());
++
++  return InvokeAsync(mtaThread, __func__, std::move(invoker));
++}
++
+ /* static */
+ nsCOMPtr<nsIThread> EnsureMTA::GetPersistentMTAThread() {
+   static StaticLocalAutoPtr<BackgroundMTAData> sMTAData(
+diff --git a/ipc/mscom/EnsureMTA.h b/ipc/mscom/EnsureMTA.h
+index 662192c476559..5e410d4daaa75 100644
+--- a/ipc/mscom/EnsureMTA.h
++++ b/ipc/mscom/EnsureMTA.h
+@@ -73,7 +73,69 @@ class MOZ_STACK_CLASS EnsureMTA final {
+     SyncDispatch(std::move(runnable), aOpt);
+   }
+ 
++  using CreateInstanceAgileRefPromise =
++      MozPromise<AgileReference, HRESULT, false>;
++
++  /**
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   *
++   * Asynchronously instantiate a new COM object from a MTA thread, unless the
++   * current thread is already living inside the multithreaded apartment, in
++   * which case the object is immediately instantiated.
++   *
++   * This function only supports the most common configurations for creating
++   * a new object, so it only supports in-process servers. Furthermore, this
++   * function does not support aggregation (ie. the |pUnkOuter| parameter to
++   * CoCreateInstance).
++   *
++   * Given that attempting to instantiate an Apartment-threaded COM object
++   * inside the MTA results in a *loss* of performance, we assert when that
++   * situation arises.
++   *
++   * The resulting promise, once resolved, provides an AgileReference that may
++   * be passed between any COM-initialized thread in the current process.
++   *
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   *
++   * WARNING:
++   * Some COM objects do not support creation in the multithreaded apartment,
++   * in which case this function is not available as an option. In this case,
++   * the promise will always be rejected. In debug builds we will assert.
++   *
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   *
++   * WARNING:
++   * Any in-process COM objects whose interfaces accept HWNDs are probably
++   * *not* safe to instantiate in the multithreaded apartment! Even if this
++   * function succeeds when creating such an object, you *MUST NOT* do so, as
++   * these failures might not become apparent until your code is running out in
++   * the wild on the release channel!
++   *
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   *
++   * WARNING:
++   * When you obtain an interface from the AgileReference, it may or may not be
++   * a proxy to the real object. This depends entirely on the implementation of
++   * the underlying class and the multithreading capabilities that the class
++   * declares to the COM runtime. If the interface is proxied, it might be
++   * expensive to invoke methods on that interface! *Always* test the
++   * performance of your method calls when calling interfaces that are resolved
++   * via this function!
++   *
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   *
++   * (Despite this myriad of warnings, it is still *much* safer to use this
++   * function to asynchronously create COM objects than it is to roll your own!)
++   *
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   */
++  static RefPtr<CreateInstanceAgileRefPromise> CreateInstance(REFCLSID aClsid,
++                                                              REFIID aIid);
++
+  private:
++  static RefPtr<CreateInstanceAgileRefPromise> CreateInstanceInternal(
++      REFCLSID aClsid, REFIID aIid);
++
+   static nsCOMPtr<nsIThread> GetPersistentMTAThread();
+ 
+   static void SyncDispatch(nsCOMPtr<nsIRunnable>&& aRunnable, Option aOpt);
+diff --git a/ipc/mscom/Utils.cpp b/ipc/mscom/Utils.cpp
+index 366fe38a75561..a6aeebf12fc77 100644
+--- a/ipc/mscom/Utils.cpp
++++ b/ipc/mscom/Utils.cpp
+@@ -362,5 +362,43 @@ void GUIDToString(REFGUID aGuid,
+ 
+ #endif  // defined(MOZILLA_INTERNAL_API)
+ 
++#if defined(MOZILLA_INTERNAL_API)
++bool IsClassThreadAwareInprocServer(REFCLSID aClsid) {
++  nsAutoString strClsid;
++  GUIDToString(aClsid, strClsid);
++
++  nsAutoString inprocServerSubkey(u"CLSID\\"_ns);
++  inprocServerSubkey.Append(strClsid);
++  inprocServerSubkey.Append(u"\\InprocServer32"_ns);
++
++  // Of the possible values, "Apartment" is the longest, so we'll make this
++  // buffer large enough to hold that one.
++  wchar_t threadingModelBuf[std::size(L"Apartment")] = {};
++
++  DWORD numBytes = sizeof(threadingModelBuf);
++  LONG result = ::RegGetValueW(HKEY_CLASSES_ROOT, inprocServerSubkey.get(),
++                               L"ThreadingModel", RRF_RT_REG_SZ, nullptr,
++                               threadingModelBuf, &numBytes);
++  if (result != ERROR_SUCCESS) {
++    // This will also handle the case where the CLSID is not an inproc server.
++    return false;
++  }
++
++  DWORD numChars = numBytes / sizeof(wchar_t);
++  // numChars includes the null terminator
++  if (numChars <= 1) {
++    return false;
++  }
++
++  nsDependentString threadingModel(threadingModelBuf, numChars - 1);
++
++  // Ensure that the threading model is one of the known values that indicates
++  // that the class can operate natively (ie, no proxying) inside a MTA.
++  return threadingModel.LowerCaseEqualsLiteral("both") ||
++         threadingModel.LowerCaseEqualsLiteral("free") ||
++         threadingModel.LowerCaseEqualsLiteral("neutral");
++}
++#endif  // defined(MOZILLA_INTERNAL_API)
++
+ }  // namespace mscom
+ }  // namespace mozilla
+diff --git a/ipc/mscom/Utils.h b/ipc/mscom/Utils.h
+index aabf5f589160f..214b15044d3ac 100644
+--- a/ipc/mscom/Utils.h
++++ b/ipc/mscom/Utils.h
+@@ -73,6 +73,29 @@ long CreateStream(const uint8_t* aBuf, const uint32_t aBufLen,
+ constexpr size_t kGuidRegFormatCharLenInclNul = 39;
+ 
+ #if defined(MOZILLA_INTERNAL_API)
++/**
++ * Checks the registry to see if |aClsid| is a thread-aware in-process server.
++ *
++ * In DCOM, an in-process server is a server that is implemented inside a DLL
++ * that is loaded into the client's process for execution. If |aClsid| declares
++ * itself to be a local server (that is, a server that resides in another
++ * process), this function returns false.
++ *
++ * For the server to be thread-aware, its registry entry must declare a
++ * ThreadingModel that is one of "Free", "Both", or "Neutral". If the threading
++ * model is "Apartment" or some other, invalid value, the class is treated as
++ * being single-threaded.
++ *
++ * NB: This function cannot check CLSIDs that were registered via manifests,
++ * as unfortunately there is not a documented API available to query for those.
++ * This should not be an issue for most CLSIDs that Gecko is interested in, as
++ * we typically instantiate system CLSIDs which are available in the registry.
++ *
++ * @param aClsid The CLSID of the COM class to be checked.
++ * @return true if the class meets the above criteria, otherwise false.
++ */
++bool IsClassThreadAwareInprocServer(REFCLSID aClsid);
++
+ void GUIDToString(REFGUID aGuid, nsAString& aOutString);
+ 
+ /**

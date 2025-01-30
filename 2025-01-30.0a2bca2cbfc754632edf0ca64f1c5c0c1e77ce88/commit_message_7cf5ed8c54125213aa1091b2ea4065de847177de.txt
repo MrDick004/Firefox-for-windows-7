@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from security/sandbox/win/. r=bobowen    2023-07-26 16:52:52    e8a72699303a796faa91748a3e55dd90e70052db

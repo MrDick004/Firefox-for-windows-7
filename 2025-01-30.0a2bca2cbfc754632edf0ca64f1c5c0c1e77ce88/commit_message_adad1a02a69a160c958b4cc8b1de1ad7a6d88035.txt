@@ -1,0 +1,1 @@
+Bug 1911773 - Simplify nsWindow::SetWindowTranslucencyInner. r=rkraesig,win-reviewers    2024-08-07 19:02:21    adad1a02a69a160c958b4cc8b1de1ad7a6d88035

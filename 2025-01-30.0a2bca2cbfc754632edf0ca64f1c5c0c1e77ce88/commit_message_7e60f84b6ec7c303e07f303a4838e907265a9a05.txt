@@ -1,0 +1,1 @@
+Bug 1843663 - Remove pre windows-10-specific media queries and styles. r=dao,Gijs,handyman,settings-reviewers    2023-07-18 22:11:33    7e60f84b6ec7c303e07f303a4838e907265a9a05

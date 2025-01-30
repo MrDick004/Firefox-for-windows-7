@@ -1,0 +1,123 @@
+diff --git a/dom/chrome-webidl/IOUtils.webidl b/dom/chrome-webidl/IOUtils.webidl
+index a3e19c040100..f1e0b4bb6e19 100644
+--- a/dom/chrome-webidl/IOUtils.webidl
++++ b/dom/chrome-webidl/IOUtils.webidl
+@@ -695,7 +695,7 @@ dictionary FileInfo {
+ /**
+  * The supported hash algorithms for |IOUtils.hashFile|.
+  */
+-enum HashAlgorithm { "sha256", "sha384", "sha512" };
++enum HashAlgorithm { "sha1", "sha256", "sha384", "sha512" };
+ 
+ #ifdef XP_WIN
+ /**
+diff --git a/dom/system/IOUtils.cpp b/dom/system/IOUtils.cpp
+index 08e2173452fd..e7aabd139083 100644
+--- a/dom/system/IOUtils.cpp
++++ b/dom/system/IOUtils.cpp
+@@ -1896,6 +1896,10 @@ Result<nsCString, IOUtils::IOError> IOUtils::ComputeHexDigestSync(
+ 
+   SECOidTag alg;
+   switch (aAlgorithm) {
++    case HashAlgorithm::Sha1:
++      alg = SEC_OID_SHA1;
++      break;
++
+     case HashAlgorithm::Sha256:
+       alg = SEC_OID_SHA256;
+       break;
+diff --git a/dom/system/tests/ioutils/test_ioutils_compute_hex_digest.html b/dom/system/tests/ioutils/test_ioutils_compute_hex_digest.html
+index 7a98f83a1fef..f4ff43f5edd5 100644
+--- a/dom/system/tests/ioutils/test_ioutils_compute_hex_digest.html
++++ b/dom/system/tests/ioutils/test_ioutils_compute_hex_digest.html
+@@ -25,11 +25,12 @@
+       await IOUtils.writeUTF8(path, "hello world\n");
+ 
+       const DIGESTS = [
++        "22596363b3de40b06f981fb85d82312e8c0ed511",
+         "a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447",
+         "6b3b69ff0a404f28d75e98a066d3fc64fffd9940870cc68bece28545b9a75086b343d7a1366838083e4b8f3ca6fd3c80",
+         "db3974a97f2407b7cae1ae637c0030687a11913274d578492558e39c16c017de84eacdc8c62fe34ee4e12b4b1428817f09b6a2760c3f8a664ceae94d2434a593",
+       ];
+-      const ALGORITHMS = ["sha256", "sha384", "sha512"];
++      const ALGORITHMS = ["sha1", "sha256", "sha384", "sha512"];
+ 
+       for (let i = 0; i < ALGORITHMS.length; i++) {
+         const alg = ALGORITHMS[i];
+diff --git a/toolkit/mozapps/extensions/test/xpcshell/head_addons.js b/toolkit/mozapps/extensions/test/xpcshell/head_addons.js
+index 23614cdb2a92..007107eba7a8 100644
+--- a/toolkit/mozapps/extensions/test/xpcshell/head_addons.js
++++ b/toolkit/mozapps/extensions/test/xpcshell/head_addons.js
+@@ -470,7 +470,7 @@ function do_check_not_in_crash_annotation(aId, aVersion) {
+ 
+ function do_get_file_hash(aFile, aAlgorithm) {
+   if (!aAlgorithm) {
+-    aAlgorithm = "sha256";
++    aAlgorithm = "sha1";
+   }
+ 
+   let crypto = Cc["@mozilla.org/security/hash;1"].createInstance(
+diff --git a/toolkit/mozapps/extensions/test/xpcshell/test_ProductAddonChecker.js b/toolkit/mozapps/extensions/test/xpcshell/test_ProductAddonChecker.js
+index 04373e85ff6a..b3fca5bba6b5 100644
+--- a/toolkit/mozapps/extensions/test/xpcshell/test_ProductAddonChecker.js
++++ b/toolkit/mozapps/extensions/test/xpcshell/test_ProductAddonChecker.js
+@@ -250,24 +250,6 @@ add_task(async function test_download_badhashfn() {
+   }
+ });
+ 
+-add_task(async function test_download_sha1_unsupported() {
+-  try {
+-    let path = await ProductAddonChecker.downloadAddon({
+-      URL: root + "unsigned.xpi",
+-      hashFunction: "sha1",
+-      hashValue: "3d0dc22e1f394e159b08aaf5f0f97de4d5c65f4f",
+-    });
+-
+-    await IOUtils.remove(path);
+-    do_throw("Should not have downloaded a file with a bad hash function");
+-  } catch (e) {
+-    Assert.ok(
+-      true,
+-      "Should have thrown when downloading a file with a bad hash function."
+-    );
+-  }
+-});
+-
+ add_task(async function test_download_badhash() {
+   try {
+     let path = await ProductAddonChecker.downloadAddon({
+diff --git a/toolkit/mozapps/extensions/test/xpcshell/test_system_update_checkSizeHash.js b/toolkit/mozapps/extensions/test/xpcshell/test_system_update_checkSizeHash.js
+index f9ac09255a88..ff7ba4c62f3f 100644
+--- a/toolkit/mozapps/extensions/test/xpcshell/test_system_update_checkSizeHash.js
++++ b/toolkit/mozapps/extensions/test/xpcshell/test_system_update_checkSizeHash.js
+@@ -145,7 +145,7 @@ add_task(async function setup() {
+   });
+ 
+   xpi = await getSystemAddonXPI(3, "3.0");
+-  let [hashFunction, hashValue] = do_get_file_hash(xpi, "sha256").split(":");
++  let [hashFunction, hashValue] = do_get_file_hash(xpi, "sha1").split(":");
+   list.push({
+     id: "system3@tests.mozilla.org",
+     version: "3.0",
+@@ -156,7 +156,7 @@ add_task(async function setup() {
+   });
+ 
+   xpi = await getSystemAddonXPI(5, "1.0");
+-  [hashFunction, hashValue] = do_get_file_hash(xpi, "sha256").split(":");
++  [hashFunction, hashValue] = do_get_file_hash(xpi, "sha1").split(":");
+   list.push({
+     id: "system5@tests.mozilla.org",
+     version: "1.0",
+diff --git a/toolkit/mozapps/extensions/test/xpcshell/test_system_update_fail.js b/toolkit/mozapps/extensions/test/xpcshell/test_system_update_fail.js
+index 377c30395a29..84a56922a02c 100644
+--- a/toolkit/mozapps/extensions/test/xpcshell/test_system_update_fail.js
++++ b/toolkit/mozapps/extensions/test/xpcshell/test_system_update_fail.js
+@@ -138,7 +138,7 @@ const TESTS = {
+         id: "system3@tests.mozilla.org",
+         version: "3.0",
+         path: "system3_3.xpi",
+-        hashFunction: "sha256",
++        hashFunction: "sha1",
+         hashValue: "205a4c49bd513ebd30594e380c19e86bba1f83e2",
+       },
+     ],

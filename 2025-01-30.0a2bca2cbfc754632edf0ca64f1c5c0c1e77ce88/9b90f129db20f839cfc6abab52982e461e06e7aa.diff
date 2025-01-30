@@ -1,0 +1,106 @@
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 0d1c07aa5e42..6b57f3771398 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -5223,10 +5223,14 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+       break;
+ 
+     case WM_PAINT:
+-      *aRetValue = (int)OnPaint(0);
++      *aRetValue = (int)OnPaint(nullptr, 0);
+       result = true;
+       break;
+ 
++    case WM_PRINTCLIENT:
++      result = OnPaint((HDC)wParam, 0);
++      break;
++
+     case WM_HOTKEY:
+       result = OnHotKey(wParam, lParam);
+       break;
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index 15b33dff1a54..9a9143294dfe 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -594,7 +594,7 @@ class nsWindow final : public nsBaseWidget {
+   bool OnGesture(WPARAM wParam, LPARAM lParam);
+   bool OnTouch(WPARAM wParam, LPARAM lParam);
+   bool OnHotKey(WPARAM wParam, LPARAM lParam);
+-  bool OnPaint(uint32_t aNestingLevel);
++  bool OnPaint(HDC aDC, uint32_t aNestingLevel);
+   void OnWindowPosChanging(WINDOWPOS* info);
+   void OnWindowPosChanged(WINDOWPOS* wp);
+   void OnSysColorChanged();
+diff --git a/widget/windows/nsWindowGfx.cpp b/widget/windows/nsWindowGfx.cpp
+index 9b91eca1954d..503bd9938c80 100644
+--- a/widget/windows/nsWindowGfx.cpp
++++ b/widget/windows/nsWindowGfx.cpp
+@@ -135,7 +135,7 @@ void nsWindow::ForcePresent() {
+   }
+ }
+ 
+-bool nsWindow::OnPaint(uint32_t aNestingLevel) {
++bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel) {
+   gfx::DeviceResetReason resetReason = gfx::DeviceResetReason::OK;
+   if (gfxWindowsPlatform::GetPlatform()->DidRenderingDeviceReset(
+           &resetReason)) {
+@@ -214,16 +214,12 @@ bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+   }
+   mLastPaintBounds = mBounds;
+ 
+-  // For layered translucent windows all drawing should go to memory DC and no
+-  // WM_PAINT messages are normally generated. To support asynchronous painting
+-  // we force generation of WM_PAINT messages by invalidating window areas with
+-  // RedrawWindow, InvalidateRect or InvalidateRgn function calls.
+-  const bool usingMemoryDC =
+-      renderer->GetBackendType() == LayersBackend::LAYERS_NONE &&
+-      mTransparencyMode == TransparencyMode::Transparent;
+-
+-  HDC hDC = nullptr;
+-  if (usingMemoryDC) {
++  if (!aDC && renderer->GetBackendType() == LayersBackend::LAYERS_NONE &&
++      TransparencyMode::Transparent == mTransparencyMode) {
++    // For layered translucent windows all drawing should go to memory DC and no
++    // WM_PAINT messages are normally generated. To support asynchronous
++    // painting we force generation of WM_PAINT messages by invalidating window
++    // areas with RedrawWindow, InvalidateRect or InvalidateRgn function calls.
+     // BeginPaint/EndPaint must be called to make Windows think that invalid
+     // area is painted. Otherwise it will continue sending the same message
+     // endlessly.
+@@ -232,13 +228,13 @@ bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+ 
+     // We're guaranteed to have a widget proxy since we called
+     // GetLayerManager().
+-    hDC = mBasicLayersSurface->GetTransparentDC();
+-  } else {
+-    hDC = ::BeginPaint(mWnd, &ps);
++    aDC = mBasicLayersSurface->GetTransparentDC();
+   }
+ 
+-  const bool forceRepaint = mTransparencyMode == TransparencyMode::Transparent;
+-  const LayoutDeviceIntRegion region = GetRegionToPaint(forceRepaint, ps, hDC);
++  HDC hDC = aDC ? aDC : ::BeginPaint(mWnd, &ps);
++
++  bool forceRepaint = aDC || TransparencyMode::Transparent == mTransparencyMode;
++  LayoutDeviceIntRegion region = GetRegionToPaint(forceRepaint, ps, hDC);
+ 
+   RefPtr<nsWindow> strongThis(this);
+ 
+@@ -355,7 +351,7 @@ bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+ 
+   bool didPaint = false;
+   auto endPaint = MakeScopeExit([&] {
+-  if (!usingMemoryDC) {
++  if (!aDC) {
+     ::EndPaint(mWnd, &ps);
+   }
+     if (didPaint) {
+@@ -366,7 +362,7 @@ bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+         listener->DidPaintWindow();
+       }
+   if (aNestingLevel == 0 && ::GetUpdateRect(mWnd, nullptr, false)) {
+-    OnPaint(1);
++    OnPaint(aDC, 1);
+   }
+     }
+   });

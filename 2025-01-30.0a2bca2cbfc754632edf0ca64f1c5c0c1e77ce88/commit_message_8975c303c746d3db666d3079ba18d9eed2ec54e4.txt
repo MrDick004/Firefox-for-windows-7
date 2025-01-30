@@ -1,0 +1,1 @@
+Bug 1856100 - Remove dead code that handles the removed checkbox from the installer. r=mhowell    2023-10-03 03:00:07    8975c303c746d3db666d3079ba18d9eed2ec54e4

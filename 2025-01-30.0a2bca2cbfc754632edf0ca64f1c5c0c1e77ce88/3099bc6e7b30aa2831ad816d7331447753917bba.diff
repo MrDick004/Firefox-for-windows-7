@@ -1,0 +1,28 @@
+
+
+diff --git a/tools/lint/eslint/eslint-plugin-mozilla/lib/rules/valid-ci-uses.js b/tools/lint/eslint/eslint-plugin-mozilla/lib/rules/valid-ci-uses.js
+index 1edbc79009211..4036a72928c73 100644
+--- a/tools/lint/eslint/eslint-plugin-mozilla/lib/rules/valid-ci-uses.js
++++ b/tools/lint/eslint/eslint-plugin-mozilla/lib/rules/valid-ci-uses.js
+@@ -19,6 +19,11 @@ const platformSpecificInterfaces = new Map([
+   ["nsIAboutWindowsMessages", "windows"],
+   ["nsIDefaultAgent", "windows"],
+   ["nsIJumpListBuilder", "windows"],
++  ["nsILegacyJumpListBuilder", "windows"],
++  ["nsILegacyJumpListItem", "windows"],
++  ["nsILegacyJumpListLink", "windows"],
++  ["nsILegacyJumpListSeparator", "windows"],
++  ["nsILegacyJumpListShortcut", "windows"],
+   ["nsITaskbarWindowPreview", "windows"],
+   ["nsIWindowsAlertsService", "windows"],
+   ["nsIWindowsAlertNotification", "windows"],
+diff --git a/tools/lint/mscom-init.yml b/tools/lint/mscom-init.yml
+index e67ebbb55fa14..5320e678542cb 100644
+--- a/tools/lint/mscom-init.yml
++++ b/tools/lint/mscom-init.yml
+@@ -73,3 +73,5 @@ forbid-apartment-region:
+         - ipc/mscom/ProcessRuntime.cpp
+         - ipc/mscom/ProcessRuntime.h
+         - widget/windows/filedialog/WinFileDialogCommands.cpp
++        # These files are existing uses that must eventually be fixed.
++        - widget/windows/LegacyJumpListBuilder.cpp

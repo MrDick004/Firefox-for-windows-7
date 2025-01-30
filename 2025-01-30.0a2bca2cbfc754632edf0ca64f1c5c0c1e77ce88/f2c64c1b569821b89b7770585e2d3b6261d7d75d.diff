@@ -1,0 +1,183 @@
+diff --git a/browser/themes/windows/browser.css b/browser/themes/windows/browser.css
+index 80fc33c8d51f..3fd7ae74bb2e 100644
+--- a/browser/themes/windows/browser.css
++++ b/browser/themes/windows/browser.css
+@@ -165,40 +156,50 @@
+   list-style-image: url(chrome://browser/skin/window-controls/close.svg);
+ }
+ 
+-:root[lwtheme-image] {
+-  .titlebar-button {
+-    -moz-context-properties: unset;
+-  }
+-  .titlebar-min {
+-    list-style-image: url(chrome://browser/skin/window-controls/minimize-themes.svg);
+-  }
+-  .titlebar-max {
+-    list-style-image: url(chrome://browser/skin/window-controls/maximize-themes.svg);
+-  }
+-  .titlebar-restore {
+-    list-style-image: url(chrome://browser/skin/window-controls/restore-themes.svg);
+-  }
+-  .titlebar-close {
+-    list-style-image: url(chrome://browser/skin/window-controls/close-themes.svg);
+-  }
++:root[tabletmode] .titlebar-button {
++  display: none;
++}
++
++.titlebar-button > .toolbarbutton-icon {
++  width: 12px;
++  height: 12px;
++}
++
++.titlebar-restore > .toolbarbutton-icon:-moz-locale-dir(rtl) {
++  transform: scaleX(-1);
++}
++
++:root[lwtheme-image] .titlebar-button {
++  -moz-context-properties: unset;
++}
++:root[lwtheme-image] .titlebar-min {
++  list-style-image: url(chrome://browser/skin/window-controls/minimize-themes.svg);
++}
++:root[lwtheme-image] .titlebar-max {
++  list-style-image: url(chrome://browser/skin/window-controls/maximize-themes.svg);
++}
++:root[lwtheme-image] .titlebar-restore {
++  list-style-image: url(chrome://browser/skin/window-controls/restore-themes.svg);
++}
++:root[lwtheme-image] .titlebar-close {
++  list-style-image: url(chrome://browser/skin/window-controls/close-themes.svg);
+ }
+ 
+ @media (-moz-windows-default-theme) {
+   .titlebar-button:hover {
+     background-color: light-dark(hsla(0,0%,0%,.12), hsla(0,0%,100%,.22));
+-
+-    &:active {
+-      background-color: light-dark(hsla(0,0%,0%,.22), hsla(0,0%,100%,.32));
+-    }
++  }
++  .titlebar-button:hover:active {
++    background-color: light-dark(hsla(0,0%,0%,.22), hsla(0,0%,100%,.32));
+   }
+ 
+   .titlebar-close:hover {
+     stroke: white;
+     background-color: hsl(355,86%,49%);
++  }
+ 
+-    &:active {
+-      background-color: hsl(355,82%,69%);
+-    }
++  .titlebar-close:hover:active {
++    background-color: hsl(355,82%,69%);
+   }
+ }
+ 
+@@ -210,11 +211,10 @@
+   .titlebar-button {
+     background-color: -moz-field;
+     stroke: ButtonText;
+-
+-    &:hover {
+-      background-color: SelectedItem;
+-      stroke: SelectedItemText;
+-    }
++  }
++  .titlebar-button:hover {
++    background-color: SelectedItem;
++    stroke: SelectedItemText;
+   }
+ 
+   .titlebar-min {
+@@ -247,11 +247,11 @@
+ @media (1.70dppx <= resolution <= 1.95dppx) {
+   .titlebar-button {
+     padding-inline: 14.1px;
++  }
+ 
+-    > .toolbarbutton-icon {
+-      width: 10.8px;
+-      height: 10.8px;
+-    }
++  .titlebar-button > .toolbarbutton-icon {
++    width: 10.8px;
++    height: 10.8px;
+   }
+ }
+ 
+@@ -259,11 +259,11 @@
+ @media (2.20dppx <= resolution <= 2.45dppx) {
+   .titlebar-button {
+     padding-inline: 15.3333px;
++  }
+ 
+-    > .toolbarbutton-icon {
+-      width: 10.8px;
+-      height: 10.8px;
+-    }
++  .titlebar-button > .toolbarbutton-icon {
++    width: 10.8px;
++    height: 10.8px;
+   }
+ }
+ 
+@@ -280,42 +280,24 @@
+ 
+ /* Bookmark menus */
+ 
+-.bookmark-item {
+-  &:is(menu, menuitem) {
+-    min-width: 0;
+-    max-width: 32em;
+-  }
+-
+-  &:not(.subviewbutton) > .menu-iconic-left {
+-    margin-block: 0;
+-  }
+-
+-  &[cutting] {
+-    > .toolbarbutton-icon,
+-    > .menu-iconic-left > .menu-iconic-icon {
+-      opacity: 0.5;
+-    }
+-
+-    > .toolbarbutton-text,
+-    > .menu-iconic-left > .menu-iconic-text {
+-      opacity: 0.7;
+-    }
+-  }
++menu.bookmark-item,
++menuitem.bookmark-item {
++  min-width: 0;
++  max-width: 32em;
++}
+ 
+-  &:is(toolbarbutton)[dragover="true"][open="true"] {
+-    appearance: none;
+-    background: SelectedItem !important;
+-    color: SelectedItemText !important;
+-    fill: SelectedItemText;
+-  }
++.bookmark-item:not(.subviewbutton) > .menu-iconic-left {
++  margin-block: 0;
+ }
+ 
+-/* Bookmarks roots menu-items */
++.bookmark-item[cutting] > .toolbarbutton-icon,
++.bookmark-item[cutting] > .menu-iconic-left > .menu-iconic-icon {
++  opacity: 0.5;
++}
+ 
+-#bookmarksToolbarFolderMenu,
+-#BMB_bookmarksToolbar,
+-#panelMenu_bookmarksToolbar {
+-  list-style-image: url("chrome://browser/skin/places/bookmarksToolbar.svg");
++.bookmark-item[cutting] > .toolbarbutton-text,
++.bookmark-item[cutting] > .menu-iconic-left > .menu-iconic-text {
++  opacity: 0.7;
+ }
+ 
+ /* Address bar */

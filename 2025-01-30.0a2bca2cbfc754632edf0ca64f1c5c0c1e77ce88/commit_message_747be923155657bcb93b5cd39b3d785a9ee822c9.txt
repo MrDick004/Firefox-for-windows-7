@@ -1,0 +1,1 @@
+Bug 1876713 - Remove layout.css.overflow-overlay.enabled pref. r=emilio    2024-02-15 01:41:49    747be923155657bcb93b5cd39b3d785a9ee822c9

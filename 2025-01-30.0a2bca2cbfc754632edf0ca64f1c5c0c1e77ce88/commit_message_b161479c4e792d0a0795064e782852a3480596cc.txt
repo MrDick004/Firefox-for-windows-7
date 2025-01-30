@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from browser/app/winlauncher/. r=mhowell    2023-07-26 16:52:50    f02bd90f8681b9e03d099efeab646d4e70a68073

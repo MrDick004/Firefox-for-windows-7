@@ -1,0 +1,1 @@
+Bug 1843701 - Unconditionally use LOAD_LIBRARY_SEARCH_SYSTEM32. r=handyman    2023-07-18 02:13:51    5647f7c0f52cf81271aa0a8cef9fdd0dfb77fe9a

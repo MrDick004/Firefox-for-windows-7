@@ -1,0 +1,331 @@
+diff --git a/widget/windows/WinUtils.cpp b/widget/windows/WinUtils.cpp
+index 44409cb92ef3..9416e38500c0 100644
+--- a/widget/windows/WinUtils.cpp
++++ b/widget/windows/WinUtils.cpp
+@@ -1311,7 +1311,7 @@ LayoutDeviceIntRegion WinUtils::ConvertHRGNToRegion(HRGN aRgn) {
+ }
+ 
+ /* static */
+-nsAutoRegion WinUtils::RegionToHRGN(const LayoutDeviceIntRegion& aRegion) {
++HRGN WinUtils::RegionToHRGN(const LayoutDeviceIntRegion& aRegion) {
+   const uint32_t count = aRegion.GetNumRects();
+   const size_t regionBytes = count * sizeof(RECT);
+   const size_t regionDataBytes = sizeof(RGNDATAHEADER) + regionBytes;
+@@ -1329,7 +1329,7 @@ nsAutoRegion WinUtils::RegionToHRGN(const LayoutDeviceIntRegion& aRegion) {
+   for (auto iter = aRegion.RectIter(); !iter.Done(); iter.Next()) {
+     *buf++ = ToWinRect(iter.Get());
+   }
+-  return nsAutoRegion(::ExtCreateRegion(nullptr, regionDataBytes, data));
++  return ::ExtCreateRegion(nullptr, regionDataBytes, data);
+ }
+ 
+ LayoutDeviceIntRect WinUtils::ToIntRect(const RECT& aRect) {
+diff --git a/widget/windows/WinUtils.h b/widget/windows/WinUtils.h
+index e1ef2a66deb2..df747b83fb86 100644
+--- a/widget/windows/WinUtils.h
++++ b/widget/windows/WinUtils.h
+@@ -33,10 +33,12 @@
+ #include "nsIDownloader.h"
+ #include "nsIURI.h"
+ #include "nsIWidget.h"
+-#include "nsWindowsHelpers.h"
++#include "nsIThread.h"
+ 
+ #include "mozilla/Attributes.h"
+ #include "mozilla/EventForwards.h"
++#include "mozilla/HalScreenConfiguration.h"
++#include "mozilla/HashTable.h"
+ #include "mozilla/LazyIdleThread.h"
+ #include "mozilla/UniquePtr.h"
+ #include "mozilla/Vector.h"
+@@ -414,8 +416,11 @@ class WinUtils {
+    * returns the LayoutDeviceIntRegion.
+    */
+   static LayoutDeviceIntRegion ConvertHRGNToRegion(HRGN aRgn);
+-  /** Performs the inverse of ConvertHRGNToRegion. */
+-  static nsAutoRegion RegionToHRGN(const LayoutDeviceIntRegion&);
++  /**
++   * Performs the inverse of ConvertHRGNToRegion.
++   * The region must be cleaned up with DeleteObject().
++   */
++  static HRGN RegionToHRGN(const LayoutDeviceIntRegion&);
+ 
+   /**
+    * ToIntRect converts a Windows RECT to a LayoutDeviceIntRect.
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index d0f16e400e44..6e36f55ee0ea 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -2687,7 +2687,8 @@ bool nsWindow::UpdateNonClientMargins(bool aReflowWindow) {
+ 
+     metrics.mOffset.top = metrics.mCaptionHeight - verticalResize;
+ 
+-    if (mozilla::Maybe<UINT> maybeEdge = GetHiddenTaskbarEdge()) {
++    mozilla::Maybe<UINT> maybeEdge = GetHiddenTaskbarEdge();
++    if (maybeEdge) {
+       auto edge = maybeEdge.value();
+       if (ABE_LEFT == edge) {
+         metrics.mOffset.left -= kHiddenTaskbarSize;
+@@ -2696,13 +2697,19 @@ bool nsWindow::UpdateNonClientMargins(bool aReflowWindow) {
+       } else if (ABE_BOTTOM == edge || ABE_TOP == edge) {
+         metrics.mOffset.bottom -= kHiddenTaskbarSize;
+       }
++
++      // When we are drawing the non-client region, we need
++      // to clear the portion of the NC region that is exposed by the
++      // hidden taskbar.  As above, we clear the bottom of the NC region
++      // when the taskbar is at the top of the screen.
++      UINT clearEdge = (edge == ABE_TOP) ? ABE_BOTTOM : edge;
++      mClearNCEdge = Some(clearEdge);
+     }
+   } else {
+     metrics.mOffset = NormalWindowNonClientOffset();
+   }
+ 
+   UpdateOpaqueRegionInternal();
+-  mNeedsNCAreaClear = true;
+ 
+   if (aReflowWindow) {
+     // Force a reflow of content based on the new client
+@@ -2758,7 +2765,7 @@ void nsWindow::SetResizeMargin(mozilla::LayoutDeviceIntCoord aResizeMargin) {
+   UpdateNonClientMargins();
+ }
+ 
+-nsAutoRegion nsWindow::ComputeNonClientHRGN() {
++void nsWindow::InvalidateNonClientRegion() {
+   // +-+-----------------------+-+
+   // | | app non-client chrome | |
+   // | +-----------------------+ |
+@@ -2774,26 +2781,24 @@ nsAutoRegion nsWindow::ComputeNonClientHRGN() {
+   RECT rect;
+   GetWindowRect(mWnd, &rect);
+   MapWindowPoints(nullptr, mWnd, (LPPOINT)&rect, 2);
+-  nsAutoRegion winRgn(::CreateRectRgnIndirect(&rect));
++  HRGN winRgn = CreateRectRgnIndirect(&rect);
+ 
+   // Subtract app client chrome and app content leaving
+   // windows non-client chrome and app non-client chrome
+   // in winRgn.
+-  ::GetWindowRect(mWnd, &rect);
++  GetWindowRect(mWnd, &rect);
+   rect.top += mCustomNonClientMetrics.mCaptionHeight;
+   rect.right -= mCustomNonClientMetrics.mHorResizeMargin;
+   rect.bottom -= mCustomNonClientMetrics.mVertResizeMargin;
+   rect.left += mCustomNonClientMetrics.mHorResizeMargin;
+-  ::MapWindowPoints(nullptr, mWnd, (LPPOINT)&rect, 2);
+-  nsAutoRegion clientRgn(::CreateRectRgnIndirect(&rect));
+-  ::CombineRgn(winRgn, winRgn, clientRgn, RGN_DIFF);
+-  return nsAutoRegion(winRgn.out());
+-}
++  MapWindowPoints(nullptr, mWnd, (LPPOINT)&rect, 2);
++  HRGN clientRgn = CreateRectRgnIndirect(&rect);
++  CombineRgn(winRgn, winRgn, clientRgn, RGN_DIFF);
++  DeleteObject(clientRgn);
+ 
+-void nsWindow::InvalidateNonClientRegion() {
+-  nsAutoRegion winRgn(ComputeNonClientHRGN());
+   // triggers ncpaint and paint events for the two areas
+   RedrawWindow(mWnd, nullptr, winRgn, RDW_FRAME | RDW_INVALIDATE);
++  DeleteObject(winRgn);
+ }
+ 
+ HRGN nsWindow::ExcludeNonClientFromPaintRegion(HRGN aRegion) {
+@@ -4995,7 +5000,12 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+       auto GeckoClientToWinScreenRect =
+           [&origin](LayoutDeviceIntRect aRect) -> RECT {
+         aRect.MoveBy(origin);
+-        return WinUtils::ToWinRect(aRect);
++        return {
++            .left = aRect.x,
++            .top = aRect.y,
++            .right = aRect.XMost(),
++            .bottom = aRect.YMost(),
++        };
+       };
+       auto SetButton = [&](size_t aIndex, WindowButtonType aType) {
+         info->rgrect[aIndex] =
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index 0600a4d9990b..76142f3a3e5d 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -515,7 +515,6 @@ class nsWindow final : public nsBaseWidget {
+   bool UpdateNonClientMargins(bool aReflowWindow = true);
+   void UpdateDarkModeToolbar();
+   void ResetLayout();
+-  nsAutoRegion ComputeNonClientHRGN();
+   void InvalidateNonClientRegion();
+   HRGN ExcludeNonClientFromPaintRegion(HRGN aRegion);
+   HWND GetOwnerWnd() const { return ::GetWindow(mWnd, GW_OWNER); }
+@@ -625,7 +624,8 @@ class nsWindow final : public nsBaseWidget {
+   void StopFlashing();
+   static HWND WindowAtMouse();
+   static bool IsTopLevelMouseExit(HWND aWnd);
+-  LayoutDeviceIntRegion GetRegionToPaint(const PAINTSTRUCT& ps, HDC aDC) const;
++  LayoutDeviceIntRegion GetRegionToPaint(bool aForceFullRepaint, PAINTSTRUCT ps,
++                                         HDC aDC);
+   nsIWidgetListener* GetPaintListener();
+ 
+   void CreateCompositor() override;
+@@ -888,9 +888,9 @@ class nsWindow final : public nsBaseWidget {
+ 
+   mozilla::DataMutex<Desktop> mDesktopId;
+ 
+-  // If set, indicates the non-client-area region must be cleared to black on
+-  // next paint.
+-  bool mNeedsNCAreaClear = false;
++  // If set, indicates the edge of the NC region we should clear to black
++  // on next paint.  One of: ABE_TOP, ABE_BOTTOM, ABE_LEFT or ABE_RIGHT.
++  mozilla::Maybe<UINT> mClearNCEdge;
+ 
+   friend class nsWindowGfx;
+ 
+diff --git a/widget/windows/nsWindowGfx.cpp b/widget/windows/nsWindowGfx.cpp
+index 0467801a1539..8dc7479c4522 100644
+--- a/widget/windows/nsWindowGfx.cpp
++++ b/widget/windows/nsWindowGfx.cpp
+@@ -99,20 +99,27 @@ static IconMetrics sIconMetrics[] = {
+  **************************************************************/
+ 
+ // GetRegionToPaint returns the invalidated region that needs to be painted
+-LayoutDeviceIntRegion nsWindow::GetRegionToPaint(const PAINTSTRUCT& ps,
+-                                                 HDC aDC) const {
+-  LayoutDeviceIntRegion fullRegion(WinUtils::ToIntRect(ps.rcPaint));
++LayoutDeviceIntRegion nsWindow::GetRegionToPaint(bool aForceFullRepaint,
++                                                 PAINTSTRUCT ps, HDC aDC) {
++  if (aForceFullRepaint) {
++    RECT paintRect;
++    ::GetClientRect(mWnd, &paintRect);
++    return LayoutDeviceIntRegion(WinUtils::ToIntRect(paintRect));
++  }
++
+   HRGN paintRgn = ::CreateRectRgn(0, 0, 0, 0);
+-  if (paintRgn) {
+-    if (GetRandomRgn(aDC, paintRgn, SYSRGN) == 1) {
++  if (paintRgn != nullptr) {
++    int result = GetRandomRgn(aDC, paintRgn, SYSRGN);
++    if (result == 1) {
+       POINT pt = {0, 0};
+       ::MapWindowPoints(nullptr, mWnd, &pt, 1);
+       ::OffsetRgn(paintRgn, pt.x, pt.y);
+-      fullRegion.AndWith(WinUtils::ConvertHRGNToRegion(paintRgn));
+     }
++    LayoutDeviceIntRegion rgn(WinUtils::ConvertHRGNToRegion(paintRgn));
+     ::DeleteObject(paintRgn);
++    return rgn;
+   }
+-  return fullRegion;
++  return LayoutDeviceIntRegion(WinUtils::ToIntRect(ps.rcPaint));
+ }
+ 
+ nsIWidgetListener* nsWindow::GetPaintListener() {
+@@ -157,22 +164,45 @@ bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+   KnowsCompositor* knowsCompositor = renderer->AsKnowsCompositor();
+   WebRenderLayerManager* layerManager = renderer->AsWebRender();
+ 
+-  const bool didResize = !mBounds.IsEqualEdges(mLastPaintBounds);
++  if (mClearNCEdge) {
++    // We need to clear this edge of the non-client region to black (once).
++    HDC hdc;
++    RECT rect;
++    hdc = ::GetWindowDC(mWnd);
++    ::GetWindowRect(mWnd, &rect);
++    ::MapWindowPoints(nullptr, mWnd, (LPPOINT)&rect, 2);
++    switch (mClearNCEdge.value()) {
++      case ABE_TOP:
++        rect.bottom = rect.top + kHiddenTaskbarSize;
++        break;
++      case ABE_LEFT:
++        rect.right = rect.left + kHiddenTaskbarSize;
++        break;
++      case ABE_BOTTOM:
++        rect.top = rect.bottom - kHiddenTaskbarSize;
++        break;
++      case ABE_RIGHT:
++        rect.left = rect.right - kHiddenTaskbarSize;
++        break;
++      default:
++        MOZ_ASSERT_UNREACHABLE("Invalid edge value");
++        break;
++    }
++    ::FillRect(hdc, &rect,
++               reinterpret_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH)));
++    ::ReleaseDC(mWnd, hdc);
++
++    mClearNCEdge.reset();
++  }
+ 
+-  if (didResize && knowsCompositor && layerManager) {
++  if (knowsCompositor && layerManager &&
++      !mBounds.IsEqualEdges(mLastPaintBounds)) {
+     // Do an early async composite so that we at least have something on the
+     // screen in the right place, even if the content is out of date.
+     layerManager->ScheduleComposite(wr::RenderReasons::WIDGET);
+   }
+   mLastPaintBounds = mBounds;
+ 
+-  RefPtr<nsWindow> strongThis(this);
+-  if (nsIWidgetListener* listener = GetPaintListener()) {
+-    // WillPaintWindow will update our transparent area if needed, which we use
+-    // below. Note that this might kill the listener.
+-    listener->WillPaintWindow(this);
+-  }
+-
+   // For layered translucent windows all drawing should go to memory DC and no
+   // WM_PAINT messages are normally generated. To support asynchronous painting
+   // we force generation of WM_PAINT messages by invalidating window areas with
+@@ -180,15 +210,8 @@ bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+   const bool usingMemoryDC =
+       renderer->GetBackendType() == LayersBackend::LAYERS_NONE &&
+       mTransparencyMode == TransparencyMode::Transparent;
++
+   HDC hDC = nullptr;
+-  const LayoutDeviceIntRect winRect = [&] {
+-    RECT r;
+-    ::GetWindowRect(mWnd, &r);
+-    ::MapWindowPoints(nullptr, mWnd, (LPPOINT)&r, 2);
+-    return WinUtils::ToIntRect(r);
+-  }();
+-  LayoutDeviceIntRegion region;
+-  LayoutDeviceIntRegion translucentRegion;
+   if (usingMemoryDC) {
+     // BeginPaint/EndPaint must be called to make Windows think that invalid
+     // area is painted. Otherwise it will continue sending the same message
+@@ -199,30 +222,19 @@ bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+     // We're guaranteed to have a widget proxy since we called
+     // GetLayerManager().
+     hDC = mBasicLayersSurface->GetTransparentDC();
+-    region = translucentRegion = LayoutDeviceIntRegion{winRect};
+   } else {
+     hDC = ::BeginPaint(mWnd, &ps);
+-    region = GetRegionToPaint(ps, hDC);
+-    if (mTransparencyMode == TransparencyMode::Transparent) {
+-      translucentRegion = LayoutDeviceIntRegion{winRect};
+-      translucentRegion.SubOut(mOpaqueRegion);
+-      region.OrWith(translucentRegion);
+-    }
+   }
+ 
+-  if (!usingMemoryDC && (mNeedsNCAreaClear || didResize)) {
+-    // We need to clear the non-client-area region, and the transparent parts
+-    // of the window to black (once).
+-    auto black = reinterpret_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH));
+-    nsAutoRegion regionToClear(ComputeNonClientHRGN());
+-    if (mTransparencyMode == TransparencyMode::Transparent &&
+-        !translucentRegion.IsEmpty()) {
+-      nsAutoRegion translucent(WinUtils::RegionToHRGN(translucentRegion));
+-      ::CombineRgn(regionToClear, regionToClear, translucent, RGN_OR);
+-    }
+-    ::FillRgn(hDC, regionToClear, black);
++  const bool forceRepaint = mTransparencyMode == TransparencyMode::Transparent;
++  const LayoutDeviceIntRegion region = GetRegionToPaint(forceRepaint, ps, hDC);
++
++  RefPtr<nsWindow> strongThis(this);
++
++  if (nsIWidgetListener* listener = GetPaintListener()) {
++    // Note that this might kill the listener.
++    listener->WillPaintWindow(this);
+   }
+-  mNeedsNCAreaClear = false;
+ 
+   bool didPaint = false;
+   auto endPaint = MakeScopeExit([&] {

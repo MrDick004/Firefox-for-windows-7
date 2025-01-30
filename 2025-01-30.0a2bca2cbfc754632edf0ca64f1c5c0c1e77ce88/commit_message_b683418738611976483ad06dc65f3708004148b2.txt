@@ -1,0 +1,1 @@
+Bug 1882358 Part 3: Remove nsIWidget::IsResizingNativeWidget, which is no longer used. r=nical    2024-03-08 01:18:25    b683418738611976483ad06dc65f3708004148b2
