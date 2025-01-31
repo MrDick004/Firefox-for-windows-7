@@ -1,0 +1,1 @@
+Bug 1861671 - Remove some dead macOS menu drawing code. r=mac-reviewers,bradwerth    2023-11-01 02:57:12    5e6062194f62a992c5918ffcba698f5cb9126305

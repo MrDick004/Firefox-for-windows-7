@@ -1,0 +1,98 @@
+
+
+diff --git a/widget/nsIWinTaskbar.idl b/widget/nsIWinTaskbar.idl
+index b90dacae8f82a..7d9b96a9d8109 100644
+--- a/widget/nsIWinTaskbar.idl
++++ b/widget/nsIWinTaskbar.idl
+@@ -15,6 +15,7 @@ interface nsITaskbarWindowPreview;
+ interface nsITaskbarPreviewController;
+ interface nsITaskbarProgress;
+ interface nsITaskbarOverlayIconController;
++interface nsILegacyJumpListBuilder;
+ interface mozIDOMWindow;
+ 
+ /*
+@@ -46,7 +47,7 @@ interface mozIDOMWindow;
+  * http://msdn.microsoft.com/en-us/library/dd391697%28VS.85%29.aspx
+  *
+  * Applications may also define custom taskbar jump lists on application shortcuts.
+- * See nsIJumpListBuilder for more information.
++ * See nsILegacyJumpListBuilder for more information.
+  */
+ 
+ [scriptable, uuid(11751471-9246-4c72-a80f-0c7df765d640)]
+@@ -119,6 +120,19 @@ interface nsIWinTaskbar : nsISupports
+    * Taskbar and start menu jump list management
+    */
+ 
++  /**
++   * Retrieve a legacy taskbar jump list builder. This jump list builder backend
++   * is in the process of being phased out.
++   *
++   * Fails if a jump list build operation has already been initiated, developers
++   * should make use of a single instance of nsILegacyJumpListBuilder for building lists
++   * within an application.
++   *
++   * @throws NS_ERROR_ALREADY_INITIALIZED if an nsILegacyJumpListBuilder instance is
++   * currently building a list.
++   */
++  nsILegacyJumpListBuilder createLegacyJumpListBuilder(in boolean aPrivateBrowsing);
++
+   /**
+    * Retrieves a Windows Jump List builder. This jump list builder can be used
+    * to asynchronously add, remove, and update items in the Windows Jump List.
+diff --git a/widget/windows/WinTaskbar.cpp b/widget/windows/WinTaskbar.cpp
+index 67717499bc661..66854f3ee2ea9 100644
+--- a/widget/windows/WinTaskbar.cpp
++++ b/widget/windows/WinTaskbar.cpp
+@@ -18,11 +18,13 @@
+ #include <nsIBaseWindow.h>
+ #include <nsServiceManagerUtils.h>
+ #include "nsIXULAppInfo.h"
++#include "nsILegacyJumpListBuilder.h"
+ #include "nsUXThemeData.h"
+ #include "nsWindow.h"
+ #include "WinUtils.h"
+ #include "TaskbarTabPreview.h"
+ #include "TaskbarWindowPreview.h"
++#include "LegacyJumpListBuilder.h"
+ #include "nsWidgetsCID.h"
+ #include "nsPIDOMWindow.h"
+ #include "nsAppDirectoryServiceDefs.h"
+@@ -35,6 +37,9 @@
+ #include <propkey.h>
+ #include <shellapi.h>
+ 
++static NS_DEFINE_CID(kLegacyJumpListBuilderCID,
++                     NS_WIN_LEGACYJUMPLISTBUILDER_CID);
++
+ namespace {
+ 
+ HWND GetHWNDFromDocShell(nsIDocShell* aShell) {
+@@ -405,6 +410,26 @@ WinTaskbar::GetOverlayIconController(
+   return CallQueryInterface(preview, _retval);
+ }
+ 
++NS_IMETHODIMP
++WinTaskbar::CreateLegacyJumpListBuilder(
++    bool aPrivateBrowsing, nsILegacyJumpListBuilder** aJumpListBuilder) {
++  nsresult rv;
++
++  if (LegacyJumpListBuilder::sBuildingList) return NS_ERROR_ALREADY_INITIALIZED;
++
++  nsCOMPtr<nsILegacyJumpListBuilder> builder =
++      do_CreateInstance(kLegacyJumpListBuilderCID, &rv);
++  if (NS_FAILED(rv)) return NS_ERROR_UNEXPECTED;
++
++  NS_IF_ADDREF(*aJumpListBuilder = builder);
++
++  nsAutoString aumid;
++  GenerateAppUserModelID(aumid, aPrivateBrowsing);
++  builder->SetAppUserModelID(aumid);
++
++  return NS_OK;
++}
++
+ NS_IMETHODIMP
+ WinTaskbar::CreateJumpListBuilder(bool aPrivateBrowsing,
+                                   nsIJumpListBuilder** aJumpListBuilder) {

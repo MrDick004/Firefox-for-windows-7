@@ -1,0 +1,1 @@
+Bug 1896109 - Stop drawing focus on the label on windows. r=desktop-theme-reviewers,dao    2024-05-15 00:33:02    4c5558eb765d556760db5d2a3e3598857865bb68

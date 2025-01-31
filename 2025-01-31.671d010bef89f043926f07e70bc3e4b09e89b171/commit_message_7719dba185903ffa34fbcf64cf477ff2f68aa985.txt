@@ -1,0 +1,1 @@
+Bug 1845540 - Remove -moz-windows-default-theme and -moz-mac-graphite-theme. r=dao,pip-reviewers,mhowell    2023-07-27 02:22:26    7719dba185903ffa34fbcf64cf477ff2f68aa985

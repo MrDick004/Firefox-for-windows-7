@@ -1,0 +1,36 @@
+diff --git a/toolkit/modules/subprocess/subprocess_win.sys.mjs b/toolkit/modules/subprocess/subprocess_win.sys.mjs
+index cd6e8379428b..67fa9ab84afa 100644
+--- a/toolkit/modules/subprocess/subprocess_win.sys.mjs
++++ b/toolkit/modules/subprocess/subprocess_win.sys.mjs
+@@ -35,6 +35,7 @@ class WinPromiseWorker extends PromiseWorker {
+ 
+     this.call("init", [
+       {
++        breakAwayFromJob: false,
+         comspec: Services.env.get("COMSPEC"),
+         signalEvent: String(
+           ctypes.cast(this.signalEvent, ctypes.uintptr_t).value
+diff --git a/toolkit/modules/subprocess/subprocess_win.worker.js b/toolkit/modules/subprocess/subprocess_win.worker.js
+index 50c8eeafe1a5..7e07361e58d2 100644
+--- a/toolkit/modules/subprocess/subprocess_win.worker.js
++++ b/toolkit/modules/subprocess/subprocess_win.worker.js
+@@ -510,6 +510,10 @@ class Process extends BaseProcess {
+       win32.CREATE_SUSPENDED |
+       win32.CREATE_UNICODE_ENVIRONMENT;
+ 
++    if (io.breakAwayFromJob) {
++      processFlags |= win32.CREATE_BREAKAWAY_FROM_JOB;
++    }
++
+     let startupInfoEx = new win32.STARTUPINFOEXW();
+     let startupInfo = startupInfoEx.StartupInfo;
+ 
+@@ -678,6 +682,8 @@ io = {
+     this.signal = new Signal(signalEvent);
+     this.updatePollEvents();
+ 
++    this.breakAwayFromJob = details.breakAwayFromJob;
++
+     setTimeout(this.loop.bind(this), 0);
+   },
+ 

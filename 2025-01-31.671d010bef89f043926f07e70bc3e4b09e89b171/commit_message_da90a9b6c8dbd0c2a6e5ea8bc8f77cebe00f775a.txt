@@ -1,0 +1,1 @@
+Bug 1911763 - Improve invalidation of top-level transparent windows. r=win-reviewers,rkraesig,handyman    2024-09-30 20:16:07    da90a9b6c8dbd0c2a6e5ea8bc8f77cebe00f775a

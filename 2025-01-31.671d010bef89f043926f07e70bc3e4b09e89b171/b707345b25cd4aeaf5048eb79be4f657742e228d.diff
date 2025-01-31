@@ -1,0 +1,197 @@
+
+
+diff --git a/dom/geolocation/Geolocation.cpp b/dom/geolocation/Geolocation.cpp
+index 3f46bd1e21650..5fc58a2eca1d2 100644
+--- a/dom/geolocation/Geolocation.cpp
++++ b/dom/geolocation/Geolocation.cpp
+@@ -344,8 +344,8 @@ void Geolocation::ReallowWithSystemPermissionOrCancel(
+   denyPermissionOnError.release();
+ 
+   RefPtr<SystemGeolocationPermissionRequest> permissionRequest =
+-      geolocation::RequestLocationPermissionFromUser(aBrowsingContext,
+-                                                     std::move(aResolver));
++      geolocation::PresentSystemSettings(aBrowsingContext,
++                                         std::move(aResolver));
+   NS_ENSURE_TRUE_VOID(permissionRequest);
+ 
+   auto cancelRequestOnError = MakeScopeExit([&]() {
+@@ -384,13 +384,12 @@ nsGeolocationRequest::Allow(JS::Handle<JS::Value> aChoices) {
+     return NS_OK;
+   }
+ 
+-  if (mBehavior != SystemGeolocationPermissionBehavior::NoPrompt) {
+-    // Asynchronously present the system dialog or open system preferences
+-    // (RequestGeolocationPermissionFromUser will know which to do), and wait
+-    // for the permission to change or the request to be canceled.  If the
+-    // permission is (maybe) granted then it will call Allow again.  It actually
+-    // will also re-call Allow if the permission is denied, in order to get the
+-    // "denied permission" behavior.
++  if (mBehavior == SystemGeolocationPermissionBehavior::GeckoWillPromptUser) {
++    // Asynchronously present the system dialog and wait for the permission to
++    // change or the request to be canceled.  If the permission is (maybe)
++    // granted then it will call Allow again.  It actually will also re-call
++    // Allow if the permission is denied, in order to get the "denied
++    // permission" behavior.
+     mBehavior = SystemGeolocationPermissionBehavior::NoPrompt;
+     RefPtr<BrowsingContext> browsingContext = mWindow->GetBrowsingContext();
+     if (ContentChild* cc = ContentChild::GetSingleton()) {
+diff --git a/dom/geolocation/GeolocationSystem.cpp b/dom/geolocation/GeolocationSystem.cpp
+index 9ef44019bce59..be9f20d685f92 100644
+--- a/dom/geolocation/GeolocationSystem.cpp
++++ b/dom/geolocation/GeolocationSystem.cpp
+@@ -12,9 +12,8 @@ SystemGeolocationPermissionBehavior GetGeolocationPermissionBehavior() {
+   return SystemGeolocationPermissionBehavior::NoPrompt;
+ }
+ 
+-already_AddRefed<SystemGeolocationPermissionRequest>
+-RequestLocationPermissionFromUser(BrowsingContext* aBrowsingContext,
+-                                  ParentRequestResolver&& aResolver) {
++already_AddRefed<SystemGeolocationPermissionRequest> PresentSystemSettings(
++    BrowsingContext* aBrowsingContext, ParentRequestResolver&& aResolver) {
+   MOZ_ASSERT_UNREACHABLE(
+       "Should not warn user of need for system location permission "
+       "since we cannot open system settings on this platform.");
+diff --git a/dom/geolocation/GeolocationSystem.h b/dom/geolocation/GeolocationSystem.h
+index b093f34601c28..36c26a00124ff 100644
+--- a/dom/geolocation/GeolocationSystem.h
++++ b/dom/geolocation/GeolocationSystem.h
+@@ -41,13 +41,12 @@ using ParentRequestResolver =
+     PContentParent::RequestGeolocationPermissionFromUserResolver;
+ 
+ /**
+- * Opens the relevant system dialog to request permission from the user.
+- * Resolves aResolver when permission is granted, an error occurs, or Stop has
+- * been called on the SystemGeolocationPermissionRequest.
++ * Opens the relevant (system or Gecko) window to request permission from the
++ * user. Resolves aResolver when permission is granted, an error occurs, or Stop
++ * has been called on the SystemGeolocationPermissionRequest.
+  */
+-already_AddRefed<SystemGeolocationPermissionRequest>
+-RequestLocationPermissionFromUser(BrowsingContext* aBrowsingContext,
+-                                  ParentRequestResolver&& aResolver);
++already_AddRefed<SystemGeolocationPermissionRequest> PresentSystemSettings(
++    BrowsingContext* aBrowsingContext, ParentRequestResolver&& aResolver);
+ 
+ }  // namespace geolocation
+ }  // namespace mozilla::dom
+diff --git a/dom/geolocation/GeolocationSystemWin.cpp b/dom/geolocation/GeolocationSystemWin.cpp
+index 2fa125075bd10..af2bfcca7f2e0 100644
+--- a/dom/geolocation/GeolocationSystemWin.cpp
++++ b/dom/geolocation/GeolocationSystemWin.cpp
+@@ -5,11 +5,9 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ #include "GeolocationSystem.h"
+-#include "mozilla/Components.h"
+ #include "mozilla/dom/BrowsingContext.h"
+ #include "mozilla/ScopeExit.h"
+ #include "nsIGeolocationUIUtilsWin.h"
+-#include "nsIWifiListener.h"
+ #include "nsIWifiMonitor.h"
+ 
+ #include <windows.system.h>
+@@ -72,7 +70,10 @@ bool SystemWillPromptForPermissionHint() {
+   // If wifi is not available (e.g. because there is no wifi device present)
+   // then the API may report that Windows will request geolocation permission
+   // but it can't without the wifi scanner.  Check for that case.
+-  nsCOMPtr<nsIWifiMonitor> wifiMonitor = components::WifiMonitor::Service();
++  nsresult rv = NS_OK;
++  nsCOMPtr<nsIWifiMonitor> wifiMonitor =
++      do_GetService("@mozilla.org/wifi/monitor;1", &rv);
++  NS_ENSURE_SUCCESS(rv, false);
+   NS_ENSURE_TRUE(wifiMonitor, false);
+   return wifiMonitor->GetHasWifiAdapter();
+ }
+@@ -267,46 +268,6 @@ void OpenWindowsLocationSettings(
+   cancelRequest.release();
+ }
+ 
+-class LocationPermissionWifiScanListener final : public nsIWifiListener {
+- public:
+-  NS_DECL_ISUPPORTS
+-
+-  explicit LocationPermissionWifiScanListener(
+-      SystemGeolocationPermissionRequest* aRequest)
+-      : mRequest(aRequest) {}
+-
+-  NS_IMETHOD OnChange(const nsTArray<RefPtr<nsIWifiAccessPoint>>&) override {
+-    // We will remove ourselves from the nsIWifiMonitor, which is our owner.
+-    // Hold a strong reference to ourselves until we complete the callback.
+-    RefPtr<LocationPermissionWifiScanListener> self = this;
+-    return PermissionWasDecided();
+-  }
+-
+-  NS_IMETHOD OnError(nsresult) override {
+-    // We will remove ourselves from the nsIWifiMonitor, which is our owner.
+-    // Hold a strong reference to ourselves until we complete the callback.
+-    RefPtr<LocationPermissionWifiScanListener> self = this;
+-    return PermissionWasDecided();
+-  }
+-
+- private:
+-  virtual ~LocationPermissionWifiScanListener() = default;
+-  RefPtr<SystemGeolocationPermissionRequest> mRequest;
+-
+-  // Any response to our wifi scan request means that the user has selected
+-  // either to grant or deny permission in the Windows dialog.  Either way, we
+-  // are done asking for permission, so Stop the permission request.
+-  nsresult PermissionWasDecided() {
+-    nsCOMPtr<nsIWifiMonitor> wifiMonitor = components::WifiMonitor::Service();
+-    NS_ENSURE_TRUE(wifiMonitor, NS_ERROR_FAILURE);
+-    wifiMonitor->StopWatching(this);
+-    mRequest->Stop();
+-    return NS_OK;
+-  }
+-};
+-
+-NS_IMPL_ISUPPORTS(LocationPermissionWifiScanListener, nsIWifiListener)
+-
+ }  // namespace
+ 
+ //-----------------------------------------------------------------------------
+@@ -321,9 +282,8 @@ SystemGeolocationPermissionBehavior GetGeolocationPermissionBehavior() {
+   return SystemGeolocationPermissionBehavior::NoPrompt;
+ }
+ 
+-already_AddRefed<SystemGeolocationPermissionRequest>
+-RequestLocationPermissionFromUser(BrowsingContext* aBrowsingContext,
+-                                  ParentRequestResolver&& aResolver) {
++already_AddRefed<SystemGeolocationPermissionRequest> PresentSystemSettings(
++    BrowsingContext* aBrowsingContext, ParentRequestResolver&& aResolver) {
+   RefPtr<WindowsGeolocationPermissionRequest> permissionRequest =
+       new WindowsGeolocationPermissionRequest(aBrowsingContext,
+                                               std::move(aResolver));
+@@ -331,20 +291,7 @@ RequestLocationPermissionFromUser(BrowsingContext* aBrowsingContext,
+   if (permissionRequest->IsStopped()) {
+     return nullptr;
+   }
+-  if (SystemWillPromptForPermissionHint()) {
+-    // To tell the system to prompt for permission, run one wifi scan (no need
+-    // to poll). We won't use the result -- either the user will grant
+-    // geolocation permission, meaning we will not need wifi scanning, or the
+-    // user will deny permission, in which case no scan can be done.  We just
+-    // want the prompt.
+-    nsCOMPtr<nsIWifiMonitor> wifiMonitor = components::WifiMonitor::Service();
+-    NS_ENSURE_TRUE(wifiMonitor, nullptr);
+-    auto listener =
+-        MakeRefPtr<LocationPermissionWifiScanListener>(permissionRequest);
+-    wifiMonitor->StartWatching(listener, false);
+-  } else {
+-    OpenWindowsLocationSettings(permissionRequest);
+-  }
++  OpenWindowsLocationSettings(permissionRequest);
+   return permissionRequest.forget();
+ }
+ 
+diff --git a/netwerk/build/components.conf b/netwerk/build/components.conf
+index 2d8150e6f1dd6..d9fb1274908e7 100644
+--- a/netwerk/build/components.conf
++++ b/netwerk/build/components.conf
+@@ -764,7 +764,6 @@ Classes = [
+ if defined('NECKO_WIFI'):
+     Classes += [
+         {
+-            'name': 'WifiMonitor',
+             'cid': '{3ff8fb9f-ee63-48df-89f0-dace0242fd82}',
+             'contract_ids': ['@mozilla.org/wifi/monitor;1'],
+             'singleton': True,

@@ -1,0 +1,1 @@
+Bug 1866022 - Teach GTK to render non-native tree columns and toolbars. r=dao,stransky,desktop-theme-reviewers    2023-12-05 02:57:35    4d0e7147951eaafe847f82f9db94e766ff7845c2

@@ -1,0 +1,1 @@
+Bug 1846845 - Remove some unneeded isPlatformAndVersionAtLeast checks r=Gijs    2023-08-03 06:30:37    31e3d8a68ad8bf96af5dd9998c61476651abee1d

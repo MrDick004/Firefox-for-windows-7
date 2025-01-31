@@ -1,0 +1,512 @@
+diff --git a/gfx/webrender_bindings/RenderCompositor.cpp b/gfx/webrender_bindings/RenderCompositor.cpp
+index c562c734068f..1b8d4b6d2ac5 100644
+--- a/gfx/webrender_bindings/RenderCompositor.cpp
++++ b/gfx/webrender_bindings/RenderCompositor.cpp
+@@ -247,6 +247,7 @@ void RenderCompositor::GetWindowVisibility(WindowVisibility* aVisibility) {
+   if (!widget) {
+     return;
+   }
++  aVisibility->size_mode = ToWrWindowSizeMode(widget->GetWindowSizeMode());
+   aVisibility->is_fully_occluded = widget->GetWindowIsFullyOccluded();
+ #endif
+ }
+diff --git a/gfx/webrender_bindings/WebRenderTypes.h b/gfx/webrender_bindings/WebRenderTypes.h
+index 9053639bd1fc..9b0353ec1bf7 100644
+--- a/gfx/webrender_bindings/WebRenderTypes.h
++++ b/gfx/webrender_bindings/WebRenderTypes.h
+@@ -887,6 +887,22 @@ static inline wr::SyntheticItalics DegreesToSyntheticItalics(float aDegrees) {
+   return synthetic_italics;
+ }
+ 
++static inline wr::WindowSizeMode ToWrWindowSizeMode(nsSizeMode aSizeMode) {
++  switch (aSizeMode) {
++    case nsSizeMode_Normal:
++      return wr::WindowSizeMode::Normal;
++    case nsSizeMode_Minimized:
++      return wr::WindowSizeMode::Minimized;
++    case nsSizeMode_Maximized:
++      return wr::WindowSizeMode::Maximized;
++    case nsSizeMode_Fullscreen:
++      return wr::WindowSizeMode::Fullscreen;
++    default:
++      MOZ_ASSERT_UNREACHABLE("Tried to convert invalid size mode.");
++      return wr::WindowSizeMode::Invalid;
++  }
++}
++
+ static inline wr::APZScrollGeneration ToWrAPZScrollGeneration(
+     const mozilla::APZScrollGeneration& aGeneration) {
+   return wr::APZScrollGeneration(aGeneration.Raw());
+diff --git a/gfx/wr/webrender/src/composite.rs b/gfx/wr/webrender/src/composite.rs
+index a8792f5e556f..67241e674e69 100644
+--- a/gfx/wr/webrender/src/composite.rs
++++ b/gfx/wr/webrender/src/composite.rs
+@@ -1112,15 +1112,27 @@ impl Default for CompositorCapabilities {
+     }
+ }
+ 
++#[repr(C)]
++#[derive(Copy, Clone, Debug)]
++pub enum WindowSizeMode {
++    Normal,
++    Minimized,
++    Maximized,
++    Fullscreen,
++    Invalid,
++}
++
+ #[repr(C)]
+ #[derive(Copy, Clone, Debug)]
+ pub struct WindowVisibility {
++    pub size_mode: WindowSizeMode,
+     pub is_fully_occluded: bool,
+ }
+ 
+ impl Default for WindowVisibility {
+     fn default() -> Self {
+         WindowVisibility {
++            size_mode: WindowSizeMode::Normal,
+             is_fully_occluded: false,
+         }
+     }
+diff --git a/widget/windows/CompositorWidgetChild.cpp b/widget/windows/CompositorWidgetChild.cpp
+index 7044235ac11b..b294efef5162 100644
+--- a/widget/windows/CompositorWidgetChild.cpp
++++ b/widget/windows/CompositorWidgetChild.cpp
+@@ -20,11 +20,14 @@ CompositorWidgetChild::CompositorWidgetChild(
+     RefPtr<CompositorVsyncDispatcher> aVsyncDispatcher,
+     RefPtr<CompositorWidgetVsyncObserver> aVsyncObserver,
+     const CompositorWidgetInitData& aInitData)
+-    : mVsyncDispatcher(std::move(aVsyncDispatcher)),
+-      mVsyncObserver(std::move(aVsyncObserver)),
++    : mVsyncDispatcher(aVsyncDispatcher),
++      mVsyncObserver(aVsyncObserver),
+       mCompositorWnd(nullptr),
+       mWnd(reinterpret_cast<HWND>(
+-          aInitData.get_WinCompositorWidgetInitData().hWnd())) {
++          aInitData.get_WinCompositorWidgetInitData().hWnd())),
++      mTransparencyMode(
++          aInitData.get_WinCompositorWidgetInitData().transparencyMode()),
++      mRemoteBackbufferProvider() {
+   MOZ_ASSERT(XRE_IsParentProcess());
+   MOZ_ASSERT(!gfxPlatform::IsHeadless());
+   MOZ_ASSERT(mWnd && ::IsWindow(mWnd));
+@@ -34,7 +37,8 @@ CompositorWidgetChild::~CompositorWidgetChild() {}
+ 
+ bool CompositorWidgetChild::Initialize() {
+   mRemoteBackbufferProvider = std::make_unique<remote_backbuffer::Provider>();
+-  if (!mRemoteBackbufferProvider->Initialize(mWnd, OtherPid())) {
++  if (!mRemoteBackbufferProvider->Initialize(mWnd, OtherPid(),
++                                             mTransparencyMode)) {
+     return false;
+   }
+ 
+@@ -62,8 +66,17 @@ bool CompositorWidgetChild::OnWindowResize(const LayoutDeviceIntSize& aSize) {
+   return true;
+ }
+ 
+-void CompositorWidgetChild::NotifyVisibilityUpdated(bool aIsFullyOccluded) {
+-  Unused << SendNotifyVisibilityUpdated(aIsFullyOccluded);
++void CompositorWidgetChild::OnWindowModeChange(nsSizeMode aSizeMode) {}
++
++void CompositorWidgetChild::UpdateTransparency(TransparencyMode aMode) {
++  mTransparencyMode = aMode;
++  mRemoteBackbufferProvider->UpdateTransparencyMode(aMode);
++  Unused << SendUpdateTransparency(aMode);
++}
++
++void CompositorWidgetChild::NotifyVisibilityUpdated(nsSizeMode aSizeMode,
++                                                    bool aIsFullyOccluded) {
++  Unused << SendNotifyVisibilityUpdated(aSizeMode, aIsFullyOccluded);
+ };
+ 
+ void CompositorWidgetChild::ClearTransparentWindow() {
+diff --git a/widget/windows/CompositorWidgetChild.h b/widget/windows/CompositorWidgetChild.h
+index cac048d68756..bec8ead98ead 100644
+--- a/widget/windows/CompositorWidgetChild.h
++++ b/widget/windows/CompositorWidgetChild.h
+@@ -33,9 +33,10 @@ class CompositorWidgetChild final : public PCompositorWidgetChild,
+   void LeavePresentLock() override;
+   void OnDestroyWindow() override;
+   bool OnWindowResize(const LayoutDeviceIntSize& aSize) override;
+-  void NotifyVisibilityUpdated(bool aIsFullyOccluded) override;
+-
+-  void UpdateTransparency(TransparencyMode) override {}
++  void OnWindowModeChange(nsSizeMode aSizeMode) override;
++  void UpdateTransparency(TransparencyMode aMode) override;
++  void NotifyVisibilityUpdated(nsSizeMode aSizeMode,
++                               bool aIsFullyOccluded) override;
+   void ClearTransparentWindow() override;
+ 
+   mozilla::ipc::IPCResult RecvObserveVsync() override;
+@@ -50,6 +51,7 @@ class CompositorWidgetChild final : public PCompositorWidgetChild,
+   HWND mCompositorWnd;
+ 
+   HWND mWnd;
++  TransparencyMode mTransparencyMode;
+ 
+   std::unique_ptr<remote_backbuffer::Provider> mRemoteBackbufferProvider;
+ };
+diff --git a/widget/windows/CompositorWidgetParent.cpp b/widget/windows/CompositorWidgetParent.cpp
+index 9addae9d8fd3..d38125f4caff 100644
+--- a/widget/windows/CompositorWidgetParent.cpp
++++ b/widget/windows/CompositorWidgetParent.cpp
+@@ -34,17 +34,25 @@ CompositorWidgetParent::CompositorWidgetParent(
+                           aOptions),
+       mWnd(reinterpret_cast<HWND>(
+           aInitData.get_WinCompositorWidgetInitData().hWnd())),
+-      mIsFullyOccluded(false) {
++      mTransparencyMode(uint32_t(
++          aInitData.get_WinCompositorWidgetInitData().transparencyMode())),
++      mSizeMode(nsSizeMode_Normal),
++      mIsFullyOccluded(false),
++      mRemoteBackbufferClient() {
+   MOZ_ASSERT(XRE_GetProcessType() == GeckoProcessType_GPU);
+   MOZ_ASSERT(mWnd && ::IsWindow(mWnd));
+ }
+ 
+-CompositorWidgetParent::~CompositorWidgetParent() = default;
++CompositorWidgetParent::~CompositorWidgetParent() {}
+ 
+ bool CompositorWidgetParent::Initialize(
+     const RemoteBackbufferHandles& aRemoteHandles) {
+   mRemoteBackbufferClient = std::make_unique<remote_backbuffer::Client>();
+-  return mRemoteBackbufferClient->Initialize(aRemoteHandles);
++  if (!mRemoteBackbufferClient->Initialize(aRemoteHandles)) {
++    return false;
++  }
++
++  return true;
+ }
+ 
+ bool CompositorWidgetParent::PreRender(WidgetRenderingContext* aContext) {
+@@ -128,12 +136,23 @@ mozilla::ipc::IPCResult CompositorWidgetParent::RecvLeavePresentLock() {
+   return IPC_OK();
+ }
+ 
++mozilla::ipc::IPCResult CompositorWidgetParent::RecvUpdateTransparency(
++    const TransparencyMode& aMode) {
++  mTransparencyMode = uint32_t(aMode);
++  return IPC_OK();
++}
++
+ mozilla::ipc::IPCResult CompositorWidgetParent::RecvNotifyVisibilityUpdated(
+-    const bool& aIsFullyOccluded) {
++    const nsSizeMode& aSizeMode, const bool& aIsFullyOccluded) {
++  mSizeMode = aSizeMode;
+   mIsFullyOccluded = aIsFullyOccluded;
+   return IPC_OK();
+ }
+ 
++nsSizeMode CompositorWidgetParent::GetWindowSizeMode() const {
++  return mSizeMode;
++}
++
+ bool CompositorWidgetParent::GetWindowIsFullyOccluded() const {
+   return mIsFullyOccluded;
+ }
+diff --git a/widget/windows/CompositorWidgetParent.h b/widget/windows/CompositorWidgetParent.h
+index 9426c380934b..0f91fa7ccb3e 100644
+--- a/widget/windows/CompositorWidgetParent.h
++++ b/widget/windows/CompositorWidgetParent.h
+@@ -45,14 +45,17 @@ class CompositorWidgetParent final : public PCompositorWidgetParent,
+   bool InitCompositor(layers::Compositor* aCompositor) override;
+   bool IsHidden() const override;
+ 
++  nsSizeMode GetWindowSizeMode() const override;
+   bool GetWindowIsFullyOccluded() const override;
+ 
+   mozilla::ipc::IPCResult RecvInitialize(
+       const RemoteBackbufferHandles& aRemoteHandles) override;
+   mozilla::ipc::IPCResult RecvEnterPresentLock() override;
+   mozilla::ipc::IPCResult RecvLeavePresentLock() override;
++  mozilla::ipc::IPCResult RecvUpdateTransparency(
++      const TransparencyMode& aMode) override;
+   mozilla::ipc::IPCResult RecvNotifyVisibilityUpdated(
+-      const bool& aIsFullyOccluded) override;
++      const nsSizeMode& aSizeMode, const bool& aIsFullyOccluded) override;
+   mozilla::ipc::IPCResult RecvClearTransparentWindow() override;
+   void ActorDestroy(ActorDestroyReason aWhy) override;
+ 
+diff --git a/widget/windows/InProcessWinCompositorWidget.cpp b/widget/windows/InProcessWinCompositorWidget.cpp
+index 3abc62b67a32..de491b734b5e 100644
+--- a/widget/windows/InProcessWinCompositorWidget.cpp
++++ b/widget/windows/InProcessWinCompositorWidget.cpp
+@@ -77,6 +77,8 @@ bool InProcessWinCompositorWidget::OnWindowResize(
+   return true;
+ }
+ 
++void InProcessWinCompositorWidget::OnWindowModeChange(nsSizeMode aSizeMode) {}
++
+ bool InProcessWinCompositorWidget::PreRender(WidgetRenderingContext* aContext) {
+   // This can block waiting for WM_SETTEXT to finish
+   // Using PreRender is unnecessarily pessimistic because
+@@ -275,10 +277,16 @@ void InProcessWinCompositorWidget::UpdateTransparency(TransparencyMode aMode) {
+ }
+ 
+ void InProcessWinCompositorWidget::NotifyVisibilityUpdated(
+-    bool aIsFullyOccluded) {
++    nsSizeMode aSizeMode, bool aIsFullyOccluded) {
++  mSizeMode = aSizeMode;
+   mIsFullyOccluded = aIsFullyOccluded;
+ }
+ 
++nsSizeMode InProcessWinCompositorWidget::GetWindowSizeMode() const {
++  nsSizeMode sizeMode = mSizeMode;
++  return sizeMode;
++}
++
+ bool InProcessWinCompositorWidget::GetWindowIsFullyOccluded() const {
+   bool isFullyOccluded = mIsFullyOccluded;
+   return isFullyOccluded;
+diff --git a/widget/windows/InProcessWinCompositorWidget.h b/widget/windows/InProcessWinCompositorWidget.h
+index 794c61698720..e28720446129 100644
+--- a/widget/windows/InProcessWinCompositorWidget.h
++++ b/widget/windows/InProcessWinCompositorWidget.h
+@@ -45,8 +45,10 @@ class InProcessWinCompositorWidget final
+   void LeavePresentLock() override;
+   void OnDestroyWindow() override;
+   bool OnWindowResize(const LayoutDeviceIntSize& aSize) override;
++  void OnWindowModeChange(nsSizeMode aSizeMode) override;
+   void UpdateTransparency(TransparencyMode aMode) override;
+-  void NotifyVisibilityUpdated(bool aIsFullyOccluded) override;
++  void NotifyVisibilityUpdated(nsSizeMode aSizeMode,
++                               bool aIsFullyOccluded) override;
+   void ClearTransparentWindow() override;
+ 
+   bool RedrawTransparentWindow();
+@@ -60,6 +62,7 @@ class InProcessWinCompositorWidget final
+     return mTransparentSurfaceLock;
+   }
+ 
++  nsSizeMode GetWindowSizeMode() const override;
+   bool GetWindowIsFullyOccluded() const override;
+ 
+   void ObserveVsync(VsyncObserver* aObserver) override;
+@@ -90,6 +93,7 @@ class InProcessWinCompositorWidget final
+   mozilla::Mutex mTransparentSurfaceLock MOZ_UNANNOTATED;
+ 
+   // Visibility handling.
++  mozilla::Atomic<nsSizeMode, MemoryOrdering::Relaxed> mSizeMode;
+   mozilla::Atomic<bool, MemoryOrdering::Relaxed> mIsFullyOccluded;
+ 
+   RefPtr<gfxASurface> mTransparentSurface;
+diff --git a/widget/windows/PCompositorWidget.ipdl b/widget/windows/PCompositorWidget.ipdl
+index dae852bc9fc4..89ea575a471f 100644
+--- a/widget/windows/PCompositorWidget.ipdl
++++ b/widget/windows/PCompositorWidget.ipdl
+@@ -33,7 +33,8 @@ parent:
+   
+   sync EnterPresentLock();
+   sync LeavePresentLock();
+-  async NotifyVisibilityUpdated(bool aIsFullyOccluded);
++  async UpdateTransparency(TransparencyMode aMode);
++  async NotifyVisibilityUpdated(nsSizeMode aSizeMode, bool aIsFullyOccluded);
+   sync ClearTransparentWindow();
+   async __delete__();
+ 
+diff --git a/widget/windows/PlatformWidgetTypes.ipdlh b/widget/windows/PlatformWidgetTypes.ipdlh
+index 3045f350db85..67dd92b8025e 100644
+--- a/widget/windows/PlatformWidgetTypes.ipdlh
++++ b/widget/windows/PlatformWidgetTypes.ipdlh
+@@ -21,6 +21,7 @@ struct WinCompositorWidgetInitData
+   WindowsHandle hWnd;
+   uintptr_t widgetKey;
+   TransparencyMode transparencyMode;
++  nsSizeMode sizeMode;
+ };
+ 
+ union CompositorWidgetInitData
+diff --git a/widget/windows/RemoteBackbuffer.cpp b/widget/windows/RemoteBackbuffer.cpp
+index e743fd484668..c2e2ee10d018 100644
+--- a/widget/windows/RemoteBackbuffer.cpp
++++ b/widget/windows/RemoteBackbuffer.cpp
+@@ -253,7 +253,7 @@ class PresentableSharedImage {
+     return true;
+   }
+ 
+-  bool PresentToWindow(HWND aWindowHandle,
++  bool PresentToWindow(HWND aWindowHandle, TransparencyMode aTransparencyMode,
+                        Span<const IpcSafeRect> aDirtyRects) {
+     if (::GetWindowLongPtrW(aWindowHandle, GWL_EXSTYLE) & WS_EX_LAYERED) {
+       BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+@@ -382,7 +382,8 @@ Provider::~Provider() {
+   }
+ }
+ 
+-bool Provider::Initialize(HWND aWindowHandle, DWORD aTargetProcessId) {
++bool Provider::Initialize(HWND aWindowHandle, DWORD aTargetProcessId,
++                          TransparencyMode aTransparencyMode) {
+   MOZ_ASSERT(aWindowHandle);
+   MOZ_ASSERT(aTargetProcessId);
+ 
+@@ -434,7 +435,13 @@ bool Provider::Initialize(HWND aWindowHandle, DWORD aTargetProcessId) {
+       PR_USER_THREAD, [](void* p) { static_cast<Provider*>(p)->ThreadMain(); },
+       this, PR_PRIORITY_NORMAL, PR_GLOBAL_THREAD, PR_JOINABLE_THREAD,
+       0 /*default stack size*/);
+-  return !!mServiceThread;
++  if (!mServiceThread) {
++    return false;
++  }
++
++  mTransparencyMode = uint32_t(aTransparencyMode);
++
++  return true;
+ }
+ 
+ Maybe<RemoteBackbufferHandles> Provider::CreateRemoteHandles() {
+@@ -444,6 +451,10 @@ Maybe<RemoteBackbufferHandles> Provider::CreateRemoteHandles() {
+                               ipc::FileDescriptor(mResponseReadyEvent)));
+ }
+ 
++void Provider::UpdateTransparencyMode(TransparencyMode aTransparencyMode) {
++  mTransparencyMode = uint32_t(aTransparencyMode);
++}
++
+ void Provider::ThreadMain() {
+   AUTO_PROFILER_REGISTER_THREAD("RemoteBackbuffer");
+   NS_SetCurrentThreadName("RemoteBackbuffer");
+@@ -558,7 +569,8 @@ void Provider::HandlePresentRequest(const PresentRequestData& aRequestData,
+   }
+ 
+   if (!mBackbuffer->PresentToWindow(
+-          mWindowHandle, rectSpan.First(aRequestData.lenDirtyRects))) {
++          mWindowHandle, GetTransparencyMode(),
++          rectSpan.First(aRequestData.lenDirtyRects))) {
+     return;
+   }
+ 
+diff --git a/widget/windows/RemoteBackbuffer.h b/widget/windows/RemoteBackbuffer.h
+index b2a2e612317a..5899e809841d 100644
+--- a/widget/windows/RemoteBackbuffer.h
++++ b/widget/windows/RemoteBackbuffer.h
+@@ -30,10 +30,13 @@ class Provider {
+   Provider();
+   ~Provider();
+ 
+-  bool Initialize(HWND aWindowHandle, DWORD aTargetProcessId);
++  bool Initialize(HWND aWindowHandle, DWORD aTargetProcessId,
++                  TransparencyMode aTransparencyMode);
+ 
+   Maybe<RemoteBackbufferHandles> CreateRemoteHandles();
+ 
++  void UpdateTransparencyMode(TransparencyMode aTransparencyMode);
++
+   Provider(const Provider&) = delete;
+   Provider(Provider&&) = delete;
+   Provider& operator=(const Provider&) = delete;
+@@ -56,6 +59,10 @@ class Provider {
+   bool mStopServiceThread;
+   PRThread* mServiceThread;
+   std::unique_ptr<PresentableSharedImage> mBackbuffer;
++  mozilla::Atomic<uint32_t, MemoryOrdering::Relaxed> mTransparencyMode;
++  TransparencyMode GetTransparencyMode() const {
++    return TransparencyMode(uint32_t(mTransparencyMode));
++  }
+ };
+ 
+ class Client {
+diff --git a/widget/windows/WinCompositorWidget.h b/widget/windows/WinCompositorWidget.h
+index 16164d43c3a8..df5d443067b8 100644
+--- a/widget/windows/WinCompositorWidget.h
++++ b/widget/windows/WinCompositorWidget.h
+@@ -27,13 +27,15 @@ class PlatformCompositorWidgetDelegate : public CompositorWidgetDelegate {
+   virtual void LeavePresentLock() = 0;
+   virtual void OnDestroyWindow() = 0;
+   virtual bool OnWindowResize(const LayoutDeviceIntSize& aSize) = 0;
++  virtual void OnWindowModeChange(nsSizeMode aSizeMode) = 0;
+ 
+   // Transparency handling.
+   virtual void UpdateTransparency(TransparencyMode aMode) = 0;
+   virtual void ClearTransparentWindow() = 0;
+ 
+   // Deliver visibility info
+-  virtual void NotifyVisibilityUpdated(bool aIsFullyOccluded) = 0;
++  virtual void NotifyVisibilityUpdated(nsSizeMode aSizeMode,
++                                       bool aIsFullyOccluded) = 0;
+ 
+   // CompositorWidgetDelegate Overrides
+ 
+@@ -74,6 +76,7 @@ class WinCompositorWidget : public CompositorWidget {
+   bool HasFxrOutputHandler() const { return !!mFxrHandler; }
+   FxROutputHandler* GetFxrOutputHandler() const { return mFxrHandler.get(); }
+ 
++  virtual nsSizeMode GetWindowSizeMode() const = 0;
+   virtual bool GetWindowIsFullyOccluded() const = 0;
+ 
+   virtual void UpdateCompositorWnd(const HWND aCompositorWnd,
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 37b8c4885f0e..9a5d97371785 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -3863,7 +3863,7 @@ WindowRenderer* nsWindow::GetWindowRenderer() {
+     WinCompositorWidgetInitData initData(
+         reinterpret_cast<uintptr_t>(mWnd),
+         reinterpret_cast<uintptr_t>(static_cast<nsIWidget*>(this)),
+-        mTransparencyMode);
++        mTransparencyMode, mFrameState->GetSizeMode());
+     // If we're not using the compositor, the options don't actually matter.
+     CompositorOptions options(false, false);
+     mBasicLayersSurface =
+@@ -7003,6 +7003,18 @@ void nsWindow::OnSizeModeChange() {
+   if (NeedsToTrackWindowOcclusionState()) {
+     WinWindowOcclusionTracker::Get()->OnWindowVisibilityChanged(
+         this, mode != nsSizeMode_Minimized);
++
++    wr::DebugFlags flags{0};
++    flags._0 = gfx::gfxVars::WebRenderDebugFlags();
++    bool debugEnabled = bool(flags & wr::DebugFlags::WINDOW_VISIBILITY_DBG);
++    if (debugEnabled && mCompositorWidgetDelegate) {
++      mCompositorWidgetDelegate->NotifyVisibilityUpdated(mode,
++                                                         mIsFullyOccluded);
++    }
++  }
++
++  if (mCompositorWidgetDelegate) {
++    mCompositorWidgetDelegate->OnWindowModeChange(mode);
+   }
+ 
+   if (mWidgetListener) {
+@@ -8233,7 +8245,7 @@ void nsWindow::GetCompositorWidgetInitData(
+   *aInitData = WinCompositorWidgetInitData(
+       reinterpret_cast<uintptr_t>(mWnd),
+       reinterpret_cast<uintptr_t>(static_cast<nsIWidget*>(this)),
+-      mTransparencyMode);
++      mTransparencyMode, mFrameState->GetSizeMode());
+ }
+ 
+ bool nsWindow::SynchronouslyRepaintOnResize() {
+diff --git a/widget/windows/nsWindowGfx.cpp b/widget/windows/nsWindowGfx.cpp
+index a5a85b28c4fc..0467801a1539 100644
+--- a/widget/windows/nsWindowGfx.cpp
++++ b/widget/windows/nsWindowGfx.cpp
+@@ -377,7 +377,8 @@ void nsWindow::NotifyOcclusionState(mozilla::widget::OcclusionState aState) {
+   flags._0 = gfx::gfxVars::WebRenderDebugFlags();
+   bool debugEnabled = bool(flags & wr::DebugFlags::WINDOW_VISIBILITY_DBG);
+   if (debugEnabled && mCompositorWidgetDelegate) {
+-    mCompositorWidgetDelegate->NotifyVisibilityUpdated(mIsFullyOccluded);
++    mCompositorWidgetDelegate->NotifyVisibilityUpdated(
++        mFrameState->GetSizeMode(), mIsFullyOccluded);
+   }
+ 
+   if (mWidgetListener) {
+@@ -403,7 +404,8 @@ void nsWindow::MaybeEnableWindowOcclusion(bool aEnable) {
+       flags._0 = gfx::gfxVars::WebRenderDebugFlags();
+       bool debugEnabled = bool(flags & wr::DebugFlags::WINDOW_VISIBILITY_DBG);
+       if (debugEnabled && mCompositorWidgetDelegate) {
+-        mCompositorWidgetDelegate->NotifyVisibilityUpdated(mIsFullyOccluded);
++        mCompositorWidgetDelegate->NotifyVisibilityUpdated(
++            mFrameState->GetSizeMode(), mIsFullyOccluded);
+       }
+     }
+     return;
+@@ -423,7 +425,8 @@ void nsWindow::MaybeEnableWindowOcclusion(bool aEnable) {
+   flags._0 = gfx::gfxVars::WebRenderDebugFlags();
+   bool debugEnabled = bool(flags & wr::DebugFlags::WINDOW_VISIBILITY_DBG);
+   if (debugEnabled && mCompositorWidgetDelegate) {
+-    mCompositorWidgetDelegate->NotifyVisibilityUpdated(mIsFullyOccluded);
++    mCompositorWidgetDelegate->NotifyVisibilityUpdated(
++        mFrameState->GetSizeMode(), mIsFullyOccluded);
+   }
+ }
+ 

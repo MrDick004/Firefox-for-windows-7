@@ -1,0 +1,1 @@
+Bug 1846859 - Remove appearance: {checkbox,radio}-{label,container}. r=desktop-theme-reviewers,dao    2023-08-04 00:36:39    bdce6101d4747f2075ddbc5ec9f6ac25e429fae8

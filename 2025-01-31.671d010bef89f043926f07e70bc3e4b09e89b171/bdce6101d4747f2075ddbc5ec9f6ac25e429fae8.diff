@@ -1,0 +1,311 @@
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index c1dc017bd0c5..190468a1688c 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1508,6 +1508,18 @@ pub enum Appearance {
+     /// The progress bar's progress indicator
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Progresschunk,
++    /// A generic container that always repaints on state changes. This is a
++    /// hack to make XUL checkboxes and radio buttons work.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    CheckboxContainer,
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    RadioContainer,
++    /// The label part of a checkbox or radio button, used for painting a focus
++    /// outline.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    CheckboxLabel,
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    RadioLabel,
+     /// nsRangeFrame and its subparts
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Range,
+diff --git a/toolkit/themes/shared/checkbox.css b/toolkit/themes/shared/checkbox.css
+index 35539546e516..7f39159cb7e8 100644
+--- a/toolkit/themes/shared/checkbox.css
++++ b/toolkit/themes/shared/checkbox.css
+@@ -126,6 +126,8 @@ checkbox[native][disabled="true"] {
+ 
+ @media (-moz-platform: windows) or (-moz-platform: linux) {
+   checkbox[native]:focus-visible > .checkbox-label-box {
++    /* On Linux, native theming should take care of this but it appears to be
++     * broken with some Gtk themes. Bug 1312169. */
+     outline: var(--focus-outline);
+   }
+ }
+@@ -150,6 +152,14 @@ checkbox[native][disabled="true"] {
+ 
+ @media (-moz-platform: linux) {
+   checkbox:where([native]) {
++    appearance: auto;
++    -moz-default-appearance: checkbox-container;
+     margin: 2px 4px;
+   }
++
++  .checkbox-label-box[native] {
++    /* FIXME: Is this needed given the focus rules above? */
++    appearance: auto;
++    -moz-default-appearance: checkbox-label;
++  }
+ }
+diff --git a/toolkit/themes/shared/radio.css b/toolkit/themes/shared/radio.css
+index b1a393b480ad..181838861c6f 100644
+--- a/toolkit/themes/shared/radio.css
++++ b/toolkit/themes/shared/radio.css
+@@ -53,6 +53,8 @@ radio {
+ }
+ 
+ @media (-moz-platform: windows) or (-moz-platform: linux) {
++  /* On Linux, native theming should take care of this but it appears to be
++   * broken with some Gtk themes. Bug 1312169. */
+   radiogroup:focus-visible > radio[focused="true"] > .radio-label-box {
+     outline: var(--focus-outline);
+   }
+@@ -70,6 +72,14 @@ radio {
+   }
+ }
+ 
++@media (-moz-platform: linux) {
++  /* FIXME: Is this needed given the focused styles above? */
++  .radio-label-box {
++    appearance: auto;
++    -moz-default-appearance: radio-label;
++  }
++}
++
+ @media (-moz-platform: macos) {
+   .radio-label,
+   radiogroup {
+diff --git a/widget/cocoa/nsNativeThemeCocoa.mm b/widget/cocoa/nsNativeThemeCocoa.mm
+index 50be1f398f94..3085db0cf172 100644
+--- a/widget/cocoa/nsNativeThemeCocoa.mm
++++ b/widget/cocoa/nsNativeThemeCocoa.mm
+@@ -3207,6 +3207,7 @@ bool nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFra
+     case StyleAppearance::Tooltip:
+ 
+     case StyleAppearance::Checkbox:
++    case StyleAppearance::CheckboxContainer:
+     case StyleAppearance::Radio:
+     case StyleAppearance::MozMacHelpButton:
+     case StyleAppearance::MozMacDisclosureButtonOpen:
+diff --git a/widget/gtk/gtk3drawing.cpp b/widget/gtk/gtk3drawing.cpp
+index 142bfbc96d03..b9e927174ccf 100644
+--- a/widget/gtk/gtk3drawing.cpp
++++ b/widget/gtk/gtk3drawing.cpp
+@@ -1211,6 +1211,35 @@ static gint moz_gtk_combo_box_entry_button_paint(cairo_t* cr,
+   return MOZ_GTK_SUCCESS;
+ }
+ 
++static gint moz_gtk_container_paint(cairo_t* cr, GdkRectangle* rect,
++                                    GtkWidgetState* state,
++                                    WidgetNodeType widget_type,
++                                    GtkTextDirection direction) {
++  GtkStateFlags state_flags = GetStateFlagsFromGtkWidgetState(state);
++  GtkStyleContext* style =
++      GetStyleContext(widget_type, state->image_scale, direction, state_flags);
++  /* this is for drawing a prelight box */
++  if (state_flags & GTK_STATE_FLAG_PRELIGHT) {
++    gtk_render_background(style, cr, rect->x, rect->y, rect->width,
++                          rect->height);
++  }
++
++  return MOZ_GTK_SUCCESS;
++}
++
++static gint moz_gtk_toggle_label_paint(cairo_t* cr, GdkRectangle* rect,
++                                       GtkWidgetState* state, gboolean isradio,
++                                       GtkTextDirection direction) {
++  if (!state->focused) return MOZ_GTK_SUCCESS;
++
++  GtkStyleContext* style = GetStyleContext(
++      isradio ? MOZ_GTK_RADIOBUTTON_CONTAINER : MOZ_GTK_CHECKBUTTON_CONTAINER,
++      state->image_scale, direction, GetStateFlagsFromGtkWidgetState(state));
++  gtk_render_focus(style, cr, rect->x, rect->y, rect->width, rect->height);
++
++  return MOZ_GTK_SUCCESS;
++}
++
+ static gint moz_gtk_toolbar_paint(cairo_t* cr, GdkRectangle* rect,
+                                   GtkWidgetState* state,
+                                   GtkTextDirection direction) {
+@@ -1855,6 +1884,18 @@ gint moz_gtk_get_widget_border(WidgetNodeType widget, gint* left, gint* top,
+     case MOZ_GTK_FRAME:
+       w = GetWidget(MOZ_GTK_FRAME);
+       break;
++    case MOZ_GTK_CHECKBUTTON_CONTAINER:
++    case MOZ_GTK_RADIOBUTTON_CONTAINER: {
++      w = GetWidget(widget);
++      if (w) {
++        style = gtk_widget_get_style_context(w);
++
++        *left = *top = *right = *bottom =
++            gtk_container_get_border_width(GTK_CONTAINER(w));
++        moz_gtk_add_border_padding(style, left, top, right, bottom);
++      }
++      return MOZ_GTK_SUCCESS;
++    }
+     case MOZ_GTK_TOOLTIP: {
+       // In GTK 3 there are 6 pixels of additional margin around the box.
+       // See details there:
+@@ -1889,6 +1930,8 @@ gint moz_gtk_get_widget_border(WidgetNodeType widget, gint* left, gint* top,
+       return MOZ_GTK_SUCCESS;
+     }
+     /* These widgets have no borders, since they are not containers. */
++    case MOZ_GTK_CHECKBUTTON_LABEL:
++    case MOZ_GTK_RADIOBUTTON_LABEL:
+     case MOZ_GTK_SPLITTER_HORIZONTAL:
+     case MOZ_GTK_SPLITTER_VERTICAL:
+     case MOZ_GTK_CHECKBUTTON:
+@@ -2348,6 +2391,13 @@ gint moz_gtk_widget_paint(WidgetNodeType widget, cairo_t* cr,
+       return moz_gtk_text_view_paint(cr, rect, state, direction);
+     case MOZ_GTK_DROPDOWN:
+       return moz_gtk_combo_box_paint(cr, rect, state, direction);
++    case MOZ_GTK_CHECKBUTTON_CONTAINER:
++    case MOZ_GTK_RADIOBUTTON_CONTAINER:
++      return moz_gtk_container_paint(cr, rect, state, widget, direction);
++    case MOZ_GTK_CHECKBUTTON_LABEL:
++    case MOZ_GTK_RADIOBUTTON_LABEL:
++      return moz_gtk_toggle_label_paint(
++          cr, rect, state, (widget == MOZ_GTK_RADIOBUTTON_LABEL), direction);
+     case MOZ_GTK_TOOLBAR:
+       return moz_gtk_toolbar_paint(cr, rect, state, direction);
+     case MOZ_GTK_TOOLBAR_SEPARATOR:
+diff --git a/widget/gtk/gtkdrawing.h b/widget/gtk/gtkdrawing.h
+index 3b342412c675..24c7ab81143b 100644
+--- a/widget/gtk/gtkdrawing.h
++++ b/widget/gtk/gtkdrawing.h
+@@ -130,11 +130,15 @@ enum WidgetNodeType : int {
+   MOZ_GTK_CHECKBUTTON_CONTAINER,
+   /* Paints a GtkCheckButton. flags is a boolean, 1=checked, 0=not checked. */
+   MOZ_GTK_CHECKBUTTON,
++  /* Paints the label of a GtkCheckButton (focus outline) */
++  MOZ_GTK_CHECKBUTTON_LABEL,
+ 
+   /* Paints the container part of a GtkRadioButton. */
+   MOZ_GTK_RADIOBUTTON_CONTAINER,
+   /* Paints a GtkRadioButton. flags is a boolean, 1=checked, 0=not checked. */
+   MOZ_GTK_RADIOBUTTON,
++  /* Paints the label of a GtkRadioButton (focus outline) */
++  MOZ_GTK_RADIOBUTTON_LABEL,
+   /* Vertical GtkScrollbar counterparts */
+   MOZ_GTK_SCROLLBAR_VERTICAL,
+   MOZ_GTK_SCROLLBAR_CONTENTS_VERTICAL,
+diff --git a/widget/gtk/nsNativeThemeGTK.cpp b/widget/gtk/nsNativeThemeGTK.cpp
+index d8efdc3252e8..64f8136218a5 100644
+--- a/widget/gtk/nsNativeThemeGTK.cpp
++++ b/widget/gtk/nsNativeThemeGTK.cpp
+@@ -272,10 +272,10 @@ bool nsNativeThemeGTK::GetGtkWidgetAndState(StyleAppearance aAppearance,
+       aGtkWidgetType = MOZ_GTK_TOOLBAR_BUTTON;
+       break;
+     case StyleAppearance::Checkbox:
+-      aGtkWidgetType = MOZ_GTK_CHECKBUTTON;
+-      break;
+     case StyleAppearance::Radio:
+-      aGtkWidgetType = MOZ_GTK_RADIOBUTTON;
++      aGtkWidgetType = (aAppearance == StyleAppearance::Radio)
++                           ? MOZ_GTK_RADIOBUTTON
++                           : MOZ_GTK_CHECKBUTTON;
+       break;
+     case StyleAppearance::Spinner:
+       aGtkWidgetType = MOZ_GTK_SPINBUTTON;
+@@ -392,6 +392,18 @@ bool nsNativeThemeGTK::GetGtkWidgetAndState(StyleAppearance aAppearance,
+           *aWidgetFlags = GTK_ARROW_LEFT;
+       }
+       break;
++    case StyleAppearance::CheckboxContainer:
++      aGtkWidgetType = MOZ_GTK_CHECKBUTTON_CONTAINER;
++      break;
++    case StyleAppearance::RadioContainer:
++      aGtkWidgetType = MOZ_GTK_RADIOBUTTON_CONTAINER;
++      break;
++    case StyleAppearance::CheckboxLabel:
++      aGtkWidgetType = MOZ_GTK_CHECKBUTTON_LABEL;
++      break;
++    case StyleAppearance::RadioLabel:
++      aGtkWidgetType = MOZ_GTK_RADIOBUTTON_LABEL;
++      break;
+     case StyleAppearance::Toolbar:
+       aGtkWidgetType = MOZ_GTK_TOOLBAR;
+       break;
+@@ -1152,6 +1164,10 @@ LayoutDeviceIntSize nsNativeThemeGTK::GetMinimumWidgetSize(
+       result.height = metrics->minSizeWithBorder.height;
+       break;
+     }
++    case StyleAppearance::CheckboxContainer:
++    case StyleAppearance::RadioContainer:
++    case StyleAppearance::CheckboxLabel:
++    case StyleAppearance::RadioLabel:
+     case StyleAppearance::Button:
+     case StyleAppearance::Menulist:
+     case StyleAppearance::MenulistButton:
+@@ -1359,6 +1375,10 @@ nsNativeThemeGTK::ThemeSupportsWidget(nsPresContext* aPresContext,
+     case StyleAppearance::Textarea:
+     case StyleAppearance::Range:
+     case StyleAppearance::RangeThumb:
++    case StyleAppearance::CheckboxContainer:
++    case StyleAppearance::RadioContainer:
++    case StyleAppearance::CheckboxLabel:
++    case StyleAppearance::RadioLabel:
+     case StyleAppearance::Splitter:
+     case StyleAppearance::MozWindowButtonClose:
+     case StyleAppearance::MozWindowButtonMinimize:
+diff --git a/widget/nsNativeTheme.cpp b/widget/nsNativeTheme.cpp
+index 55393736ba31..0b2bcbb7b05f 100644
+--- a/widget/nsNativeTheme.cpp
++++ b/widget/nsNativeTheme.cpp
+@@ -51,20 +51,24 @@ NS_IMPL_ISUPPORTS(nsNativeTheme, nsITimerCallback, nsINamed)
+ 
+   const bool isXULElement = frameContent->IsXULElement();
+   if (isXULElement) {
+-    if (aAppearance == StyleAppearance::Checkbox ||
+-        aAppearance == StyleAppearance::Radio ||
+-        aAppearance == StyleAppearance::ToolbarbuttonDropdown ||
+-        aAppearance == StyleAppearance::Treeheadersortarrow ||
+-        aAppearance == StyleAppearance::ButtonArrowPrevious ||
+-        aAppearance == StyleAppearance::ButtonArrowNext ||
+-        aAppearance == StyleAppearance::ButtonArrowUp ||
+-#ifdef MOZ_WIDGET_GTK
+-        aAppearance == StyleAppearance::MozWindowButtonClose ||
+-        aAppearance == StyleAppearance::MozWindowButtonMinimize ||
+-        aAppearance == StyleAppearance::MozWindowButtonRestore ||
+-        aAppearance == StyleAppearance::MozWindowButtonMaximize ||
+-#endif
+-        aAppearance == StyleAppearance::ButtonArrowDown) {
++    if (aAppearance == StyleAppearance::CheckboxLabel ||
++        aAppearance == StyleAppearance::RadioLabel) {
++      aFrame = aFrame->GetParent()->GetParent();
++      frameContent = aFrame->GetContent();
++    } else if (aAppearance == StyleAppearance::Checkbox ||
++               aAppearance == StyleAppearance::Radio ||
++               aAppearance == StyleAppearance::ToolbarbuttonDropdown ||
++               aAppearance == StyleAppearance::Treeheadersortarrow ||
++               aAppearance == StyleAppearance::ButtonArrowPrevious ||
++               aAppearance == StyleAppearance::ButtonArrowNext ||
++               aAppearance == StyleAppearance::ButtonArrowUp ||
++#ifdef MOZ_WIDGET_GTK
++               aAppearance == StyleAppearance::MozWindowButtonClose ||
++               aAppearance == StyleAppearance::MozWindowButtonMinimize ||
++               aAppearance == StyleAppearance::MozWindowButtonRestore ||
++               aAppearance == StyleAppearance::MozWindowButtonMaximize ||
++#endif
++               aAppearance == StyleAppearance::ButtonArrowDown) {
+       aFrame = aFrame->GetParent();
+       frameContent = aFrame->GetContent();
+     }
+@@ -83,6 +87,7 @@ NS_IMPL_ISUPPORTS(nsNativeTheme, nsITimerCallback, nsINamed)
+   }
+ 
+   switch (aAppearance) {
++    case StyleAppearance::RadioLabel:
+     case StyleAppearance::Radio: {
+       if (CheckBooleanAttr(aFrame, nsGkAtoms::focused)) {
+         flags |= ElementState::FOCUS;
+@@ -98,6 +103,7 @@ NS_IMPL_ISUPPORTS(nsNativeTheme, nsITimerCallback, nsINamed)
+       }
+       break;
+     }
++    case StyleAppearance::CheckboxLabel:
+     case StyleAppearance::Checkbox: {
+       if (CheckBooleanAttr(aFrame, nsGkAtoms::checked)) {
+         flags |= ElementState::CHECKED;

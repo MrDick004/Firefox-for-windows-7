@@ -1,0 +1,1 @@
+Bug 1940772 - Ensure initial window size respects DPI r=gsvelto    2025-01-16 22:39:07    98437d6531832bb6c0faac861bd43edcc3942416

@@ -1,0 +1,1 @@
+Bug 1842497 - Unship all Universal CRT DLLs. r=firefox-build-system-reviewers,glandium    2023-07-15 20:29:51    8a2697f3f10228ec9d11df74aea49b202e622755

@@ -1,0 +1,54 @@
+
+
+diff --git a/widget/windows/ToastNotification.cpp b/widget/windows/ToastNotification.cpp
+index c3ccdb2dcf8b7..ea8ea99e418de 100644
+--- a/widget/windows/ToastNotification.cpp
++++ b/widget/windows/ToastNotification.cpp
+@@ -133,16 +133,24 @@ bool ToastNotification::EnsureAumidRegistered() {
+ }
+ 
+ bool ToastNotification::AssignIfMsixAumid(Maybe<nsAutoString>& aAumid) {
++  // `GetCurrentApplicationUserModelId` added in Windows 8.
++  DynamicallyLinkedFunctionPtr<decltype(&GetCurrentApplicationUserModelId)>
++      pGetCurrentApplicationUserModelId(L"kernel32.dll",
++                                        "GetCurrentApplicationUserModelId");
++  if (!pGetCurrentApplicationUserModelId) {
++    return false;
++  }
++
+   UINT32 len = 0;
+   // ERROR_INSUFFICIENT_BUFFER signals that we're in an MSIX package, and
+   // therefore should use the package's AUMID.
+-  if (GetCurrentApplicationUserModelId(&len, nullptr) !=
++  if (pGetCurrentApplicationUserModelId(&len, nullptr) !=
+       ERROR_INSUFFICIENT_BUFFER) {
+     MOZ_LOG(sWASLog, LogLevel::Debug, ("Not an MSIX package"));
+     return false;
+   }
+   mozilla::Buffer<wchar_t> buffer(len);
+-  LONG success = GetCurrentApplicationUserModelId(&len, buffer.Elements());
++  LONG success = pGetCurrentApplicationUserModelId(&len, buffer.Elements());
+   NS_ENSURE_TRUE(success == ERROR_SUCCESS, false);
+ 
+   aAumid.emplace(buffer.Elements());
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index baf5d606e5b2b..5f6e24e4516ec 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -1113,8 +1113,14 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
+         // that we can explicitly assign to a regular window.
+         UINT32 maxLength = MAX_PATH;
+         aumid.SetLength(maxLength);
+-        Unused << NS_WARN_IF(
+-            GetCurrentApplicationUserModelId(&maxLength, aumid.get()));
++        // `GetCurrentApplicationUserModelId` added in Windows 8.
++        DynamicallyLinkedFunctionPtr<decltype(&GetCurrentApplicationUserModelId)>
++            pGetCurrentApplicationUserModelId(L"kernel32.dll",
++                                              "GetCurrentApplicationUserModelId");
++        if (pGetCurrentApplicationUserModelId) {
++          Unused << NS_WARN_IF(
++              pGetCurrentApplicationUserModelId(&maxLength, aumid.get()));
++        }
+       }
+       if (!FAILED(InitPropVariantFromString(aumid.get(), &pv))) {
+         if (!FAILED(pPropStore->SetValue(PKEY_AppUserModel_ID, pv))) {

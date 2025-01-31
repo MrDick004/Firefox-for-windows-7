@@ -1,0 +1,1 @@
+Bug 1922250 - Do not force-clear the nc-area after consuming the skeleton UI window. r=win-reviewers,rkraesig    2024-10-16 20:13:53    f42eddc8ca01cf282a3d08ceed970feba01b9f26

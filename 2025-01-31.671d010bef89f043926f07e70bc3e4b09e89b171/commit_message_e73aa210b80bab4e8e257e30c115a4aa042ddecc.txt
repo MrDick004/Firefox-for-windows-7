@@ -1,0 +1,1 @@
+Bug 1922278 - Remove unexpected redundant D3D texture copy r=gfx-reviewers,aosmond a=dsmith    2024-10-04 02:03:51    e73aa210b80bab4e8e257e30c115a4aa042ddecc

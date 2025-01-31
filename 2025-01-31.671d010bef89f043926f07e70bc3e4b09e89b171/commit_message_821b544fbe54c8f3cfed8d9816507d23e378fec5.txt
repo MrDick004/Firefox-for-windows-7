@@ -1,0 +1,1 @@
+Bug 1930292 - Turn chromemargin into a boolean attribute. r=win-reviewers,desktop-theme-reviewers,pip-reviewers,firefox-desktop-core-reviewers ,dao,mconley,rkraesig    2024-11-28 20:12:50    821b544fbe54c8f3cfed8d9816507d23e378fec5

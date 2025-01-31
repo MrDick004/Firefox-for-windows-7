@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from toolkit/crashreporter/. r=gsvelto     2023-07-26 16:52:52    e17377d5568abd4d79d36f8efffbe7003193c324

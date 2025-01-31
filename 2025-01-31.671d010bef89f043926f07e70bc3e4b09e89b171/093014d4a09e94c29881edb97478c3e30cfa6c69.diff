@@ -1,0 +1,457 @@
+diff --git a/accessible/tests/browser/bounds/browser_caret_rect.js b/accessible/tests/browser/bounds/browser_caret_rect.js
+index 45ed9443ef6b7..9f5cac33a513e 100644
+--- a/accessible/tests/browser/bounds/browser_caret_rect.js
++++ b/accessible/tests/browser/bounds/browser_caret_rect.js
+@@ -120,8 +120,8 @@ addAccessibleTask(
+     info("Showing title bar");
+     let titleBarChanged = BrowserTestUtils.waitForMutationCondition(
+       document.documentElement,
+-      { attributes: true, attributeFilter: ["customtitlebar"] },
+-      () => !document.documentElement.hasAttribute("customtitlebar")
++      { attributes: true, attributeFilter: ["tabsintitlebar"] },
++      () => !document.documentElement.hasAttribute("tabsintitlebar")
+     );
+     await SpecialPowers.pushPrefEnv({
+       set: [["browser.tabs.inTitlebar", false]],
+diff --git a/browser/base/content/browser-init.js b/browser/base/content/browser-init.js
+index 0287f3c8ef0e1..7aa16be1cb8db 100644
+--- a/browser/base/content/browser-init.js
++++ b/browser/base/content/browser-init.js
+@@ -102,13 +102,13 @@ var gBrowserInit = {
+       toolbarMenubar.setAttribute("data-l10n-attrs", "toolbarname");
+     }
+ 
+-    // Run menubar initialization first, to avoid CustomTitlebar code picking
++    // Run menubar initialization first, to avoid TabsInTitlebar code picking
+     // up mutations from it and causing a reflow.
+     AutoHideMenubar.init();
+     // Update the customtitlebar attribute so the window can be sized
+     // correctly.
+     window.TabBarVisibility.update();
+-    CustomTitlebar.init();
++    TabsInTitlebar.init();
+ 
+     new LightweightThemeConsumer(document);
+ 
+@@ -1025,7 +1025,7 @@ var gBrowserInit = {
+   onUnload() {
+     gUIDensity.uninit();
+ 
+-    CustomTitlebar.uninit();
++    TabsInTitlebar.uninit();
+ 
+     ToolbarIconColor.uninit();
+ 
+diff --git a/browser/base/content/browser-customtitlebar.js b/browser/base/content/browser-tabsintitlebar.js
+similarity index 88%
+rename from browser/base/content/browser-customtitlebar.js
+rename to browser/base/content/browser-tabsintitlebar.js
+index 525c7baf3fcde..5cdc1849aaa25 100644
+--- a/browser/base/content/browser-customtitlebar.js
++++ b/browser/base/content/browser-tabsintitlebar.js
+@@ -3,7 +3,7 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+-var CustomTitlebar = {
++var TabsInTitlebar = {
+   init() {
+     this._readPref();
+     Services.prefs.addObserver(this._prefName, this);
+@@ -40,7 +40,7 @@ var CustomTitlebar = {
+   },
+ 
+   get enabled() {
+-    return document.documentElement.getAttribute("customtitlebar") == "true";
++    return document.documentElement.getAttribute("tabsintitlebar") == "true";
+   },
+ 
+   observe(subject, topic) {
+@@ -68,18 +68,20 @@ var CustomTitlebar = {
+       !window.fullScreen &&
+       !Object.keys(this._disallowed).length;
+     if (allowed) {
++      document.documentElement.setAttribute("tabsintitlebar", "true");
+       document.documentElement.setAttribute("customtitlebar", "true");
+       if (AppConstants.platform == "macosx") {
+         document.documentElement.removeAttribute("drawtitle");
+       }
+     } else {
++      document.documentElement.removeAttribute("tabsintitlebar");
+       document.documentElement.removeAttribute("customtitlebar");
+       if (AppConstants.platform == "macosx") {
+         document.documentElement.setAttribute("drawtitle", "true");
+       }
+     }
+ 
+-    ToolbarIconColor.inferFromText("customtitlebar", allowed);
++    ToolbarIconColor.inferFromText("tabsintitlebar", allowed);
+     TabBarVisibility.update(true);
+   },
+ 
+diff --git a/browser/base/content/browser.js b/browser/base/content/browser.js
+index 8919cae65b203..f2a01380d6b48 100644
+--- a/browser/base/content/browser.js
++++ b/browser/base/content/browser.js
+@@ -6642,7 +6642,7 @@ var ToolbarIconColor = {
+   _windowState: {
+     active: false,
+     fullscreen: false,
+-    customtitlebar: false,
++    tabsintitlebar: false,
+   },
+   init() {
+     this._initialized = true;
+@@ -6709,8 +6709,8 @@ var ToolbarIconColor = {
+       case "toolbarvisibilitychange":
+         // toolbar changes dont require reset of the cached color values
+         break;
+-      case "customtitlebar":
+-        this._windowState.customtitlebar = reasonValue;
++      case "tabsintitlebar":
++        this._windowState.tabsintitlebar = reasonValue;
+         break;
+     }
+ 
+diff --git a/browser/base/content/browser.xhtml b/browser/base/content/browser.xhtml
+index 08244035de146..a4c028fa3caa8 100644
+--- a/browser/base/content/browser.xhtml
++++ b/browser/base/content/browser.xhtml
+@@ -18,6 +18,7 @@
+         data-l10n-args="{&quot;content-title&quot;:&quot;CONTENTTITLE&quot;,&quot;profile-name&quot;:&quot;PROFILENAME&quot;}"
+         data-l10n-attrs="data-content-title-default, data-content-title-private, data-title-default, data-title-private, data-content-title-default-with-profile, data-content-title-private-with-profile, data-title-default-with-profile, data-title-private-with-profile"
+         customtitlebar="true"
++        tabsintitlebar="true"
+         windowtype="navigator:browser"
+         macanimationtype="document"
+         macnativefullscreen="true"
+@@ -113,7 +114,7 @@
+   }
+   Services.scriptloader.loadSubScript("chrome://browser/content/browser-pageActions.js", this);
+   Services.scriptloader.loadSubScript("chrome://browser/content/sidebar/browser-sidebar.js", this);
+-  Services.scriptloader.loadSubScript("chrome://browser/content/browser-customtitlebar.js", this);
++  Services.scriptloader.loadSubScript("chrome://browser/content/browser-tabsintitlebar.js", this);
+   Services.scriptloader.loadSubScript("chrome://browser/content/browser-unified-extensions.js", this);
+   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/tab.js", this);
+   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/tabbrowser.js", this);
+diff --git a/browser/base/jar.mn b/browser/base/jar.mn
+index 824c5df20ee13..9ba15b559993a 100644
+--- a/browser/base/jar.mn
++++ b/browser/base/jar.mn
+@@ -59,7 +59,7 @@ browser.jar:
+         content/browser/browser-sitePermissionPanel.js      (content/browser-sitePermissionPanel.js)
+         content/browser/browser-siteProtections.js          (content/browser-siteProtections.js)
+         content/browser/browser-sync.js                     (content/browser-sync.js)
+-        content/browser/browser-customtitlebar.js           (content/browser-customtitlebar.js)
++        content/browser/browser-tabsintitlebar.js           (content/browser-tabsintitlebar.js)
+         content/browser/browser-toolbarKeyNav.js            (content/browser-toolbarKeyNav.js)
+         content/browser/browser-thumbnails.js               (content/browser-thumbnails.js)
+         content/browser/browser-unified-extensions.js       (content/browser-unified-extensions.js)
+diff --git a/browser/components/customizableui/CustomizeMode.sys.mjs b/browser/components/customizableui/CustomizeMode.sys.mjs
+index e394f5c82e047..5566ac13904ed 100644
+--- a/browser/components/customizableui/CustomizeMode.sys.mjs
++++ b/browser/components/customizableui/CustomizeMode.sys.mjs
+@@ -1674,7 +1674,7 @@ CustomizeMode.prototype = {
+   },
+ 
+   _canDrawInTitlebar() {
+-    return this.window.CustomTitlebar.systemSupported;
++    return this.window.TabsInTitlebar.systemSupported;
+   },
+ 
+   _ensureCustomizationPanels() {
+diff --git a/browser/components/customizableui/test/browser_970511_undo_restore_default.js b/browser/components/customizableui/test/browser_970511_undo_restore_default.js
+index b97bb47a69bc3..5477b41b803ec 100644
+--- a/browser/components/customizableui/test/browser_970511_undo_restore_default.js
++++ b/browser/components/customizableui/test/browser_970511_undo_restore_default.js
+@@ -143,9 +143,9 @@ add_task(async function () {
+ // Bug 971626 - Restore Defaults should collapse the Title Bar
+ add_task(async function () {
+   {
+-    const supported = CustomTitlebar.systemSupported;
++    const supported = TabsInTitlebar.systemSupported;
+     is(typeof supported, "boolean");
+-    info("CustomTitlebar support: " + supported);
++    info("TabsInTitlebar support: " + supported);
+     if (!supported) {
+       return;
+     }
+diff --git a/browser/components/customizableui/test/browser_customization_context_menus.js b/browser/components/customizableui/test/browser_customization_context_menus.js
+index 70f5dc36f632b..690a5936a667f 100644
+--- a/browser/components/customizableui/test/browser_customization_context_menus.js
++++ b/browser/components/customizableui/test/browser_customization_context_menus.js
+@@ -92,7 +92,7 @@ add_task(async function tabstrip_context() {
+ // Right-click on the title bar spacer before the tabstrip should show a
+ // context menu without options to move it and no tab-specific options.
+ add_task(async function titlebar_spacer_context() {
+-  if (!CustomTitlebar.enabled) {
++  if (!TabsInTitlebar.enabled) {
+     info("Skipping test that requires tabs in the title bar.");
+     return;
+   }
+diff --git a/browser/components/sidebar/tests/browser/browser_vertical_tabs.js b/browser/components/sidebar/tests/browser/browser_vertical_tabs.js
+index 12b18469d99c2..8ffeb3c694701 100644
+--- a/browser/components/sidebar/tests/browser/browser_vertical_tabs.js
++++ b/browser/components/sidebar/tests/browser/browser_vertical_tabs.js
+@@ -46,13 +46,13 @@ function getExpectedElements(win, tabstripOrientation = "horizontal") {
+   const sizeMode = win.document.documentElement.getAttribute("sizemode");
+   let selectors;
+ 
+-  // NOTE: CustomTitlebar behaviour isn't under test here. We just want to assert on
++  // NOTE: TabsInTitlebar behaviour isn't under test here. We just want to assert on
+   // the right stuff being visible whatever the case for the given window.
+ 
+   if (tabstripOrientation == "horizontal") {
+     selectors = ["#TabsToolbar"];
+ 
+-    if (win.CustomTitlebar.enabled) {
++    if (win.TabsInTitlebar.enabled) {
+       selectors.push("#TabsToolbar .titlebar-buttonbox-container");
+       if (sizeMode == "normal") {
+         selectors.push("#TabsToolbar .titlebar-spacer");
+@@ -62,7 +62,7 @@ function getExpectedElements(win, tabstripOrientation = "horizontal") {
+   }
+ 
+   selectors = ["#vertical-tabs"];
+-  if (win.CustomTitlebar.enabled) {
++  if (win.TabsInTitlebar.enabled) {
+     selectors.push("#nav-bar .titlebar-buttonbox-container");
+   }
+   return selectors;
+@@ -89,7 +89,7 @@ add_task(async function test_toggle_vertical_tabs() {
+   );
+   info(`sizemode: ${document.documentElement.getAttribute("sizemode")}`);
+   info(
+-    `customtitlebar: ${document.documentElement.getAttribute("customtitlebar")}`
++    `tabsintitlebar: ${document.documentElement.getAttribute("tabsintitlebar")}`
+   );
+ 
+   const expectedElementsWhenHorizontal = getExpectedElements(
+diff --git a/browser/components/tabbrowser/content/tabbrowser.js b/browser/components/tabbrowser/content/tabbrowser.js
+index 6d797351e9452..e8da9e12af864 100644
+--- a/browser/components/tabbrowser/content/tabbrowser.js
++++ b/browser/components/tabbrowser/content/tabbrowser.js
+@@ -8089,27 +8089,27 @@ var TabBarVisibility = {
+     }
+ 
+     if (nonPopupWithVerticalTabs) {
+-      // CustomTitlebar decides if we can draw within the titlebar area.
++      // TabsInTitlebar decides if we can draw within the titlebar area.
+       // In vertical tabs mode, the toolbar with the horizontal tabstrip gets hidden
+       // and the navbar becomes a titlebar.
+       hideTabstrip = true;
+-      CustomTitlebar.allowedBy("tabs-visible", true);
++      TabsInTitlebar.allowedBy("tabs-visible", true);
+     } else {
+-      CustomTitlebar.allowedBy("tabs-visible", !hideTabstrip);
++      TabsInTitlebar.allowedBy("tabs-visible", !hideTabstrip);
+     }
+ 
+     gNavToolbox.toggleAttribute("tabs-hidden", hideTabstrip);
+     // Should the nav-bar look and function like a titlebar?
+     navbar.classList.toggle(
+       "browser-titlebar",
+-      CustomTitlebar.enabled && hideTabstrip
++      TabsInTitlebar.enabled && hideTabstrip
+     );
+ 
+     document
+       .getElementById("browser")
+       .classList.toggle(
+         "browser-toolbox-background",
+-        CustomTitlebar.enabled && nonPopupWithVerticalTabs
++        TabsInTitlebar.enabled && nonPopupWithVerticalTabs
+       );
+ 
+     if (
+diff --git a/browser/components/tabbrowser/content/tabs.js b/browser/components/tabbrowser/content/tabs.js
+index bd1aeb2244767..b7ba7f5a71635 100644
+--- a/browser/components/tabbrowser/content/tabs.js
++++ b/browser/components/tabbrowser/content/tabs.js
+@@ -344,7 +344,7 @@
+       // When the tabbar has an unified appearance with the titlebar
+       // and menubar, a double-click in it should have the same behavior
+       // as double-clicking the titlebar
+-      if (CustomTitlebar.enabled && !this.verticalMode) {
++      if (TabsInTitlebar.enabled && !this.verticalMode) {
+         return;
+       }
+ 
+diff --git a/browser/themes/linux/browser.css b/browser/themes/linux/browser.css
+index dc95772553ef7..a9276a678f16a 100644
+--- a/browser/themes/linux/browser.css
++++ b/browser/themes/linux/browser.css
+@@ -34,7 +34,7 @@
+  * (in X11) or the compositor (in Wayland) does draw the shadow corners
+  * already.
+  */
+-:root[customtitlebar] {
++:root[tabsintitlebar] {
+   background-color: transparent;
+ 
+   &[sizemode="normal"]:not([gtktiledwindow="true"]) {
+diff --git a/browser/themes/shared/browser-colors.css b/browser/themes/shared/browser-colors.css
+index 2280469351787..f273d71a94bee 100644
+--- a/browser/themes/shared/browser-colors.css
++++ b/browser/themes/shared/browser-colors.css
+@@ -8,7 +8,7 @@
+   --toolbox-bgcolor-inactive: -moz-headerbarinactive;
+   --toolbox-textcolor-inactive: -moz-headerbarinactivetext;
+ 
+-  &:where([customtitlebar]) {
++  &:where([tabsintitlebar]) {
+     --toolbox-bgcolor: ActiveCaption;
+     --toolbox-textcolor: CaptionText;
+     --toolbox-bgcolor-inactive: InactiveCaption;
+@@ -111,7 +111,7 @@
+       --toolbox-textcolor: light-dark(rgb(21, 20, 26), rgb(251, 251, 254));
+       --toolbox-bgcolor-inactive: var(--toolbox-bgcolor);
+       --toolbox-textcolor-inactive: var(--toolbox-textcolor);
+-      &:where([customtitlebar]) {
++      &:where([tabsintitlebar]) {
+         --toolbox-bgcolor-inactive: light-dark(rgb(235, 235, 239), rgb(31, 30, 37));
+       }
+     }
+diff --git a/browser/themes/shared/browser-shared.css b/browser/themes/shared/browser-shared.css
+index e64bce5b779bf..ce56d2c234b28 100644
+--- a/browser/themes/shared/browser-shared.css
++++ b/browser/themes/shared/browser-shared.css
+@@ -193,7 +193,7 @@ body {
+   @media (-moz-platform: macos) and (-moz-bool-pref: "browser.theme.native-theme") {
+     /* Don't make the toolbox vibrant when in full-screen. macOS fullscreen has a
+      * native titlebar outside of the window (revealed on hover) anyways. */
+-    :root[customtitlebar]:not([lwtheme], [macOSNativeFullscreen]) & {
++    :root[tabsintitlebar]:not([lwtheme], [macOSNativeFullscreen]) & {
+       background-color: transparent;
+ 
+       /* This is conceptually a background, but putting this on a
+@@ -233,8 +233,8 @@ body {
+ .browser-titlebar {
+   -moz-window-dragging: drag;
+ 
+-  :root[customtitlebar] &,
+-  :root[customtitlebar] & #urlbar:popover-open {
++  :root[tabsintitlebar] &,
++  :root[tabsintitlebar] & #urlbar:popover-open {
+     will-change: opacity;
+     transition: opacity var(--inactive-window-transition);
+ 
+@@ -270,7 +270,7 @@ body {
+   width: 40px;
+ 
+   :root[inFullscreen] &,
+-  :root:not([customtitlebar]) & {
++  :root:not([tabsintitlebar]) & {
+     display: none;
+   }
+ 
+@@ -317,7 +317,7 @@ body {
+   -moz-default-appearance: -moz-window-button-box;
+   position: relative;
+ 
+-  :root:not([customtitlebar], [sizemode=fullscreen]) & {
++  :root:not([tabsintitlebar], [sizemode=fullscreen]) & {
+     display: none;
+   }
+ }
+@@ -332,12 +332,12 @@ body {
+        as tall as the tab toolbar such that the window controls don't appear to move up.
+        For MacOS, autohide is never true on the menubar.
+     */
+-    :root[customtitlebar] #navigator-toolbox:not([tabs-hidden]) > & {
++    :root[tabsintitlebar] #navigator-toolbox:not([tabs-hidden]) > & {
+       min-height: var(--tabstrip-min-height);
+     }
+     /* adjust the height of the auto-hiding toolbar menubar when the tabstrip is
+        hidden and we need to match the height of the nav-bar. */
+-    :root[customtitlebar] #navigator-toolbox[tabs-hidden] > & {
++    :root[tabsintitlebar] #navigator-toolbox[tabs-hidden] > & {
+       min-height: calc(var(--urlbar-min-height) + 2 * var(--urlbar-padding-block));
+     }
+ 
+diff --git a/browser/themes/windows/browser.css b/browser/themes/windows/browser.css
+index 09e90a4eb8f67..0d74f7cefe75a 100644
+--- a/browser/themes/windows/browser.css
++++ b/browser/themes/windows/browser.css
+@@ -26,7 +26,7 @@
+ }
+ 
+ @media (-moz-windows-accent-color-in-titlebar) or (-moz-windows-mica) {
+-  :root[customtitlebar] {
++  :root[tabsintitlebar] {
+     @media (-moz-windows-mica) {
+       &:not([lwtheme]) {
+         background-color: transparent;
+diff --git a/browser/tools/mozscreenshots/mozscreenshots/extension/TestRunner.sys.mjs b/browser/tools/mozscreenshots/mozscreenshots/extension/TestRunner.sys.mjs
+index 9f441ff141730..b6d6366063799 100644
+--- a/browser/tools/mozscreenshots/mozscreenshots/extension/TestRunner.sys.mjs
++++ b/browser/tools/mozscreenshots/mozscreenshots/extension/TestRunner.sys.mjs
+@@ -368,7 +368,7 @@ export var TestRunner = {
+ 
+       this.mochitestScope.info("called " + config.name);
+       // Add a default timeout of 700ms to avoid conflicts when configurations
+-      // try to apply at the same time. e.g WindowSize and CustomTitlebar
++      // try to apply at the same time. e.g WindowSize and TabsInTitlebar
+       return Promise.race([applyPromise, timeoutPromise]).then(result => {
+         return new Promise(resolve => {
+           setTimeout(() => resolve(result), 700);
+diff --git a/browser/tools/mozscreenshots/mozscreenshots/extension/configurations/CustomTitlebar.sys.mjs b/browser/tools/mozscreenshots/mozscreenshots/extension/configurations/TabsInTitlebar.sys.mjs
+similarity index 96%
+rename from browser/tools/mozscreenshots/mozscreenshots/extension/configurations/CustomTitlebar.sys.mjs
+rename to browser/tools/mozscreenshots/mozscreenshots/extension/configurations/TabsInTitlebar.sys.mjs
+index 21cc84369f1ea..3c2973aa0a3f0 100644
+--- a/browser/tools/mozscreenshots/mozscreenshots/extension/configurations/CustomTitlebar.sys.mjs
++++ b/browser/tools/mozscreenshots/mozscreenshots/extension/configurations/TabsInTitlebar.sys.mjs
+@@ -4,7 +4,7 @@
+ 
+ const PREF_TABS_IN_TITLEBAR = "browser.tabs.inTitlebar";
+ 
+-export var CustomTitlebar = {
++export var TabsInTitlebar = {
+   init() {},
+ 
+   configurations: {
+diff --git a/browser/tools/mozscreenshots/mozscreenshots/extension/moz.build b/browser/tools/mozscreenshots/mozscreenshots/extension/moz.build
+index 9c804aefec165..173f6e6dae65e 100644
+--- a/browser/tools/mozscreenshots/mozscreenshots/extension/moz.build
++++ b/browser/tools/mozscreenshots/mozscreenshots/extension/moz.build
+@@ -24,12 +24,12 @@ FINAL_TARGET_FILES.resources.configurations += [
+     "configurations/Buttons.sys.mjs",
+     "configurations/ControlCenter.sys.mjs",
+     "configurations/CustomizeMode.sys.mjs",
+-    "configurations/CustomTitlebar.sys.mjs",
+     "configurations/DevTools.sys.mjs",
+     "configurations/LightweightThemes.sys.mjs",
+     "configurations/PermissionPrompts.sys.mjs",
+     "configurations/Preferences.sys.mjs",
+     "configurations/Tabs.sys.mjs",
++    "configurations/TabsInTitlebar.sys.mjs",
+     "configurations/Toolbars.sys.mjs",
+     "configurations/UIDensities.sys.mjs",
+     "configurations/WindowSize.sys.mjs",
+diff --git a/browser/tools/mozscreenshots/primaryUI/browser_primaryUI.js b/browser/tools/mozscreenshots/primaryUI/browser_primaryUI.js
+index 786dd8641e3fa..48c1a024c4dcd 100644
+--- a/browser/tools/mozscreenshots/primaryUI/browser_primaryUI.js
++++ b/browser/tools/mozscreenshots/primaryUI/browser_primaryUI.js
+@@ -12,7 +12,7 @@ add_task(async function capture() {
+   }
+ 
+   let sets = [
+-    "CustomTitlebar",
++    "TabsInTitlebar",
+     "Tabs",
+     "WindowSize",
+     "Toolbars",
+diff --git a/mozglue/misc/PreXULSkeletonUI.cpp b/mozglue/misc/PreXULSkeletonUI.cpp
+index abde018dddf52..eb905b34200a7 100644
+--- a/mozglue/misc/PreXULSkeletonUI.cpp
++++ b/mozglue/misc/PreXULSkeletonUI.cpp
+@@ -1365,7 +1365,7 @@ ThemeColors GetTheme(ThemeMode themeId) {
+       theme.tabColor = 0xf9f9fb;
+       theme.toolbarForegroundColor = 0xdddde1;
+       theme.tabOutlineColor = 0xdddde1;
+-      // found in browser-aero.css ":root[customtitlebar]:not(:-moz-lwtheme)"
++      // found in browser-aero.css ":root[tabsintitlebar]:not(:-moz-lwtheme)"
+       // (set to "hsl(235,33%,19%)")
+       theme.titlebarColor = 0xf0f0f4;
+       // --chrome-content-separator-color in browser.css

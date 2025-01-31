@@ -1,0 +1,1 @@
+Bug 1900225: Part 5 - On Windows, do not show message about wifi scan permission if no wifi is present r=win-reviewers,necko-reviewers,valentin,gstoll    2024-08-28 06:47:33    05e1887c74e9e6d7caef8d6dcc92924ffbe2a88d

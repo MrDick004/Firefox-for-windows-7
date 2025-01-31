@@ -1,0 +1,1 @@
+Bug 1868411 - Remove -moz-non-native-content-theme media feature. r=jwatt    2023-12-06 18:58:09    5985762903a53fcb8cf87e74df3f08e348bb661a

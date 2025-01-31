@@ -1,0 +1,1 @@
+Bug 1860385 - Clean up menulist styling. r=desktop-theme-reviewers,dao    2023-10-24 00:01:46    258205bba5eba57898fce512bcc99835bc71977e

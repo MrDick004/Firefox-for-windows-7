@@ -1,0 +1,144 @@
+diff --git a/layout/style/GeckoBindings.h b/layout/style/GeckoBindings.h
+index 5caf1210c4f0..49d418d2d3cf 100644
+--- a/layout/style/GeckoBindings.h
++++ b/layout/style/GeckoBindings.h
+@@ -616,6 +616,7 @@ int32_t Gecko_GetNumStyleThreads();
+ mozilla::StyleDisplayMode Gecko_MediaFeatures_GetDisplayMode(
+     const mozilla::dom::Document*);
+ 
++bool Gecko_MediaFeatures_ShouldAvoidNativeTheme(const mozilla::dom::Document*);
+ bool Gecko_MediaFeatures_WindowsNonNativeMenus(const mozilla::dom::Document*);
+ 
+ bool Gecko_MediaFeatures_UseOverlayScrollbars(const mozilla::dom::Document*);
+diff --git a/layout/style/nsMediaFeatures.cpp b/layout/style/nsMediaFeatures.cpp
+index 8b391d1241e0..f10c779512c8 100644
+--- a/layout/style/nsMediaFeatures.cpp
++++ b/layout/style/nsMediaFeatures.cpp
+@@ -98,6 +98,10 @@ bool Gecko_MediaFeatures_IsResourceDocument(const Document* aDocument) {
+   return aDocument->IsResourceDoc();
+ }
+ 
++bool Gecko_MediaFeatures_ShouldAvoidNativeTheme(const Document* aDocument) {
++  return aDocument->ShouldAvoidNativeTheme();
++}
++
+ bool Gecko_MediaFeatures_UseOverlayScrollbars(const Document* aDocument) {
+   nsPresContext* pc = aDocument->GetPresContext();
+   return pc && pc->UseOverlayScrollbars();
+diff --git a/layout/style/res/forms.css b/layout/style/res/forms.css
+index 61258651e155..1d635fa6bbec 100644
+--- a/layout/style/res/forms.css
++++ b/layout/style/res/forms.css
+@@ -84,9 +84,9 @@ input {
+   appearance: auto;
+   -moz-default-appearance: textfield;
+   /* The sum of border and padding on block-start and block-end
+-     must be the same here, for buttons, and for <select> */
+-  padding-block: 1px;
+-  padding-inline: 2px;
++     must be the same here, for buttons, and for <select> (including its
++     internal padding magic) */
++  padding: 1px;
+   border: 2px inset ButtonBorder;
+   background-color: Field;
+   color: FieldText;
+@@ -96,6 +96,12 @@ input {
+   overflow-clip-box: padding-box content-box;
+ }
+ 
++@media (-moz-non-native-content-theme) {
++  input {
++    padding-inline: 2px;
++  }
++}
++
+ textarea {
+   display: inline-block;
+   appearance: auto;
+@@ -517,13 +523,23 @@ input:is([type=reset], [type=button], [type=submit]) {
+   font: -moz-button;
+   white-space: pre;
+   text-align: center;
+-  padding-inline: 4px;
+ }
+ 
+ input[type=color] {
+   inline-size: 64px;
+   block-size: 32px;
+-  padding: 4px;
++}
++
++@media (-moz-non-native-content-theme) {
++  button,
++  ::file-selector-button,
++  input:is([type=reset], [type=button], [type=submit]) {
++    padding-inline: 4px;
++  }
++
++  input[type=color] {
++    padding: 4px;
++  }
+ }
+ 
+ /* https://github.com/whatwg/html/issues/9976 */
+diff --git a/layout/style/test/chrome/chrome-only-media-queries.js b/layout/style/test/chrome/chrome-only-media-queries.js
+index e5c1b8dcaf86..da3fc315bbd2 100644
+--- a/layout/style/test/chrome/chrome-only-media-queries.js
++++ b/layout/style/test/chrome/chrome-only-media-queries.js
+@@ -1,6 +1,7 @@
+ const CHROME_ONLY_TOGGLES = [
+   "-moz-is-glyph",
+   "-moz-print-preview",
++  "-moz-non-native-content-theme",
+   "-moz-scrollbar-start-backward",
+   "-moz-scrollbar-start-forward",
+   "-moz-scrollbar-end-backward",
+diff --git a/servo/components/style/gecko/media_features.rs b/servo/components/style/gecko/media_features.rs
+index b24d3a1422d4..759337400596 100644
+--- a/servo/components/style/gecko/media_features.rs
++++ b/servo/components/style/gecko/media_features.rs
+@@ -551,6 +551,10 @@ fn eval_moz_print_preview(context: &Context) -> bool {
+     is_print_preview
+ }
+ 
++fn eval_moz_non_native_content_theme(context: &Context) -> bool {
++    unsafe { bindings::Gecko_MediaFeatures_ShouldAvoidNativeTheme(context.device().document()) }
++}
++
+ fn eval_moz_is_resource_document(context: &Context) -> bool {
+     unsafe { bindings::Gecko_MediaFeatures_IsResourceDocument(context.device().document()) }
+ }
+@@ -664,7 +668,7 @@ macro_rules! lnf_int_feature {
+ /// to support new types in these entries and (2) ensuring that either
+ /// nsPresContext::MediaFeatureValuesChanged is called when the value that
+ /// would be returned by the evaluator function could change.
+-pub static MEDIA_FEATURES: [QueryFeatureDescription; 67] = [
++pub static MEDIA_FEATURES: [QueryFeatureDescription; 68] = [
+     feature!(
+         atom!("width"),
+         AllowsRanges::Yes,
+@@ -922,6 +926,12 @@ pub static MEDIA_FEATURES: [QueryFeatureDescription; 58] = [
+         Evaluator::BoolInteger(eval_moz_windows_non_native_menus),
+         FeatureFlags::CHROME_AND_UA_ONLY,
+     ),
++    feature!(
++        atom!("-moz-non-native-content-theme"),
++        AllowsRanges::No,
++        Evaluator::BoolInteger(eval_moz_non_native_content_theme),
++        FeatureFlags::CHROME_AND_UA_ONLY,
++    ),
+     feature!(
+         atom!("-moz-overlay-scrollbars"),
+         AllowsRanges::No,
+diff --git a/xpcom/ds/StaticAtoms.py b/xpcom/ds/StaticAtoms.py
+index 416adfe6be14..9d19d5c8bd4a 100644
+--- a/xpcom/ds/StaticAtoms.py
++++ b/xpcom/ds/StaticAtoms.py
+@@ -57,6 +57,7 @@ STATIC_ATOMS = [
+     Atom("_moz_is_glyph", "-moz-is-glyph"),
+     Atom("_moz_original_size", "_moz_original_size"),
+     Atom("_moz_print_preview", "-moz-print-preview"),
++    Atom("_moz_non_native_content_theme", "-moz-non-native-content-theme"),
+     Atom("menuactive", "_moz-menuactive"),
+     Atom("_poundDefault", "#default"),
+     Atom("_asterisk", "*"),

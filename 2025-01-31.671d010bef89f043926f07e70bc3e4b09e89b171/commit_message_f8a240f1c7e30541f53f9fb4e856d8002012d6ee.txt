@@ -1,0 +1,1 @@
+Bug 1837530 - [2/2] doc: drive-by typo & old-OS removal  r=sylvestre    2023-10-05 02:10:35    f8a240f1c7e30541f53f9fb4e856d8002012d6ee

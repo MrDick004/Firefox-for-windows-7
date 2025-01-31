@@ -1,0 +1,1 @@
+Bug 1921288 - Teach AwakeTimeStamp to do precise timestamps on Windows, rename methods. r=gsvelto    2024-10-03 16:54:11    c490d3c984c58b75c8a1ba71cc2042995e55687a

@@ -1,0 +1,1 @@
+Bug 1934136 - Ensure we trigger any pending WM_PAINT once we stop being the initial blank window. r=win-reviewers,rkraesig    2024-12-14 11:51:38    ef44e66d02dbbb03bce09275374bfbab5ffe5918

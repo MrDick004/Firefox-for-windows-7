@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from toolkit/system/windowsPackageManager/. r=bhearsum,nrishel    2023-07-26 16:52:53    679a4a9e81a976909ec27bc659da345018c42c4a

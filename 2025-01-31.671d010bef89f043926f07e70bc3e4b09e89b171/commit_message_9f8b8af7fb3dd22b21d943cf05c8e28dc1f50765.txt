@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from browser/components/shell/. r=nalexander    2023-07-26 16:52:50    620b2d4ee30e9f69fc8ab67d1eee5b7d4f9a17db
