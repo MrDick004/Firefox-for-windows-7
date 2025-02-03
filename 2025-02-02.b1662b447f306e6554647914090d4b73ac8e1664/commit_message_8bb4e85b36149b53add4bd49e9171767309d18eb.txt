@@ -1,0 +1,1 @@
+Bug 1848899 - Remove widget.non-native-theme.enabled. r=desktop-theme-reviewers,dao,dholbert    2024-05-07 16:32:14    8bb4e85b36149b53add4bd49e9171767309d18eb

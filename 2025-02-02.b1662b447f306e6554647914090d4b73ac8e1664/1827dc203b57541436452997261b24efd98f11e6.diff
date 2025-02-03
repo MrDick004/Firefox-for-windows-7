@@ -1,0 +1,334 @@
+diff --git a/dom/canvas/test/test_bug232227.html b/dom/canvas/test/test_bug232227.html
+index 040c28a7f82a..8eb444285525 100644
+--- a/dom/canvas/test/test_bug232227.html
++++ b/dom/canvas/test/test_bug232227.html
+@@ -52,6 +52,7 @@ function runTest(testCanvasColors) {
+     [ "-moz-ComboboxText", 0x00, 0x00, 0x00 ],
+     [ "-moz-Dialog", 0xF0, 0xF0, 0xF0 ],
+     [ "-moz-DialogText", 0x00, 0x00, 0x00 ],
++    [ "-moz-DragTargetZone", 0xFF, 0xFF, 0xFF ],
+     [ "-moz-EvenTreeRow", 0xFF, 0xFF, 0xFF ],
+     [ "-moz-Field", 0xFF, 0xFF, 0xFF ],
+     [ "-moz-FieldText", 0x00, 0x00, 0x00 ],
+@@ -64,6 +65,8 @@ function runTest(testCanvasColors) {
+     [ "-moz-MenuHoverText", 0x00, 0x00, 0x00 ],
+     [ "-moz-MenubarHoverText", 0x00, 0x00, 0x00 ],
+     [ "-moz-OddTreeRow", 0xFF, 0xFF, 0xFF ],
++    [ "-moz-win-MediaText", 0xFF, 0xFF, 0xFF ],
++    [ "-moz-win-CommunicationsText", 0xFF, 0xFF, 0xFF ],
+     [ "SelectedItem", 0x33, 0x99, 0xFF ],
+     [ "SelectedItemText", 0xFF, 0xFF, 0xFF ],
+ 
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index f883f4d16906..5fd8e5fc6776 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1644,6 +1644,14 @@ pub enum Appearance {
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     MozSidebar,
+ 
++    /// Vista Rebars.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    MozWinCommunicationsToolbox,
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    MozWinMediaToolbox,
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    MozWinBrowsertabbarToolbox,
++
+     /// Mac help button.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     MozMacHelpButton,
+diff --git a/servo/components/style/values/specified/color.rs b/servo/components/style/values/specified/color.rs
+index a15ad2e7a9ce..ea4dc757d2e5 100644
+--- a/servo/components/style/values/specified/color.rs
++++ b/servo/components/style/values/specified/color.rs
+@@ -209,6 +209,8 @@ pub enum SystemColor {
+     Canvas,
+     MozDialog,
+     MozDialogtext,
++    /// Used to highlight valid regions to drop something onto.
++    MozDragtargetzone,
+     /// Used for selected but not focused cell backgrounds.
+     #[parse(aliases = "-moz-html-cellhighlight")]
+     MozCellhighlight,
+@@ -286,6 +288,11 @@ pub enum SystemColor {
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     MozAutofillBackground,
+ 
++    /// Media rebar text.
++    MozWinMediatext,
++    /// Communications rebar text.
++    MozWinCommunicationstext,
++
+     /// Hyperlink color extracted from the system, not affected by the browser.anchor_color user
+     /// pref.
+     ///
+diff --git a/widget/android/nsLookAndFeel.cpp b/widget/android/nsLookAndFeel.cpp
+index c1a8b4d7c72d..cf243a251cb5 100644
+--- a/widget/android/nsLookAndFeel.cpp
++++ b/widget/android/nsLookAndFeel.cpp
+@@ -234,6 +234,9 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
+     case ColorID::MozColheaderhovertext:
+       aColor = NS_RGB(0x10, 0x10, 0x10);
+       break;
++    case ColorID::MozDragtargetzone:
++      aColor = mSystemColors.textColorHighlight;
++      break;
+     case ColorID::MozButtonhoverface:
+     case ColorID::MozButtonactiveface:
+       aColor = NS_RGB(0xf3, 0xf0, 0xed);
+diff --git a/widget/cocoa/nsLookAndFeel.mm b/widget/cocoa/nsLookAndFeel.mm
+index 8c528d52aef1..5d2045bb7c07 100644
+--- a/widget/cocoa/nsLookAndFeel.mm
++++ b/widget/cocoa/nsLookAndFeel.mm
+@@ -274,6 +274,9 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme, nscolor
+     case ColorID::MozSidebartext:
+       aColor = GetColorFromNSColor(NSColor.controlTextColor);
+       break;
++    case ColorID::MozDragtargetzone:
++      aColor = GetColorFromNSColor(NSColor.selectedControlColor);
++      break;
+     case ColorID::MozMacFocusring:
+       aColor = GetColorFromNSColorWithCustomAlpha(
+           NSColor.keyboardFocusIndicatorColor, 0.48);
+diff --git a/widget/gtk/nsLookAndFeel.cpp b/widget/gtk/nsLookAndFeel.cpp
+index 4a79476a4dfd..57042422d116 100644
+--- a/widget/gtk/nsLookAndFeel.cpp
++++ b/widget/gtk/nsLookAndFeel.cpp
+@@ -508,6 +508,7 @@ nsresult nsLookAndFeel::PerThemeData::GetColor(ColorID aID,
+       break;
+     case ColorID::IMESelectedRawTextBackground:
+     case ColorID::IMESelectedConvertedTextBackground:
++    case ColorID::MozDragtargetzone:
+     case ColorID::Highlight:  // preference selected item,
+       aColor = mSelectedText.mBg;
+       break;
+diff --git a/widget/nsXPLookAndFeel.cpp b/widget/nsXPLookAndFeel.cpp
+index 3c15f47046c8..3437274659d3 100644
+--- a/widget/nsXPLookAndFeel.cpp
++++ b/widget/nsXPLookAndFeel.cpp
+@@ -250,6 +250,7 @@ static const char sColorPrefs[][41] = {
+     "ui.-moz-default-background-color",
+     "ui.-moz-dialog",
+     "ui.-moz-dialogtext",
++    "ui.-moz-dragtargetzone",
+     "ui.-moz-cellhighlight",
+     "ui.-moz_cellhighlighttext",
+     "ui.selecteditem",
+@@ -284,6 +285,8 @@ static const char sColorPrefs[][41] = {
+     "ui.accentcolor",
+     "ui.accentcolortext",
+     "ui.-moz-autofill-background",
++    "ui.-moz-win-mediatext",
++    "ui.-moz-win-communicationstext",
+     "ui.-moz-nativehyperlinktext",
+     "ui.-moz-nativevisitedhyperlinktext",
+     "ui.-moz-hyperlinktext",
+@@ -674,6 +677,7 @@ nscolor nsXPLookAndFeel::GetStandinForNativeColor(ColorID aID,
+       COLOR(MozDialogtext, 0x00, 0x00, 0x00)
+       COLOR(MozColheadertext, 0x00, 0x00, 0x00)
+       COLOR(MozColheaderhovertext, 0x00, 0x00, 0x00)
++      COLOR(MozDragtargetzone, 0xFF, 0xFF, 0xFF)
+       COLOR(MozCellhighlight, 0xF0, 0xF0, 0xF0)
+       COLOR(MozCellhighlighttext, 0x00, 0x00, 0x00)
+       COLOR(Selecteditem, 0x33, 0x99, 0xFF)
+@@ -700,6 +704,8 @@ nscolor nsXPLookAndFeel::GetStandinForNativeColor(ColorID aID,
+       COLOR(MozMacFocusring, 0x60, 0x9D, 0xD7)
+       COLOR(MozMacDisabledtoolbartext, 0x3F, 0x3F, 0x3F)
+       // Seems to be the default color (hardcoded because of bug 1065998)
++      COLOR(MozWinMediatext, 0xFF, 0xFF, 0xFF)
++      COLOR(MozWinCommunicationstext, 0xFF, 0xFF, 0xFF)
+       COLOR(MozNativehyperlinktext, 0x00, 0x66, 0xCC)
+       COLOR(MozNativevisitedhyperlinktext, 0x55, 0x1A, 0x8B)
+       COLOR(MozAutofillBackground, 0xff, 0xfc, 0xc8)
+diff --git a/widget/tests/test_platform_colors.xhtml b/widget/tests/test_platform_colors.xhtml
+index d25630252cad..09ccc064530d 100644
+--- a/widget/tests/test_platform_colors.xhtml
++++ b/widget/tests/test_platform_colors.xhtml
+@@ -60,6 +60,7 @@ var colors = {
+   "-moz-fieldtext": ["rgb(0, 0, 0)"],
+   "-moz-dialog": ["rgb(232, 232, 232)"],
+   "-moz-dialogtext": ["rgb(0, 0, 0)"],
++  "-moz-dragtargetzone": ["rgb(199, 208, 218)", "rgb(198, 198, 198)", "rgb(180, 213, 255)", "rgb(250, 236, 115)", "rgb(255, 176, 139)", "rgb(255, 209, 129)", "rgb(194, 249, 144)", "rgb(232, 184, 255)"],
+   "-moz-hyperlinktext": ["rgb(0, 0, 238)"],
+   "-moz-html-cellhighlight": ["rgb(212, 212, 212)"],
+   "-moz-html-cellhighlighttext": ["rgb(0, 0, 0)"],
+@@ -75,6 +76,8 @@ var colors = {
+   "-moz-oddtreerow": ["rgb(236, 242, 254)", "rgb(240, 240, 240)", "rgb(243, 245, 250)", "rgb(243, 246, 250)", "rgb(245, 245, 245)"],
+   "-moz-visitedhyperlinktext": ["rgb(85, 26, 139)"],
+   "currentcolor": ["rgb(0, 0, 0)"],
++  //"-moz-win-mediatext": ["rgb(255, 255, 255)"],
++  //"-moz-win-communicationstext": ["rgb(255, 255, 255)"],
+   "-moz-comboboxtext": ["rgb(0, 0, 0)"],
+   "-moz-combobox": ["rgb(255, 255, 255)"]
+ };
+diff --git a/widget/uikit/nsLookAndFeel.mm b/widget/uikit/nsLookAndFeel.mm
+index 3ac1a658c997..a3a9b69eee02 100644
+--- a/widget/uikit/nsLookAndFeel.mm
++++ b/widget/uikit/nsLookAndFeel.mm
+@@ -171,6 +171,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID, ColorScheme, nscolor& aResult) {
+     case ColorID::MozComboboxtext:
+       aResult = mColorDarkText;
+       break;
++    case ColorID::MozDragtargetzone:
+     case ColorID::MozDialog:
+       aResult = NS_RGB(0xaa, 0xaa, 0xaa);
+       break;
+diff --git a/widget/windows/nsLookAndFeel.cpp b/widget/windows/nsLookAndFeel.cpp
+index 8671dd387a1a..bf26e3434750 100644
+--- a/widget/windows/nsLookAndFeel.cpp
++++ b/widget/windows/nsLookAndFeel.cpp
+@@ -160,6 +160,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+         return aScheme != ColorScheme::Dark || mDarkHighlightText;
+       case ColorID::IMESelectedRawTextForeground:
+       case ColorID::IMESelectedConvertedTextForeground:
++      case ColorID::MozDragtargetzone:
+         return true;
+       default:
+         return false;
+@@ -359,6 +360,22 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+     case ColorID::Accentcolortext:
+       aColor = mColorAccentText;
+       return NS_OK;
++    case ColorID::MozWinMediatext:
++      if (mColorMediaText) {
++        aColor = *mColorMediaText;
++        return NS_OK;
++      }
++      // if we've gotten here just return -moz-dialogtext instead
++      idx = COLOR_WINDOWTEXT;
++      break;
++    case ColorID::MozWinCommunicationstext:
++      if (mColorCommunicationsText) {
++        aColor = *mColorCommunicationsText;
++        return NS_OK;
++      }
++      // if we've gotten here just return -moz-dialogtext instead
++      idx = COLOR_WINDOWTEXT;
++      break;
+     case ColorID::MozHeaderbartext:
+     case ColorID::MozHeaderbarinactivetext:
+     case ColorID::MozDialogtext:
+@@ -868,6 +885,10 @@ void nsLookAndFeel::EnsureInit() {
+ 
+   mColorMenuHoverText =
+       ::GetColorFromTheme(eUXMenu, MENU_POPUPITEM, MPI_HOT, TMT_TEXTCOLOR);
++  mColorMediaText =
++      ::GetColorFromTheme(eUXMediaToolbar, TP_BUTTON, TS_NORMAL, TMT_TEXTCOLOR);
++  mColorCommunicationsText = ::GetColorFromTheme(
++      eUXCommunicationsToolbar, TP_BUTTON, TS_NORMAL, TMT_TEXTCOLOR);
+ 
+   // Fill out the sys color table.
+   for (int i = SYS_COLOR_MIN; i <= SYS_COLOR_MAX; ++i) {
+diff --git a/widget/windows/nsLookAndFeel.h b/widget/windows/nsLookAndFeel.h
+index 897a388964d8..4b00d0e771ae 100644
+--- a/widget/windows/nsLookAndFeel.h
++++ b/widget/windows/nsLookAndFeel.h
+@@ -99,6 +99,8 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
+ 
+   // Cached colors and flags indicating success in their retrieval.
+   mozilla::Maybe<nscolor> mColorMenuHoverText;
++  mozilla::Maybe<nscolor> mColorMediaText;
++  mozilla::Maybe<nscolor> mColorCommunicationsText;
+ 
+   mozilla::Maybe<nscolor> mDarkHighlight;
+   mozilla::Maybe<nscolor> mDarkHighlightText;
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index b7206a43f6ff..19fe2772351a 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -495,6 +495,12 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
+       return Some(eUXEdit);
+     case StyleAppearance::Toolbox:
+       return Some(eUXRebar);
++    case StyleAppearance::MozWinMediaToolbox:
++      return Some(eUXMediaRebar);
++    case StyleAppearance::MozWinCommunicationsToolbox:
++      return Some(eUXCommunicationsRebar);
++    case StyleAppearance::MozWinBrowsertabbarToolbox:
++      return Some(eUXBrowserTabBarRebar);
+     case StyleAppearance::Toolbar:
+     case StyleAppearance::Toolbarbutton:
+     case StyleAppearance::Separator:
+@@ -784,7 +790,10 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
+       }
+       return NS_OK;
+     }
+-    case StyleAppearance::Toolbox: {
++    case StyleAppearance::Toolbox:
++    case StyleAppearance::MozWinMediaToolbox:
++    case StyleAppearance::MozWinCommunicationsToolbox:
++    case StyleAppearance::MozWinBrowsertabbarToolbox: {
+       aState = 0;
+       aPart = RP_BACKGROUND;
+       return NS_OK;
+@@ -1238,6 +1247,9 @@ LayoutDeviceIntMargin nsNativeThemeWin::GetWidgetBorder(
+ 
+   if (!WidgetIsContainer(aAppearance) ||
+       aAppearance == StyleAppearance::Toolbox ||
++      aAppearance == StyleAppearance::MozWinMediaToolbox ||
++      aAppearance == StyleAppearance::MozWinCommunicationsToolbox ||
++      aAppearance == StyleAppearance::MozWinBrowsertabbarToolbox ||
+       aAppearance == StyleAppearance::Tabpanel)
+     return result;  // Don't worry about it.
+ 
+@@ -1425,6 +1437,9 @@ LayoutDeviceIntSize nsNativeThemeWin::GetMinimumWidgetSize(
+     case StyleAppearance::PasswordInput:
+     case StyleAppearance::Textfield:
+     case StyleAppearance::Toolbox:
++    case StyleAppearance::MozWinMediaToolbox:
++    case StyleAppearance::MozWinCommunicationsToolbox:
++    case StyleAppearance::MozWinBrowsertabbarToolbox:
+     case StyleAppearance::Toolbar:
+     case StyleAppearance::Progresschunk:
+     case StyleAppearance::Tabpanels:
+@@ -1504,6 +1519,9 @@ nsNativeThemeWin::WidgetStateChanged(nsIFrame* aFrame,
+     StyleAppearance aAppearance, nsAtom* aAttribute) {
+   // Some widget types just never change state.
+   if (aAppearance == StyleAppearance::Toolbox ||
++      aAppearance == StyleAppearance::MozWinMediaToolbox ||
++      aAppearance == StyleAppearance::MozWinCommunicationsToolbox ||
++      aAppearance == StyleAppearance::MozWinBrowsertabbarToolbox ||
+       aAppearance == StyleAppearance::Toolbar ||
+       aAppearance == StyleAppearance::Progresschunk ||
+       aAppearance == StyleAppearance::ProgressBar ||
+diff --git a/widget/windows/nsUXThemeData.cpp b/widget/windows/nsUXThemeData.cpp
+index b27681115519..bc4681494654 100644
+--- a/widget/windows/nsUXThemeData.cpp
++++ b/widget/windows/nsUXThemeData.cpp
+@@ -64,8 +64,18 @@ const wchar_t* nsUXThemeData::GetClassName(nsUXThemeClass cls) {
+       return L"Edit";
+     case eUXRebar:
+       return L"Rebar";
++    case eUXMediaRebar:
++      return L"Media::Rebar";
++    case eUXCommunicationsRebar:
++      return L"Communications::Rebar";
++    case eUXBrowserTabBarRebar:
++      return L"BrowserTabBar::Rebar";
+     case eUXToolbar:
+       return L"Toolbar";
++    case eUXMediaToolbar:
++      return L"Media::Toolbar";
++    case eUXCommunicationsToolbar:
++      return L"Communications::Toolbar";
+     case eUXProgress:
+       return L"Progress";
+     case eUXTab:
+diff --git a/widget/windows/nsUXThemeData.h b/widget/windows/nsUXThemeData.h
+index cace4dd9c62b..ffaea35457d1 100644
+--- a/widget/windows/nsUXThemeData.h
++++ b/widget/windows/nsUXThemeData.h
+@@ -20,7 +20,12 @@ enum nsUXThemeClass {
+   eUXButton = 0,
+   eUXEdit,
+   eUXRebar,
++  eUXMediaRebar,
++  eUXCommunicationsRebar,
++  eUXBrowserTabBarRebar,
+   eUXToolbar,
++  eUXMediaToolbar,
++  eUXCommunicationsToolbar,
+   eUXProgress,
+   eUXTab,
+   eUXTrackbar,

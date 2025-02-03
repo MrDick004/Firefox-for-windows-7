@@ -1,0 +1,12 @@
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index 5a16ee121d85..12c52a9599ef 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -1852,6 +1852,7 @@ nsresult nsNativeThemeWin::ClassicGetThemePartAndState(
+     case StyleAppearance::Tab:
+     case StyleAppearance::Tabpanel:
+     case StyleAppearance::Tabpanels:
++    case StyleAppearance::Groupbox:
+       // these don't use DrawFrameControl
+       return NS_OK;
+     case StyleAppearance::MozMenulistArrowButton: {

@@ -1,0 +1,1 @@
+Bug 1836874 - Prevent installers from installing Firefox 116+ on Windows 7/8/8.1. r=mhowell    2023-07-06 01:51:11    be149f0dee131ccf689a9d6cacff64648881846f

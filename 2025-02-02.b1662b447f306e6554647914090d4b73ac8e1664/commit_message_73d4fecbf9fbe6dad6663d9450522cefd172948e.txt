@@ -1,0 +1,1 @@
+Bug 1932600 - Simplify chrome attribute handling. r=smaug,dao    2024-11-28 20:12:51    73d4fecbf9fbe6dad6663d9450522cefd172948e

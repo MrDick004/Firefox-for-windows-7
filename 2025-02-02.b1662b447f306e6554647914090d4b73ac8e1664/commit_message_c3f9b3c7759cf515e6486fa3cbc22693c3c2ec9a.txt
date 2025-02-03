@@ -1,0 +1,1 @@
+Bug 1844242 - Clean-up windows titlebar set-up now that buttons are always non-native. r=dao,handyman    2023-07-20 21:33:19    c3f9b3c7759cf515e6486fa3cbc22693c3c2ec9a

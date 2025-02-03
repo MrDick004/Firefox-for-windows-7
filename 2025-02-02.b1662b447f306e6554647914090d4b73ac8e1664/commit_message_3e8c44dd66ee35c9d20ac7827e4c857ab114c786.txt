@@ -1,0 +1,1 @@
+Bug 1845057 - Remove aClaimAllTypes from setDefaultBrowser. r=nrishel,settings-reviewers    2023-10-03 00:56:42    3e8c44dd66ee35c9d20ac7827e4c857ab114c786

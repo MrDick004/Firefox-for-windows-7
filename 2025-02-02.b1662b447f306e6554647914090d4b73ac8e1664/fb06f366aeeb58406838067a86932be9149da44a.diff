@@ -1,0 +1,1455 @@
+diff --git a/browser/themes/osx/places/organizer.css b/browser/themes/osx/places/organizer.css
+index ae32edae57ee..fc2698aff1f0 100644
+--- a/browser/themes/osx/places/organizer.css
++++ b/browser/themes/osx/places/organizer.css
+@@ -184,21 +184,15 @@
+ #placeContent {
+   appearance: none;
+   border: none;
++}
+ 
+-  > treechildren::-moz-tree-cell,
+-  > treechildren::-moz-tree-column {
+-    border-inline-start: 1px solid color-mix(in srgb, FieldText 30%, transparent);
+-  }
+-
+-  > treechildren::-moz-tree-column(first-column),
+-  > treechildren::-moz-tree-cell(first-column) {
+-    /* This matches the treecol separator in tree.css */
+-    border-inline-start: none;
+-  }
++#placeContent > treechildren::-moz-tree-cell,
++#placeContent > treechildren::-moz-tree-column {
++  border-inline-end: 1px solid color-mix(in srgb, FieldText 30%, transparent);
++}
+ 
+-  > treechildren::-moz-tree-cell(separator) {
+-    border-color: transparent;
+-  }
++#placeContent > treechildren::-moz-tree-cell(separator) {
++  border-color: transparent;
+ }
+ 
+ /**
+diff --git a/layout/xul/tree/nsTreeBodyFrame.cpp b/layout/xul/tree/nsTreeBodyFrame.cpp
+index a7eba30f8be3..f5850096004d 100644
+--- a/layout/xul/tree/nsTreeBodyFrame.cpp
++++ b/layout/xul/tree/nsTreeBodyFrame.cpp
+@@ -47,11 +47,13 @@
+ #include "nsContainerFrame.h"
+ #include "nsView.h"
+ #include "nsViewManager.h"
++#include "nsVariant.h"
+ #include "nsWidgetsCID.h"
+ #include "nsIFrameInlines.h"
+ #include "nsTreeContentView.h"
+ #include "nsTreeUtils.h"
+ #include "nsStyleConsts.h"
++#include "nsITheme.h"
+ #include "imgIRequest.h"
+ #include "imgIContainer.h"
+ #include "mozilla/dom/NodeInfo.h"
+@@ -1709,133 +1711,115 @@ void nsTreeBodyFrame::PrefillPropertyArray(int32_t aRowIndex,
+   mScratchArray.Clear();
+ 
+   // focus
+-  if (mFocused) {
+-    mScratchArray.AppendElement(nsGkAtoms::focus);
+-  } else {
+-    mScratchArray.AppendElement(nsGkAtoms::blur);
+-  }
++  if (mFocused)
++    mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::focus);
++  else
++    mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::blur);
+ 
+   // sort
+   bool sorted = false;
+   mView->IsSorted(&sorted);
+-  if (sorted) {
+-    mScratchArray.AppendElement(nsGkAtoms::sorted);
+-  }
++  if (sorted) mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::sorted);
+ 
+   // drag session
+-  if (mSlots && mSlots->mIsDragging) {
+-    mScratchArray.AppendElement(nsGkAtoms::dragSession);
+-  }
++  if (mSlots && mSlots->mIsDragging)
++    mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::dragSession);
+ 
+   if (aRowIndex != -1) {
+-    if (aRowIndex == mMouseOverRow) {
+-      mScratchArray.AppendElement(nsGkAtoms::hover);
+-    }
++    if (aRowIndex == mMouseOverRow)
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::hover);
+ 
+     nsCOMPtr<nsITreeSelection> selection = GetSelection();
+     if (selection) {
+       // selected
+       bool isSelected;
+       selection->IsSelected(aRowIndex, &isSelected);
+-      if (isSelected) {
+-        mScratchArray.AppendElement(nsGkAtoms::selected);
+-      }
++      if (isSelected)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::selected);
+ 
+       // current
+       int32_t currentIndex;
+       selection->GetCurrentIndex(&currentIndex);
+-      if (aRowIndex == currentIndex) {
+-        mScratchArray.AppendElement(nsGkAtoms::current);
+-      }
++      if (aRowIndex == currentIndex)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::current);
+     }
+ 
+     // container or leaf
+     bool isContainer = false;
+     mView->IsContainer(aRowIndex, &isContainer);
+     if (isContainer) {
+-      mScratchArray.AppendElement(nsGkAtoms::container);
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::container);
+ 
+       // open or closed
+       bool isOpen = false;
+       mView->IsContainerOpen(aRowIndex, &isOpen);
+-      if (isOpen) {
+-        mScratchArray.AppendElement(nsGkAtoms::open);
+-      } else {
+-        mScratchArray.AppendElement(nsGkAtoms::closed);
+-      }
++      if (isOpen)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::open);
++      else
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::closed);
+     } else {
+-      mScratchArray.AppendElement(nsGkAtoms::leaf);
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::leaf);
+     }
+ 
+     // drop orientation
+     if (mSlots && mSlots->mDropAllowed && mSlots->mDropRow == aRowIndex) {
+-      if (mSlots->mDropOrient == nsITreeView::DROP_BEFORE) {
+-        mScratchArray.AppendElement(nsGkAtoms::dropBefore);
+-      } else if (mSlots->mDropOrient == nsITreeView::DROP_ON) {
+-        mScratchArray.AppendElement(nsGkAtoms::dropOn);
+-      } else if (mSlots->mDropOrient == nsITreeView::DROP_AFTER) {
+-        mScratchArray.AppendElement(nsGkAtoms::dropAfter);
+-      }
++      if (mSlots->mDropOrient == nsITreeView::DROP_BEFORE)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::dropBefore);
++      else if (mSlots->mDropOrient == nsITreeView::DROP_ON)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::dropOn);
++      else if (mSlots->mDropOrient == nsITreeView::DROP_AFTER)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::dropAfter);
+     }
+ 
+     // odd or even
+-    if (aRowIndex % 2) {
+-      mScratchArray.AppendElement(nsGkAtoms::odd);
+-    } else {
+-      mScratchArray.AppendElement(nsGkAtoms::even);
+-    }
++    if (aRowIndex % 2)
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::odd);
++    else
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::even);
+ 
+     XULTreeElement* tree = GetBaseElement();
+     if (tree && tree->HasAttr(nsGkAtoms::editing)) {
+-      mScratchArray.AppendElement(nsGkAtoms::editing);
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::editing);
+     }
+ 
+     // multiple columns
+-    if (mColumns->GetColumnAt(1)) {
+-      mScratchArray.AppendElement(nsGkAtoms::multicol);
+-    }
++    if (mColumns->GetColumnAt(1))
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::multicol);
+   }
+ 
+   if (aCol) {
+     mScratchArray.AppendElement(aCol->GetAtom());
+ 
+-    if (aCol->IsPrimary()) {
+-      mScratchArray.AppendElement(nsGkAtoms::primary);
+-    }
++    if (aCol->IsPrimary())
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::primary);
+ 
+     if (aCol->GetType() == TreeColumn_Binding::TYPE_CHECKBOX) {
+-      mScratchArray.AppendElement(nsGkAtoms::checkbox);
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::checkbox);
+ 
+       if (aRowIndex != -1) {
+         nsAutoString value;
+         mView->GetCellValue(aRowIndex, aCol, value);
+-        if (value.EqualsLiteral("true")) {
+-          mScratchArray.AppendElement(nsGkAtoms::checked);
+-        }
++        if (value.EqualsLiteral("true"))
++          mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::checked);
+       }
+     }
+ 
+-    if (aCol->mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::ordinal,
+-                                    u"1"_ns, eIgnoreCase)) {
+-      mScratchArray.AppendElement(nsGkAtoms::firstColumn);
+-    }
+-
+     // Read special properties from attributes on the column content node
+     if (aCol->mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::insertbefore,
+-                                    nsGkAtoms::_true, eCaseMatters)) {
+-      mScratchArray.AppendElement(nsGkAtoms::insertbefore);
+-    }
++                                    nsGkAtoms::_true, eCaseMatters))
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::insertbefore);
+     if (aCol->mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::insertafter,
+-                                    nsGkAtoms::_true, eCaseMatters)) {
+-      mScratchArray.AppendElement(nsGkAtoms::insertafter);
+-    }
++                                    nsGkAtoms::_true, eCaseMatters))
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::insertafter);
+   }
+ }
+ 
+-void nsTreeBodyFrame::GetTwistyRect(int32_t aRowIndex, nsTreeColumn* aColumn,
+-                                    nsRect& aImageRect, nsRect& aTwistyRect,
+-                                    nsPresContext* aPresContext,
+-                                    ComputedStyle* aTwistyContext) {
++nsITheme* nsTreeBodyFrame::GetTwistyRect(int32_t aRowIndex,
++                                         nsTreeColumn* aColumn,
++                                         nsRect& aImageRect,
++                                         nsRect& aTwistyRect,
++                                         nsPresContext* aPresContext,
++                                         ComputedStyle* aTwistyContext) {
+   // The twisty rect extends all the way to the end of the cell.  This is
+   // incorrect.  We need to determine the twisty rect's true width.  This is
+   // done by examining the ComputedStyle for a width first.  If it has one, we
+@@ -1844,14 +1828,40 @@ void nsTreeBodyFrame::GetTwistyRect(int32_t aRowIndex, nsTreeColumn* aColumn,
+   // a -moz-appearance involved, adjust the rect by the minimum widget size
+   // provided by the theme implementation.
+   aImageRect = GetImageSize(aRowIndex, aColumn, true, aTwistyContext);
+-  if (aImageRect.height > aTwistyRect.height) {
++  if (aImageRect.height > aTwistyRect.height)
+     aImageRect.height = aTwistyRect.height;
+-  }
+-  if (aImageRect.width > aTwistyRect.width) {
++  if (aImageRect.width > aTwistyRect.width)
+     aImageRect.width = aTwistyRect.width;
+-  } else {
++  else
+     aTwistyRect.width = aImageRect.width;
++
++  bool useTheme = false;
++  nsITheme* theme = nullptr;
++  StyleAppearance appearance =
++      aTwistyContext->StyleDisplay()->EffectiveAppearance();
++  if (appearance != StyleAppearance::None) {
++    theme = aPresContext->Theme();
++    if (theme->ThemeSupportsWidget(aPresContext, nullptr, appearance))
++      useTheme = true;
++  }
++
++  if (useTheme) {
++    LayoutDeviceIntSize minTwistySizePx =
++        theme->GetMinimumWidgetSize(aPresContext, this, appearance);
++
++    // GMWS() returns size in pixels, we need to convert it back to app units
++    nsSize minTwistySize;
++    minTwistySize.width =
++        aPresContext->DevPixelsToAppUnits(minTwistySizePx.width);
++    minTwistySize.height =
++        aPresContext->DevPixelsToAppUnits(minTwistySizePx.height);
++
++    if (aTwistyRect.width < minTwistySize.width) {
++      aTwistyRect.width = minTwistySize.width;
++    }
+   }
++
++  return useTheme ? theme : nullptr;
+ }
+ 
+ already_AddRefed<imgIContainer> nsTreeBodyFrame::GetImage(
+@@ -2683,8 +2693,21 @@ ImgDrawResult nsTreeBodyFrame::PaintRow(int32_t aRowIndex,
+   ImgDrawResult result = ImgDrawResult::SUCCESS;
+ 
+   // Paint our borders and background for our row rect.
+-  result &= PaintBackgroundLayer(rowContext, aPresContext, aRenderingContext,
+-                                 rowRect, aDirtyRect);
++  nsITheme* theme = nullptr;
++  auto appearance = rowContext->StyleDisplay()->EffectiveAppearance();
++  if (appearance != StyleAppearance::None) {
++    theme = aPresContext->Theme();
++  }
++
++  if (theme && theme->ThemeSupportsWidget(aPresContext, nullptr, appearance)) {
++    nsRect dirty;
++    dirty.IntersectRect(rowRect, aDirtyRect);
++    theme->DrawWidgetBackground(&aRenderingContext, this, appearance, rowRect,
++                                dirty);
++  } else {
++    result &= PaintBackgroundLayer(rowContext, aPresContext, aRenderingContext,
++                                   rowRect, aDirtyRect);
++  }
+ 
+   // Adjust the rect for its border and padding.
+   nsRect originalRowRect = rowRect;
+@@ -2797,32 +2820,54 @@ ImgDrawResult nsTreeBodyFrame::PaintSeparator(int32_t aRowIndex,
+   // Resolve style for the separator.
+   ComputedStyle* separatorContext =
+       GetPseudoComputedStyle(nsCSSAnonBoxes::mozTreeSeparator());
++  bool useTheme = false;
++  nsITheme* theme = nullptr;
++  StyleAppearance appearance =
++      separatorContext->StyleDisplay()->EffectiveAppearance();
++  if (appearance != StyleAppearance::None) {
++    theme = aPresContext->Theme();
++    if (theme->ThemeSupportsWidget(aPresContext, nullptr, appearance))
++      useTheme = true;
++  }
+ 
+-  const nsStylePosition* stylePosition = separatorContext->StylePosition();
++  ImgDrawResult result = ImgDrawResult::SUCCESS;
+ 
+-  // Obtain the height for the separator or use the default value.
+-  nscoord height;
+-  if (stylePosition->GetHeight().ConvertsToLength()) {
+-    height = stylePosition->GetHeight().ToLength();
++  // use -moz-appearance if provided.
++  if (useTheme) {
++    nsRect dirty;
++    dirty.IntersectRect(aSeparatorRect, aDirtyRect);
++    theme->DrawWidgetBackground(&aRenderingContext, this, appearance,
++                                aSeparatorRect, dirty);
+   } else {
+-    // Use default height 2px.
+-    height = nsPresContext::CSSPixelsToAppUnits(2);
+-  }
++    const nsStylePosition* stylePosition = separatorContext->StylePosition();
++
++    // Obtain the height for the separator or use the default value.
++    nscoord height;
++    if (stylePosition->GetHeight().ConvertsToLength()) {
++      height = stylePosition->GetHeight().ToLength();
++    } else {
++      // Use default height 2px.
++      height = nsPresContext::CSSPixelsToAppUnits(2);
++    }
++
++    // Obtain the margins for the separator and then deflate our rect by that
++    // amount. The separator is assumed to be contained within the deflated
++    // rect.
++    nsRect separatorRect(aSeparatorRect.x, aSeparatorRect.y,
++                         aSeparatorRect.width, height);
++    nsMargin separatorMargin;
++    separatorContext->StyleMargin()->GetMargin(separatorMargin);
++    separatorRect.Deflate(separatorMargin);
+ 
+-  // Obtain the margins for the separator and then deflate our rect by that
+-  // amount. The separator is assumed to be contained within the deflated
+-  // rect.
+-  nsRect separatorRect(aSeparatorRect.x, aSeparatorRect.y, aSeparatorRect.width,
+-                       height);
+-  nsMargin separatorMargin;
+-  separatorContext->StyleMargin()->GetMargin(separatorMargin);
+-  separatorRect.Deflate(separatorMargin);
++    // Center the separator.
++    separatorRect.y += (aSeparatorRect.height - height) / 2;
+ 
+-  // Center the separator.
+-  separatorRect.y += (aSeparatorRect.height - height) / 2;
++    result &=
++        PaintBackgroundLayer(separatorContext, aPresContext, aRenderingContext,
++                             separatorRect, aDirtyRect);
++  }
+ 
+-  return PaintBackgroundLayer(separatorContext, aPresContext, aRenderingContext,
+-                              separatorRect, aDirtyRect);
++  return result;
+ }
+ 
+ ImgDrawResult nsTreeBodyFrame::PaintCell(
+@@ -3039,59 +3084,68 @@ ImgDrawResult nsTreeBodyFrame::PaintTwisty(
+   twistyRect.Deflate(twistyMargin);
+ 
+   nsRect imageSize;
+-  GetTwistyRect(aRowIndex, aColumn, imageSize, twistyRect, aPresContext,
+-                twistyContext);
++  nsITheme* theme = GetTwistyRect(aRowIndex, aColumn, imageSize, twistyRect,
++                                  aPresContext, twistyContext);
+ 
+   // Subtract out the remaining width.  This is done even when we don't actually
+   // paint a twisty in this cell, so that cells in different rows still line up.
+   nsRect copyRect(twistyRect);
+   copyRect.Inflate(twistyMargin);
+   aRemainingWidth -= copyRect.width;
+-  if (!isRTL) {
+-    aCurrX += copyRect.width;
+-  }
++  if (!isRTL) aCurrX += copyRect.width;
+ 
+-  auto result = ImgDrawResult::SUCCESS;
+-  if (!shouldPaint) {
+-    return result;
+-  }
+-  // Paint our borders and background for our image rect.
+-  result &= PaintBackgroundLayer(twistyContext, aPresContext, aRenderingContext,
+-                                 twistyRect, aDirtyRect);
++  ImgDrawResult result = ImgDrawResult::SUCCESS;
+ 
+-  // Time to paint the twisty.
+-  // Adjust the rect for its border and padding.
+-  nsMargin bp;
+-  GetBorderPadding(twistyContext, bp);
+-  twistyRect.Deflate(bp);
+-  if (isRTL) {
+-    twistyRect.x = rightEdge - twistyRect.width;
+-  }
+-  imageSize.Deflate(bp);
++  if (shouldPaint) {
++    // Paint our borders and background for our image rect.
++    result &= PaintBackgroundLayer(twistyContext, aPresContext,
++                                   aRenderingContext, twistyRect, aDirtyRect);
++
++    if (theme) {
++      if (isRTL) twistyRect.x = rightEdge - twistyRect.width;
++      // yeah, I know it says we're drawing a background, but a twisty is really
++      // a fg object since it doesn't have anything that gecko would want to
++      // draw over it. Besides, we have to prevent imagelib from drawing it.
++      nsRect dirty;
++      dirty.IntersectRect(twistyRect, aDirtyRect);
++      theme->DrawWidgetBackground(
++          &aRenderingContext, this,
++          twistyContext->StyleDisplay()->EffectiveAppearance(), twistyRect,
++          dirty);
++    } else {
++      // Time to paint the twisty.
++      // Adjust the rect for its border and padding.
++      nsMargin bp(0, 0, 0, 0);
++      GetBorderPadding(twistyContext, bp);
++      twistyRect.Deflate(bp);
++      if (isRTL) twistyRect.x = rightEdge - twistyRect.width;
++      imageSize.Deflate(bp);
++
++      // Get the image for drawing.
++      nsCOMPtr<imgIContainer> image =
++          GetImage(aRowIndex, aColumn, true, twistyContext);
++      if (image) {
++        nsPoint anchorPoint = twistyRect.TopLeft();
++
++        // Center the image. XXX Obey vertical-align style prop?
++        if (imageSize.height < twistyRect.height) {
++          anchorPoint.y += (twistyRect.height - imageSize.height) / 2;
++        }
+ 
+-  // Get the image for drawing.
+-  nsCOMPtr<imgIContainer> image =
+-      GetImage(aRowIndex, aColumn, true, twistyContext);
+-  if (!image) {
+-    return result;
+-  }
+-  nsPoint anchorPoint = twistyRect.TopLeft();
++        // Apply context paint if applicable
++        SVGImageContext svgContext;
++        SVGImageContext::MaybeStoreContextPaint(svgContext, *aPresContext,
++                                                *twistyContext, image);
+ 
+-  // Center the image. XXX Obey vertical-align style prop?
+-  if (imageSize.height < twistyRect.height) {
+-    anchorPoint.y += (twistyRect.height - imageSize.height) / 2;
++        // Paint the image.
++        result &= nsLayoutUtils::DrawSingleUnscaledImage(
++            aRenderingContext, aPresContext, image, SamplingFilter::POINT,
++            anchorPoint, &aDirtyRect, svgContext, imgIContainer::FLAG_NONE,
++            &imageSize);
++      }
++    }
+   }
+ 
+-  // Apply context paint if applicable
+-  SVGImageContext svgContext;
+-  SVGImageContext::MaybeStoreContextPaint(svgContext, *aPresContext,
+-                                          *twistyContext, image);
+-
+-  // Paint the image.
+-  result &= nsLayoutUtils::DrawSingleUnscaledImage(
+-      aRenderingContext, aPresContext, image, SamplingFilter::POINT,
+-      anchorPoint, &aDirtyRect, svgContext, imgIContainer::FLAG_NONE,
+-      &imageSize);
+   return result;
+ }
+ 
+diff --git a/layout/xul/tree/nsTreeBodyFrame.h b/layout/xul/tree/nsTreeBodyFrame.h
+index d7a9498cedb8..dd38644ad9a8 100644
+--- a/layout/xul/tree/nsTreeBodyFrame.h
++++ b/layout/xul/tree/nsTreeBodyFrame.h
+@@ -295,10 +295,10 @@ class nsTreeBodyFrame final : public mozilla::SimpleXULLeafFrame,
+                  nsCSSAnonBoxPseudoStaticAtom** aChildElt);
+ 
+   // Retrieve the area for the twisty for a cell.
+-  void GetTwistyRect(int32_t aRowIndex, nsTreeColumn* aColumn,
+-                     nsRect& aImageRect, nsRect& aTwistyRect,
+-                     nsPresContext* aPresContext,
+-                     ComputedStyle* aTwistyContext);
++  nsITheme* GetTwistyRect(int32_t aRowIndex, nsTreeColumn* aColumn,
++                          nsRect& aImageRect, nsRect& aTwistyRect,
++                          nsPresContext* aPresContext,
++                          ComputedStyle* aTwistyContext);
+ 
+   // Fetch an image from the image cache, or request it.
+   already_AddRefed<imgIContainer> GetImage(int32_t aRowIndex,
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index 9b871030482d..6d3a20582466 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1579,6 +1579,27 @@ pub enum Appearance {
+     /// A tooltip.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Tooltip,
++    /// A listbox or tree widget header
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treeheader,
++    /// An individual header cell
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treeheadercell,
++    /// A tree item.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treeitem,
++    /// A tree widget branch line
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treeline,
++    /// A tree widget twisty.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treetwisty,
++    /// Open tree widget twisty.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treetwistyopen,
++    /// A tree widget.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treeview,
+ 
+     /// Sidebar appearance.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+diff --git a/toolkit/content/widgets.css b/toolkit/content/widgets.css
+index 16b6d5cb94d8..d7f1b686029e 100644
+--- a/toolkit/content/widgets.css
++++ b/toolkit/content/widgets.css
+@@ -22,4 +22,4 @@
+ @import url("chrome://global/skin/tabbox.css");
+ @import url("chrome://global/skin/toolbar.css");
+ @import url("chrome://global/skin/toolbarbutton.css");
+-@import url("chrome://global/skin/tree/tree.css");
++@import url("chrome://global/skin/tree.css");
+diff --git a/toolkit/content/xul.css b/toolkit/content/xul.css
+index 7f5b7aa295f6..908132d59808 100644
+--- a/toolkit/content/xul.css
++++ b/toolkit/content/xul.css
+@@ -600,6 +600,20 @@ menulist[popuponly] {
+   padding: 0 !important;
+ }
+ 
++/********** splitter **********/
++
++.tree-splitter {
++  margin-inline: -4px;
++  width: 8px;
++  max-width: 8px;
++  min-width: 8px;
++  appearance: none !important;
++  border: none !important;
++  background: none !important;
++  order: 2147483646;
++  z-index: 2147483646;
++}
++
+ /******** scrollbar ********/
+ 
+ slider {
+diff --git a/toolkit/themes/shared/desktop-jar.inc.mn b/toolkit/themes/shared/desktop-jar.inc.mn
+index 5907a9773fe6..2ba976a60330 100644
+--- a/toolkit/themes/shared/desktop-jar.inc.mn
++++ b/toolkit/themes/shared/desktop-jar.inc.mn
+@@ -46,7 +46,7 @@
+   skin/classic/global/popupnotification.css                (../../shared/popupnotification.css)
+   skin/classic/global/splitter.css                         (../../shared/splitter.css)
+   skin/classic/global/toolbarbutton.css                    (../../shared/toolbarbutton.css)
+-  skin/classic/global/tree/tree.css                        (../../shared/tree/tree.css)
++  skin/classic/global/tree.css                             (../../shared/tree.css)
+   skin/classic/global/dirListing/dirListing.css            (../../shared/dirListing/dirListing.css)
+ #ifdef XP_MACOSX
+   skin/classic/global/dirListing/folder.png                (../../shared/dirListing/folder-osx.png)
+@@ -160,5 +160,3 @@
+   skin/classic/global/reader/character-spacing-20.svg      (../../shared/reader/character-spacing-20.svg)
+   skin/classic/global/reader/line-spacing-20.svg           (../../shared/reader/line-spacing-20.svg)
+   skin/classic/global/reader/content-width-20.svg          (../../shared/reader/content-width-20.svg)
+-  skin/classic/global/tree/sort-asc.svg                    (../../shared/tree/sort-asc.svg)
+-  skin/classic/global/tree/sort-dsc.svg                    (../../shared/tree/sort-dsc.svg)
+diff --git a/toolkit/themes/shared/desktop-non-mac.jar.inc.mn b/toolkit/themes/shared/desktop-non-mac.jar.inc.mn
+index afa8123140e3..c976798df5c6 100644
+--- a/toolkit/themes/shared/desktop-non-mac.jar.inc.mn
++++ b/toolkit/themes/shared/desktop-non-mac.jar.inc.mn
+@@ -20,4 +20,7 @@
+ 
+   skin/classic/mozapps/handling/handling.css               (../../windows/mozapps/handling/handling.css)
+ 
++  skin/classic/global/tree/sort-asc.svg                    (../../windows/global/tree/sort-asc.svg)
++  skin/classic/global/tree/sort-dsc.svg                    (../../windows/global/tree/sort-dsc.svg)
++
+ % override chrome://mozapps/skin/xpinstall/xpinstallItemGeneric.png       chrome://mozapps/skin/extensions/extensionGeneric.svg
+diff --git a/toolkit/themes/shared/tree/tree.css b/toolkit/themes/shared/tree.css
+similarity index 88%
+rename from toolkit/themes/shared/tree/tree.css
+rename to toolkit/themes/shared/tree.css
+index aa4ffa899c15..9c56af4db414 100644
+--- a/toolkit/themes/shared/tree/tree.css
++++ b/toolkit/themes/shared/tree.css
+@@ -23,21 +23,6 @@ tree {
+   }
+ }
+ 
+-/********** splitter **********/
+-
+-.tree-splitter {
+-  margin-inline: -4px;
+-  width: 8px;
+-  max-width: 8px;
+-  min-width: 8px;
+-  appearance: none !important;
+-  border: none !important;
+-  background: none !important;
+-  order: 2147483646;
+-  z-index: 2147483646;
+-}
+-
+-
+ /* ::::: tree rows ::::: */
+ 
+ treechildren::-moz-tree-row {
+@@ -138,15 +123,20 @@ treechildren::-moz-tree-drop-feedback {
+ 
+ treecol,
+ .tree-columnpicker-button {
++  appearance: auto;
++  -moz-default-appearance: treeheadercell;
+   background-color: -moz-ColHeader;
+   color: -moz-ColHeaderText;
+   align-items: center;
+   justify-content: center;
+   padding: 0 4px;
+   margin: 0;
+-
+   border-inline-start: 1px solid ThreeDLightShadow;
+-  box-shadow: inset 0 -1px ThreeDLightShadow;
++
++  @media (-moz-platform: linux) or ((-moz-platform: windows) and (prefers-color-scheme: dark)) {
++    appearance: none;
++    box-shadow: inset 0 -1px ThreeDLightShadow;
++  }
+ 
+   &:where(:hover) {
+     background-color: -moz-ColHeaderHover;
+@@ -260,20 +250,22 @@ html|input.tree-input {
+   z-index: 2147483647;
+ }
+ 
+-/* ::::: sort direction indicator :::::  */
+-.treecol-sortdirection {
+-  list-style-image: url("chrome://global/skin/tree/sort-asc.svg");
+-  -moz-context-properties: fill;
+-  fill: currentColor;
+-  visibility: hidden;
++@media not (-moz-platform: macos) {
++  /* ::::: sort direction indicator :::::  */
++  .treecol-sortdirection {
++    list-style-image: url("chrome://global/skin/tree/sort-asc.svg");
++    -moz-context-properties: fill;
++    fill: currentColor;
++    visibility: hidden;
+ 
+-  treecol[sortDirection="ascending"]:not([hideheader="true"]) > & {
+-    visibility: inherit;
+-  }
++    treecol[sortDirection="ascending"]:not([hideheader="true"]) > & {
++      visibility: inherit;
++    }
+ 
+-  treecol[sortDirection="descending"]:not([hideheader="true"]) > & {
+-    visibility: inherit;
+-    list-style-image: url("chrome://global/skin/tree/sort-dsc.svg");
++    treecol[sortDirection="descending"]:not([hideheader="true"]) > & {
++      visibility: inherit;
++      list-style-image: url("chrome://global/skin/tree/sort-dsc.svg");
++    }
+   }
+ }
+ 
+diff --git a/toolkit/themes/shared/tree/sort-asc.svg b/toolkit/themes/windows/global/tree/sort-asc.svg
+similarity index 100%
+rename from toolkit/themes/shared/tree/sort-asc.svg
+rename to toolkit/themes/windows/global/tree/sort-asc.svg
+diff --git a/toolkit/themes/shared/tree/sort-dsc.svg b/toolkit/themes/windows/global/tree/sort-dsc.svg
+similarity index 100%
+rename from toolkit/themes/shared/tree/sort-dsc.svg
+rename to toolkit/themes/windows/global/tree/sort-dsc.svg
+diff --git a/widget/cocoa/nsLookAndFeel.mm b/widget/cocoa/nsLookAndFeel.mm
+index 69bd348da8fe..223619f312c5 100644
+--- a/widget/cocoa/nsLookAndFeel.mm
++++ b/widget/cocoa/nsLookAndFeel.mm
+@@ -238,6 +238,9 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+     case ColorID::MozButtonhoverface:
+     case ColorID::MozButtonactiveface:
+     case ColorID::MozButtondisabledface:
++    case ColorID::MozColheader:
++    case ColorID::MozColheaderhover:
++    case ColorID::MozColheaderactive:
+       aColor = GetColorFromNSColor(NSColor.controlColor);
+       if (!NS_GET_A(aColor)) {
+         aColor = GetColorFromNSColor(NSColor.controlBackgroundColor);
+@@ -297,6 +300,9 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+     case ColorID::Menutext:
+     case ColorID::Infotext:
+     case ColorID::MozCellhighlighttext:
++    case ColorID::MozColheadertext:
++    case ColorID::MozColheaderhovertext:
++    case ColorID::MozColheaderactivetext:
+     case ColorID::MozSidebartext:
+       aColor = GetColorFromNSColor(NSColor.controlTextColor);
+       break;
+@@ -312,17 +318,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+       // For inactive list selection
+       aColor = GetColorFromNSColor(NSColor.secondarySelectedControlColor);
+       break;
+-    case ColorID::MozColheadertext:
+-    case ColorID::MozColheaderhovertext:
+-    case ColorID::MozColheaderactivetext:
+-      aColor = GetColorFromNSColor(NSColor.headerTextColor);
+-      break;
+-    case ColorID::MozColheaderactive:
+-      aColor = GetColorFromNSColor(
+-          NSColor.unemphasizedSelectedContentBackgroundColor);
+-      break;
+-    case ColorID::MozColheader:
+-    case ColorID::MozColheaderhover:
+     case ColorID::MozEventreerow:
+       // Background color of even list rows.
+       aColor =
+diff --git a/widget/cocoa/nsNativeThemeCocoa.h b/widget/cocoa/nsNativeThemeCocoa.h
+index 66e5aec1df83..da8c3049c393 100644
+--- a/widget/cocoa/nsNativeThemeCocoa.h
++++ b/widget/cocoa/nsNativeThemeCocoa.h
+@@ -40,6 +40,8 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     eSquareBezelPushButton,
+     eArrowButton,
+     eHelpButton,
++    eTreeTwistyPointingRight,
++    eTreeTwistyPointingDown,
+     eDisclosureButtonClosed,
+     eDisclosureButtonOpen
+   };
+@@ -129,6 +131,12 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     bool rtl = false;
+   };
+ 
++  struct TreeHeaderCellParams {
++    ControlParams controlParams;
++    TreeSortDirection sortDirection = eTreeSortDirection_Natural;
++    bool lastTreeHeaderCell = false;
++  };
++
+   struct ScaleParams {
+     int32_t value = 0;
+     int32_t min = 0;
+@@ -157,6 +165,7 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     eSearchField,         // TextFieldParams
+     eProgressBar,         // ProgressParams
+     eMeter,               // MeterParams
++    eTreeHeaderCell,      // TreeHeaderCellParams
+     eScale,               // ScaleParams
+     eMultilineTextField,  // bool
+     eListBox,
+@@ -212,6 +221,9 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     static WidgetInfo Meter(const MeterParams& aParams) {
+       return WidgetInfo(Widget::eMeter, aParams);
+     }
++    static WidgetInfo TreeHeaderCell(const TreeHeaderCellParams& aParams) {
++      return WidgetInfo(Widget::eTreeHeaderCell, aParams);
++    }
+     static WidgetInfo Scale(const ScaleParams& aParams) {
+       return WidgetInfo(Widget::eScale, aParams);
+     }
+@@ -239,7 +251,7 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     mozilla::Variant<mozilla::gfx::sRGBColor, CheckboxOrRadioParams,
+                      ButtonParams, DropdownParams, SpinButtonParams,
+                      SegmentParams, TextFieldParams, ProgressParams,
+-                     MeterParams, ScaleParams, bool>
++                     MeterParams, TreeHeaderCellParams, ScaleParams, bool>
+         mVariant;
+ 
+     enum Widget mWidget;
+@@ -303,6 +315,8 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+   ProgressParams ComputeProgressParams(nsIFrame*, mozilla::dom::ElementState,
+                                        bool aIsHorizontal);
+   MeterParams ComputeMeterParams(nsIFrame*);
++  TreeHeaderCellParams ComputeTreeHeaderCellParams(nsIFrame*,
++                                                   mozilla::dom::ElementState);
+   mozilla::Maybe<ScaleParams> ComputeHTMLScaleParams(
+       nsIFrame*, mozilla::dom::ElementState);
+ 
+@@ -340,6 +354,8 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+                          const ControlParams& aParams);
+   void DrawButton(CGContextRef context, const HIRect& inBoxRect,
+                   const ButtonParams& aParams);
++  void DrawTreeHeaderCell(CGContextRef context, const HIRect& inBoxRect,
++                          const TreeHeaderCellParams& aParams);
+   void DrawDropdown(CGContextRef context, const HIRect& inBoxRect,
+                     const DropdownParams& aParams);
+   HIThemeButtonDrawInfo SpinButtonDrawInfo(ThemeButtonKind aKind,
+@@ -371,6 +387,7 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+   NSComboBoxCell* mComboBoxCell;
+   NSProgressBarCell* mProgressBarCell;
+   NSLevelIndicatorCell* mMeterBarCell;
++  NSTableHeaderCell* mTreeHeaderCell;
+   MOZCellDrawWindow* mCellDrawWindow = nil;
+   MOZCellDrawView* mCellDrawView;
+ };
+diff --git a/widget/cocoa/nsNativeThemeCocoa.mm b/widget/cocoa/nsNativeThemeCocoa.mm
+index ad16fac04ab8..341cc4b2f415 100644
+--- a/widget/cocoa/nsNativeThemeCocoa.mm
++++ b/widget/cocoa/nsNativeThemeCocoa.mm
+@@ -458,6 +458,8 @@ nsNativeThemeCocoa::nsNativeThemeCocoa() : ThemeCocoa(ScrollbarStyle()) {
+   mMeterBarCell = [[NSLevelIndicatorCell alloc]
+       initWithLevelIndicatorStyle:NSLevelIndicatorStyleContinuousCapacity];
+ 
++  mTreeHeaderCell = [[NSTableHeaderCell alloc] init];
++
+   mCellDrawView = [[MOZCellDrawView alloc] init];
+ 
+   if (XRE_IsParentProcess()) {
+@@ -496,6 +498,7 @@ nsNativeThemeCocoa::~nsNativeThemeCocoa() {
+   [mSearchFieldCell release];
+   [mDropdownCell release];
+   [mComboBoxCell release];
++  [mTreeHeaderCell release];
+   [mCellDrawWindow release];
+   [mCellDrawView release];
+ 
+@@ -1314,6 +1317,17 @@ static void RenderButton(CGContextRef cgContext, const HIRect& aRenderRect,
+                     NULL);
+ }
+ 
++static ThemeDrawState ToThemeDrawState(
++    const nsNativeThemeCocoa::ControlParams& aParams) {
++  if (aParams.disabled) {
++    return kThemeStateUnavailable;
++  }
++  if (aParams.pressed) {
++    return kThemeStatePressed;
++  }
++  return kThemeStateActive;
++}
++
+ void nsNativeThemeCocoa::DrawHIThemeButton(
+     CGContextRef cgContext, const HIRect& aRect, ThemeButtonKind aKind,
+     ThemeButtonValue aValue, ThemeDrawState aState,
+@@ -1363,6 +1377,16 @@ void nsNativeThemeCocoa::DrawButton(CGContextRef cgContext,
+     case ButtonType::eHelpButton:
+       DrawHelpButton(cgContext, inBoxRect, controlParams);
+       return;
++    case ButtonType::eTreeTwistyPointingRight:
++      DrawHIThemeButton(cgContext, inBoxRect, kThemeDisclosureButton,
++                        kThemeDisclosureRight, ToThemeDrawState(controlParams),
++                        kThemeAdornmentNone, controlParams);
++      return;
++    case ButtonType::eTreeTwistyPointingDown:
++      DrawHIThemeButton(cgContext, inBoxRect, kThemeDisclosureButton,
++                        kThemeDisclosureDown, ToThemeDrawState(controlParams),
++                        kThemeAdornmentNone, controlParams);
++      return;
+     case ButtonType::eDisclosureButtonClosed:
+       DrawDisclosureButton(cgContext, inBoxRect, controlParams,
+                            NSControlStateValueOff);
+@@ -1374,6 +1398,87 @@ void nsNativeThemeCocoa::DrawButton(CGContextRef cgContext,
+   }
+ }
+ 
++nsNativeThemeCocoa::TreeHeaderCellParams
++nsNativeThemeCocoa::ComputeTreeHeaderCellParams(nsIFrame* aFrame,
++                                                ElementState aEventState) {
++  TreeHeaderCellParams params;
++  params.controlParams = ComputeControlParams(aFrame, aEventState);
++  params.sortDirection = GetTreeSortDirection(aFrame);
++  params.lastTreeHeaderCell = IsLastTreeHeaderCell(aFrame);
++  return params;
++}
++
++@interface NSTableHeaderCell (NSTableHeaderCell_setSortable)
++// This method has been present in the same form since at least macOS 10.4.
++- (void)_setSortable:(BOOL)arg1
++    showSortIndicator:(BOOL)arg2
++            ascending:(BOOL)arg3
++             priority:(NSInteger)arg4
++     highlightForSort:(BOOL)arg5;
++@end
++
++void nsNativeThemeCocoa::DrawTreeHeaderCell(
++    CGContextRef cgContext, const HIRect& inBoxRect,
++    const TreeHeaderCellParams& aParams) {
++  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
++
++  // Without clearing the cell's title, it takes on a default value of "Field",
++  // which is displayed underneath the title set in the front-end.
++  NSCell* cell = (NSCell*)mTreeHeaderCell;
++  cell.title = @"";
++
++  if ([mTreeHeaderCell
++          respondsToSelector:@selector
++          (_setSortable:
++              showSortIndicator:ascending:priority:highlightForSort:)]) {
++    switch (aParams.sortDirection) {
++      case eTreeSortDirection_Ascending:
++        [mTreeHeaderCell _setSortable:YES
++                    showSortIndicator:YES
++                            ascending:YES
++                             priority:0
++                     highlightForSort:YES];
++        break;
++      case eTreeSortDirection_Descending:
++        [mTreeHeaderCell _setSortable:YES
++                    showSortIndicator:YES
++                            ascending:NO
++                             priority:0
++                     highlightForSort:YES];
++        break;
++      default:
++        // eTreeSortDirection_Natural
++        [mTreeHeaderCell _setSortable:YES
++                    showSortIndicator:NO
++                            ascending:YES
++                             priority:0
++                     highlightForSort:NO];
++        break;
++    }
++  }
++
++  mTreeHeaderCell.enabled = !aParams.controlParams.disabled;
++  mTreeHeaderCell.state =
++      (mTreeHeaderCell.enabled && aParams.controlParams.pressed)
++          ? NSControlStateValueOn
++          : NSControlStateValueOff;
++
++  mCellDrawView._drawingEndSeparator = !aParams.lastTreeHeaderCell;
++
++  NSGraphicsContext* savedContext = NSGraphicsContext.currentContext;
++  NSGraphicsContext.currentContext =
++      [NSGraphicsContext graphicsContextWithCGContext:cgContext flipped:YES];
++  DrawCellIncludingFocusRing(mTreeHeaderCell, inBoxRect, mCellDrawView);
++  NSGraphicsContext.currentContext = savedContext;
++
++#if DRAW_IN_FRAME_DEBUG
++  CGContextSetRGBFillColor(cgContext, 0.0, 0.0, 0.5, 0.25);
++  CGContextFillRect(cgContext, inBoxRect);
++#endif
++
++  NS_OBJC_END_TRY_IGNORE_BLOCK;
++}
++
+ MOZ_RUNINIT static const CellRenderSettings dropdownSettings = {
+     {
+         NSMakeSize(0, 16),  // mini
+@@ -2243,6 +2348,30 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
+       // Do nothing: progress and meter bars cases will draw chunks.
+       break;
+ 
++    case StyleAppearance::Treetwisty:
++      return Some(WidgetInfo::Button(
++          ButtonParams{ComputeControlParams(aFrame, elementState),
++                       ButtonType::eTreeTwistyPointingRight}));
++
++    case StyleAppearance::Treetwistyopen:
++      return Some(WidgetInfo::Button(
++          ButtonParams{ComputeControlParams(aFrame, elementState),
++                       ButtonType::eTreeTwistyPointingDown}));
++
++    case StyleAppearance::Treeheadercell:
++      return Some(WidgetInfo::TreeHeaderCell(
++          ComputeTreeHeaderCellParams(aFrame, elementState)));
++
++    case StyleAppearance::Treeitem:
++    case StyleAppearance::Treeview:
++      return Some(WidgetInfo::ColorFill(sRGBColor(1.0, 1.0, 1.0, 1.0)));
++
++    case StyleAppearance::Treeheader:
++      // do nothing, taken care of by individual header cells
++    case StyleAppearance::Treeline:
++      // do nothing, these lines don't exist on macos
++      break;
++
+     case StyleAppearance::Range: {
+       Maybe<ScaleParams> params = ComputeHTMLScaleParams(aFrame, elementState);
+       if (params) {
+@@ -2452,6 +2581,12 @@ void nsNativeThemeCocoa::RenderWidget(const WidgetInfo& aWidgetInfo,
+           DrawMeter(cgContext, macRect, params);
+           break;
+         }
++        case Widget::eTreeHeaderCell: {
++          TreeHeaderCellParams params =
++              aWidgetInfo.Params<TreeHeaderCellParams>();
++          DrawTreeHeaderCell(cgContext, macRect, params);
++          break;
++        }
+         case Widget::eScale: {
+           ScaleParams params = aWidgetInfo.Params<ScaleParams>();
+           DrawScale(cgContext, macRect, params);
+@@ -2537,6 +2672,11 @@ bool nsNativeThemeCocoa::CreateWebRenderCommandsForWidget(
+     case StyleAppearance::Searchfield:
+     case StyleAppearance::ProgressBar:
+     case StyleAppearance::Meter:
++    case StyleAppearance::Treeheadercell:
++    case StyleAppearance::Treetwisty:
++    case StyleAppearance::Treetwistyopen:
++    case StyleAppearance::Treeitem:
++    case StyleAppearance::Treeview:
+     case StyleAppearance::Range:
+       return false;
+ 
+@@ -2849,6 +2989,23 @@ LayoutDeviceIntSize nsNativeThemeCocoa::GetMinimumWidgetSize(
+       break;
+     }
+ 
++    case StyleAppearance::Treetwisty:
++    case StyleAppearance::Treetwistyopen: {
++      SInt32 twistyHeight = 0, twistyWidth = 0;
++      ::GetThemeMetric(kThemeMetricDisclosureButtonWidth, &twistyWidth);
++      ::GetThemeMetric(kThemeMetricDisclosureButtonHeight, &twistyHeight);
++      result.SizeTo(twistyWidth, twistyHeight);
++      break;
++    }
++
++    case StyleAppearance::Treeheader:
++    case StyleAppearance::Treeheadercell: {
++      SInt32 headerHeight = 0;
++      ::GetThemeMetric(kThemeMetricListHeaderHeight, &headerHeight);
++      result.SizeTo(0, headerHeight);
++      break;
++    }
++
+     case StyleAppearance::Tab: {
+       result.SizeTo(0, tabHeights[miniControlSize]);
+       break;
+@@ -2988,6 +3145,14 @@ bool nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext,
+     case StyleAppearance::Tabpanels:
+     case StyleAppearance::Tab:
+ 
++    case StyleAppearance::Treetwisty:
++    case StyleAppearance::Treetwistyopen:
++    case StyleAppearance::Treeview:
++    case StyleAppearance::Treeheader:
++    case StyleAppearance::Treeheadercell:
++    case StyleAppearance::Treeitem:
++    case StyleAppearance::Treeline:
++
+     case StyleAppearance::Range:
+       return !IsWidgetStyled(aPresContext, aFrame, aAppearance);
+ 
+@@ -3055,6 +3220,8 @@ bool nsNativeThemeCocoa::WidgetAppearanceDependsOnWindowFocus(
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+     case StyleAppearance::Textfield:
++    case StyleAppearance::Treeview:
++    case StyleAppearance::Treeline:
+     case StyleAppearance::Textarea:
+     case StyleAppearance::Listbox:
+       return false;
+diff --git a/widget/gtk/WidgetStyleCache.cpp b/widget/gtk/WidgetStyleCache.cpp
+index b3d9bfcbbd13..13b194a64e9a 100644
+--- a/widget/gtk/WidgetStyleCache.cpp
++++ b/widget/gtk/WidgetStyleCache.cpp
+@@ -1079,6 +1079,11 @@ static GtkStyleContext* GetCssNodeStyleInternal(WidgetNodeType aNodeType) {
+       // TODO - create from CSS node
+       style = CreateSubStyleWithClass(MOZ_GTK_TREEVIEW, GTK_STYLE_CLASS_VIEW);
+       break;
++    case MOZ_GTK_TREEVIEW_EXPANDER:
++      // TODO - create from CSS node
++      style =
++          CreateSubStyleWithClass(MOZ_GTK_TREEVIEW, GTK_STYLE_CLASS_EXPANDER);
++      break;
+     case MOZ_GTK_SPLITTER_SEPARATOR_HORIZONTAL:
+       style = CreateChildCSSNode("separator", MOZ_GTK_SPLITTER_HORIZONTAL);
+       break;
+@@ -1213,6 +1218,10 @@ static GtkStyleContext* GetWidgetStyleInternal(WidgetNodeType aNodeType) {
+     case MOZ_GTK_TREEVIEW_VIEW:
+       style = CreateSubStyleWithClass(MOZ_GTK_TREEVIEW, GTK_STYLE_CLASS_VIEW);
+       break;
++    case MOZ_GTK_TREEVIEW_EXPANDER:
++      style =
++          CreateSubStyleWithClass(MOZ_GTK_TREEVIEW, GTK_STYLE_CLASS_EXPANDER);
++      break;
+     case MOZ_GTK_SPLITTER_SEPARATOR_HORIZONTAL:
+       style = CreateSubStyleWithClass(MOZ_GTK_SPLITTER_HORIZONTAL,
+                                       GTK_STYLE_CLASS_PANE_SEPARATOR);
+diff --git a/widget/gtk/gtk3drawing.cpp b/widget/gtk/gtk3drawing.cpp
+index c67716b90ef8..a159e91487b7 100644
+--- a/widget/gtk/gtk3drawing.cpp
++++ b/widget/gtk/gtk3drawing.cpp
+@@ -953,7 +953,54 @@ static gint moz_gtk_treeview_paint(cairo_t* cr, GdkRectangle* rect,
+   return MOZ_GTK_SUCCESS;
+ }
+ 
+-/* See gtk_separator_draw() for reference. */
++static gint moz_gtk_tree_header_cell_paint(cairo_t* cr,
++                                           const GdkRectangle* aRect,
++                                           GtkWidgetState* state,
++                                           gboolean isSorted,
++                                           GtkTextDirection direction) {
++  moz_gtk_button_paint(cr, aRect, state, GTK_RELIEF_NORMAL,
++                       GetWidget(MOZ_GTK_TREE_HEADER_CELL), direction);
++  return MOZ_GTK_SUCCESS;
++}
++
++/* See gtk_expander_paint() for reference.
++ */
++static gint moz_gtk_treeview_expander_paint(cairo_t* cr, GdkRectangle* rect,
++                                            GtkWidgetState* state,
++                                            GtkExpanderStyle expander_state,
++                                            GtkTextDirection direction) {
++  /* Because the frame we get is of the entire treeview, we can't get the
++   * precise event state of one expander, thus rendering hover and active
++   * feedback useless. */
++  GtkStateFlags state_flags =
++      state->disabled ? GTK_STATE_FLAG_INSENSITIVE : GTK_STATE_FLAG_NORMAL;
++
++  if (state->inHover)
++    state_flags =
++        static_cast<GtkStateFlags>(state_flags | GTK_STATE_FLAG_PRELIGHT);
++  if (state->selected)
++    state_flags =
++        static_cast<GtkStateFlags>(state_flags | GTK_STATE_FLAG_SELECTED);
++
++  /* GTK_STATE_FLAG_ACTIVE controls expanded/colapsed state rendering
++   * in gtk_render_expander()
++   */
++  if (expander_state == GTK_EXPANDER_EXPANDED)
++    state_flags =
++        static_cast<GtkStateFlags>(state_flags | checkbox_check_state);
++  else
++    state_flags =
++        static_cast<GtkStateFlags>(state_flags & ~(checkbox_check_state));
++
++  GtkStyleContext* style = GetStyleContext(
++      MOZ_GTK_TREEVIEW_EXPANDER, state->image_scale, direction, state_flags);
++  gtk_render_expander(style, cr, rect->x, rect->y, rect->width, rect->height);
++
++  return MOZ_GTK_SUCCESS;
++}
++
++/* See gtk_separator_draw() for reference.
++ */
+ static gint moz_gtk_combo_box_paint(cairo_t* cr, const GdkRectangle* aRect,
+                                     GtkWidgetState* state,
+                                     GtkTextDirection direction) {
+@@ -1541,6 +1588,18 @@ gint moz_gtk_get_widget_border(WidgetNodeType widget, gint* left, gint* top,
+       moz_gtk_add_style_border(style, left, top, right, bottom);
+       return MOZ_GTK_SUCCESS;
+     }
++    case MOZ_GTK_TREE_HEADER_CELL: {
++      /* A Tree Header in GTK is just a different styled button
++       * It must be placed in a TreeView for getting the correct style
++       * assigned.
++       * That is why the following code is the same as for MOZ_GTK_BUTTON.
++       * */
++      *left = *top = *right = *bottom = gtk_container_get_border_width(
++          GTK_CONTAINER(GetWidget(MOZ_GTK_TREE_HEADER_CELL)));
++      style = GetStyleContext(MOZ_GTK_TREE_HEADER_CELL);
++      moz_gtk_add_border_padding(style, left, top, right, bottom);
++      return MOZ_GTK_SUCCESS;
++    }
+     case MOZ_GTK_DROPDOWN: {
+       /* We need to account for the arrow on the dropdown, so text
+        * doesn't come too close to the arrow, or in some cases spill
+@@ -1626,6 +1685,7 @@ gint moz_gtk_get_widget_border(WidgetNodeType widget, gint* left, gint* top,
+     case MOZ_GTK_PROGRESS_CHUNK:
+     case MOZ_GTK_PROGRESS_CHUNK_INDETERMINATE:
+     case MOZ_GTK_PROGRESS_CHUNK_VERTICAL_INDETERMINATE:
++    case MOZ_GTK_TREEVIEW_EXPANDER:
+     case MOZ_GTK_HEADER_BAR:
+     case MOZ_GTK_HEADER_BAR_MAXIMIZED:
+     case MOZ_GTK_HEADER_BAR_BUTTON_CLOSE:
+@@ -1733,6 +1793,18 @@ void moz_gtk_get_arrow_size(WidgetNodeType widgetType, gint* width,
+   }
+ }
+ 
++gint moz_gtk_get_expander_size(gint* size) {
++  GtkStyleContext* style = GetStyleContext(MOZ_GTK_EXPANDER);
++  gtk_style_context_get_style(style, "expander-size", size, NULL);
++  return MOZ_GTK_SUCCESS;
++}
++
++gint moz_gtk_get_treeview_expander_size(gint* size) {
++  GtkStyleContext* style = GetStyleContext(MOZ_GTK_TREEVIEW);
++  gtk_style_context_get_style(style, "expander-size", size, NULL);
++  return MOZ_GTK_SUCCESS;
++}
++
+ void moz_gtk_get_entry_min_height(gint* min_content_height,
+                                   gint* border_padding_height) {
+   GtkStyleContext* style = GetStyleContext(MOZ_GTK_ENTRY);
+@@ -2001,6 +2073,11 @@ gint moz_gtk_widget_paint(WidgetNodeType widget, cairo_t* cr,
+     }
+     case MOZ_GTK_TREEVIEW:
+       return moz_gtk_treeview_paint(cr, rect, state, direction);
++    case MOZ_GTK_TREE_HEADER_CELL:
++      return moz_gtk_tree_header_cell_paint(cr, rect, state, flags, direction);
++    case MOZ_GTK_TREEVIEW_EXPANDER:
++      return moz_gtk_treeview_expander_paint(
++          cr, rect, state, (GtkExpanderStyle)flags, direction);
+     case MOZ_GTK_ENTRY:
+     case MOZ_GTK_DROPDOWN_ENTRY: {
+       GtkStyleContext* style =
+diff --git a/widget/gtk/gtkdrawing.h b/widget/gtk/gtkdrawing.h
+index 227a33d9a945..8d570154273a 100644
+--- a/widget/gtk/gtkdrawing.h
++++ b/widget/gtk/gtkdrawing.h
+@@ -212,6 +212,8 @@ enum WidgetNodeType : int {
+   MOZ_GTK_TREEVIEW_VIEW,
+   /* Paints treeheader cells */
+   MOZ_GTK_TREE_HEADER_CELL,
++  /* Paints an expander for a GtkTreeView */
++  MOZ_GTK_TREEVIEW_EXPANDER,
+   /* Paints the background of menus, context menus. */
+   MOZ_GTK_MENUPOPUP,
+   /* Menubar for -moz-headerbar colors */
+@@ -456,6 +458,22 @@ void moz_gtk_get_entry_min_height(gint* min_content_height,
+  */
+ gint moz_gtk_get_toolbar_separator_width(gint* size);
+ 
++/**
++ * Get the size of a regular GTK expander that shows/hides content
++ * size:    [OUT] the size of the GTK expander, size = width = height.
++ *
++ * returns:    MOZ_GTK_SUCCESS if there was no error, an error code otherwise
++ */
++gint moz_gtk_get_expander_size(gint* size);
++
++/**
++ * Get the size of a treeview's expander (we call them twisties)
++ * size:    [OUT] the size of the GTK expander, size = width = height.
++ *
++ * returns:    MOZ_GTK_SUCCESS if there was no error, an error code otherwise
++ */
++gint moz_gtk_get_treeview_expander_size(gint* size);
++
+ /**
+  * Get the desired size of a splitter
+  * orientation:   [IN]  GTK_ORIENTATION_HORIZONTAL or GTK_ORIENTATION_VERTICAL
+diff --git a/widget/gtk/nsNativeThemeGTK.cpp b/widget/gtk/nsNativeThemeGTK.cpp
+index 5c858d231344..fb820db4ccde 100644
+--- a/widget/gtk/nsNativeThemeGTK.cpp
++++ b/widget/gtk/nsNativeThemeGTK.cpp
+@@ -195,6 +195,14 @@ bool nsNativeThemeGTK::GetGtkWidgetAndState(StyleAppearance aAppearance,
+         aAppearance == StyleAppearance::Menulist ||
+         aAppearance == StyleAppearance::MenulistButton) {
+       aState->active &= aState->inHover;
++    } else if (aAppearance == StyleAppearance::Treetwisty ||
++               aAppearance == StyleAppearance::Treetwistyopen) {
++      if (nsTreeBodyFrame* treeBodyFrame = do_QueryFrame(aFrame)) {
++        const mozilla::AtomArray& atoms =
++            treeBodyFrame->GetPropertyArrayForCurrentDrawingItem();
++        aState->selected = atoms.Contains(nsGkAtoms::selected);
++        aState->inHover = atoms.Contains(nsGkAtoms::hover);
++      }
+     }
+ 
+     if (IsFrameContentNodeInNamespace(aFrame, kNameSpaceID_XUL)) {
+@@ -292,8 +300,17 @@ bool nsNativeThemeGTK::GetGtkWidgetAndState(StyleAppearance aAppearance,
+       aGtkWidgetType = MOZ_GTK_TEXT_VIEW;
+       break;
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
+       aGtkWidgetType = MOZ_GTK_TREEVIEW;
+       break;
++    case StyleAppearance::Treetwisty:
++      aGtkWidgetType = MOZ_GTK_TREEVIEW_EXPANDER;
++      if (aWidgetFlags) *aWidgetFlags = GTK_EXPANDER_COLLAPSED;
++      break;
++    case StyleAppearance::Treetwistyopen:
++      aGtkWidgetType = MOZ_GTK_TREEVIEW_EXPANDER;
++      if (aWidgetFlags) *aWidgetFlags = GTK_EXPANDER_EXPANDED;
++      break;
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::Menulist:
+       aGtkWidgetType = MOZ_GTK_DROPDOWN;
+@@ -1120,6 +1137,12 @@ LayoutDeviceIntSize nsNativeThemeGTK::GetMinimumWidgetSize(
+       result.width = 14;
+       result.height = 13;
+       break;
++    case StyleAppearance::Treetwisty:
++    case StyleAppearance::Treetwistyopen: {
++      gint expander_size;
++      moz_gtk_get_treeview_expander_size(&expander_size);
++      result.width = result.height = expander_size;
++    } break;
+     default:
+       break;
+   }
+@@ -1222,6 +1245,12 @@ nsNativeThemeGTK::ThemeSupportsWidget(nsPresContext* aPresContext,
+     case StyleAppearance::ButtonArrowNext:
+     case StyleAppearance::ButtonArrowPrevious:
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
++      // case StyleAppearance::Treeitem:
++    case StyleAppearance::Treetwisty:
++      // case StyleAppearance::Treeline:
++      // case StyleAppearance::Treeheader:
++    case StyleAppearance::Treetwistyopen:
+     case StyleAppearance::ProgressBar:
+     case StyleAppearance::Progresschunk:
+     case StyleAppearance::Tab:
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index b988fb4ec58a..d766e2550676 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -501,7 +501,12 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
+     case StyleAppearance::Menulist:
+     case StyleAppearance::MenulistButton:
+       return Some(eUXCombobox);
++    case StyleAppearance::Treeheadercell:
++      return Some(eUXHeader);
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
++    case StyleAppearance::Treetwistyopen:
++    case StyleAppearance::Treeitem:
+       return Some(eUXListview);
+     default:
+       return Nothing();
+@@ -713,6 +718,7 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
+       }
+       return NS_OK;
+     }
++    case StyleAppearance::Treeview:
+     case StyleAppearance::Listbox: {
+       aPart = TREEVIEW_BODY;
+       aState = TS_NORMAL;
+@@ -749,6 +755,17 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
+ 
+       return NS_OK;
+     }
++    case StyleAppearance::Treeheadercell: {
++      aPart = 1;
++      if (!aFrame) {
++        aState = TS_NORMAL;
++        return NS_OK;
++      }
++
++      aState = StandardGetState(aFrame, aAppearance, true);
++
++      return NS_OK;
++    }
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::Menulist: {
+       nsIContent* content = aFrame->GetContent();
+@@ -1230,6 +1247,7 @@ LayoutDeviceIntSize nsNativeThemeWin::GetMinimumWidgetSize(
+     case StyleAppearance::Tabpanels:
+     case StyleAppearance::Tabpanel:
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
+       return {};  // Don't worry about it.
+     default:
+       break;
+@@ -1435,6 +1453,7 @@ bool nsNativeThemeWin::ClassicThemeSupportsWidget(nsIFrame* aFrame,
+     case StyleAppearance::Menulist:
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
+     case StyleAppearance::ProgressBar:
+     case StyleAppearance::Progresschunk:
+     case StyleAppearance::Tab:
+@@ -1454,6 +1473,7 @@ LayoutDeviceIntMargin nsNativeThemeWin::ClassicGetWidgetBorder(
+       result.top = result.left = result.bottom = result.right = 2;
+       break;
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
+     case StyleAppearance::Menulist:
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::Tab:
+@@ -1505,6 +1525,7 @@ LayoutDeviceIntSize nsNativeThemeWin::ClassicGetMinimumWidgetSize(
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::Button:
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+     case StyleAppearance::Textfield:
+@@ -1563,6 +1584,7 @@ nsresult nsNativeThemeWin::ClassicGetThemePartAndState(
+       return NS_OK;
+     }
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+     case StyleAppearance::Textfield:
+@@ -1777,6 +1799,15 @@ RENDER_AGAIN:
+ 
+       break;
+     }
++    case StyleAppearance::Treeview: {
++      // Draw inset edge
++      ::DrawEdge(hdc, &widgetRect, EDGE_SUNKEN, BF_RECT | BF_ADJUST);
++
++      // Fill in window color background
++      ::FillRect(hdc, &widgetRect, (HBRUSH)(COLOR_WINDOW + 1));
++
++      break;
++    }
+     // Draw 3D face background controls
+     case StyleAppearance::ProgressBar:
+       // Draw 3D border
+diff --git a/widget/windows/nsUXThemeData.cpp b/widget/windows/nsUXThemeData.cpp
+index 88546b01c6f0..ce8b0f347996 100644
+--- a/widget/windows/nsUXThemeData.cpp
++++ b/widget/windows/nsUXThemeData.cpp
+@@ -72,6 +72,8 @@ const wchar_t* nsUXThemeData::GetClassName(nsUXThemeClass cls) {
+       return L"Trackbar";
+     case eUXCombobox:
+       return L"Combobox";
++    case eUXHeader:
++      return L"Header";
+     case eUXListview:
+       return L"Listview";
+     case eUXMenu:
+diff --git a/widget/windows/nsUXThemeData.h b/widget/windows/nsUXThemeData.h
+index b59c2aae045e..24fe07d12805 100644
+--- a/widget/windows/nsUXThemeData.h
++++ b/widget/windows/nsUXThemeData.h
+@@ -24,6 +24,7 @@ enum nsUXThemeClass {
+   eUXTab,
+   eUXTrackbar,
+   eUXCombobox,
++  eUXHeader,
+   eUXListview,
+   eUXMenu,
+   eUXNumClasses
+diff --git a/xpcom/ds/StaticAtoms.py b/xpcom/ds/StaticAtoms.py
+index f3d054af846c..ddcf19de27b7 100644
+--- a/xpcom/ds/StaticAtoms.py
++++ b/xpcom/ds/StaticAtoms.py
+@@ -450,7 +450,6 @@ STATIC_ATOMS = [
+     Atom("figcaption", "figcaption"),
+     Atom("figure", "figure"),
+     Atom("findbar", "findbar"),
+-    Atom("firstColumn", "first-column"),
+     Atom("firstInput", "first-input"),
+     Atom("fixed", "fixed"),
+     Atom("flags", "flags"),
+@@ -972,7 +971,6 @@ STATIC_ATOMS = [
+     Atom("option", "option"),
+     Atom("_or", "or"),
+     Atom("order", "order"),
+-    Atom("ordinal", "ordinal"),
+     Atom("orient", "orient"),
+     Atom("orientation", "orientation"),
+     Atom("origin_trial", "origin-trial"),

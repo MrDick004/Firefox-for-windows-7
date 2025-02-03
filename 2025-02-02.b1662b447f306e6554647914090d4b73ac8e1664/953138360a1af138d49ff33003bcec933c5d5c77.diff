@@ -1,0 +1,275 @@
+
+
+diff --git a/gfx/config/gfxConfigManager.cpp b/gfx/config/gfxConfigManager.cpp
+index 6ae75c03d9e5d..644ad3000796c 100644
+--- a/gfx/config/gfxConfigManager.cpp
++++ b/gfx/config/gfxConfigManager.cpp
+@@ -60,6 +60,7 @@ void gfxConfigManager::Init() {
+ #ifdef XP_WIN
+   DeviceManagerDx::Get()->CheckHardwareStretchingSupport(mHwStretchingSupport);
+   mScaledResolution = HasScaledResolution();
++  mIsWin10OrLater = IsWin10OrLater();
+   mIsWin11OrLater = IsWin11OrLater();
+   mWrCompositorDCompRequired = true;
+ #else
+@@ -261,12 +262,19 @@ void gfxConfigManager::ConfigureWebRender() {
+                                  "FEATURE_FAILURE_DCOMP_PREF_DISABLED"_ns);
+   }
+ 
++  if (!mIsWin10OrLater) {
++    // XXX relax win version to windows 8.
++    mFeatureWrDComp->Disable(FeatureStatus::Unavailable,
++                             "Requires Windows 10 or later",
++                             "FEATURE_FAILURE_DCOMP_NOT_WIN10"_ns);
++  }
++
+   if (!mFeatureGPUProcess->IsEnabled()) {
+     mFeatureWrDComp->Disable(FeatureStatus::Unavailable, "Requires GPU process",
+                              "FEATURE_FAILURE_NO_GPU_PROCESS"_ns);
+   }
+ 
+-  if (!mIsWin11OrLater) {
++  if (mIsWin10OrLater && !mIsWin11OrLater) {
+     // Disable DirectComposition for NVIDIA users on Windows 10 with high/mixed
+     // refresh rate monitors due to rendering artifacts. (See bug 1638709.)
+     nsAutoString adapterVendorID;
+diff --git a/gfx/config/gfxConfigManager.h b/gfx/config/gfxConfigManager.h
+index 9d8d0cdc9894c..303b7fb85f7a0 100644
+--- a/gfx/config/gfxConfigManager.h
++++ b/gfx/config/gfxConfigManager.h
+@@ -49,7 +49,7 @@ class gfxConfigManager {
+         mIsNightly(false),
+         mIsEarlyBetaOrEarlier(false),
+         mSafeMode(false),
+-        mIsWin11OrLater(false) {}
++        mIsWin10OrLater(false) {}
+ 
+   void Init();
+ 
+@@ -109,6 +109,7 @@ class gfxConfigManager {
+   bool mIsNightly;
+   bool mIsEarlyBetaOrEarlier;
+   bool mSafeMode;
++  bool mIsWin10OrLater;
+   bool mIsWin11OrLater;
+ };
+ 
+diff --git a/gfx/layers/d3d11/TextureD3D11.cpp b/gfx/layers/d3d11/TextureD3D11.cpp
+index a719210619b13..eb946644d1306 100644
+--- a/gfx/layers/d3d11/TextureD3D11.cpp
++++ b/gfx/layers/d3d11/TextureD3D11.cpp
+@@ -547,6 +547,7 @@ D3D11TextureData* D3D11TextureData::Create(IntSize aSize, SurfaceFormat aFormat,
+   D3D11_SUBRESOURCE_DATA uploadData;
+   D3D11_SUBRESOURCE_DATA* uploadDataPtr = nullptr;
+   RefPtr<DataSourceSurface> srcSurf;
++  DataSourceSurface::MappedSurface sourceMap;
+ 
+   if (aSurface) {
+     srcSurf = aSurface->GetDataSurface();
+@@ -557,13 +558,14 @@ D3D11TextureData* D3D11TextureData::Create(IntSize aSize, SurfaceFormat aFormat,
+       return nullptr;
+     }
+ 
+-    DataSourceSurface::MappedSurface sourceMap;
+     if (!srcSurf->Map(DataSourceSurface::READ, &sourceMap)) {
+       gfxCriticalError()
+           << "Failed to map source surface for D3D11TextureData::Create";
+       return nullptr;
+     }
++  }
+ 
++  if (srcSurf && !DeviceManagerDx::Get()->HasCrashyInitData()) {
+     uploadData.pSysMem = sourceMap.mData;
+     uploadData.SysMemPitch = sourceMap.mStride;
+     uploadData.SysMemSlicePitch = 0;  // unused
+@@ -590,6 +592,18 @@ D3D11TextureData* D3D11TextureData::Create(IntSize aSize, SurfaceFormat aFormat,
+                       << " Code: " << gfx::hexa(hr);
+       return nullptr;
+     }
++
++    if (srcSurf && DeviceManagerDx::Get()->HasCrashyInitData()) {
++      D3D11_BOX box;
++      box.front = box.top = box.left = 0;
++      box.back = 1;
++      box.right = aSize.width;
++      box.bottom = aSize.height;
++      RefPtr<ID3D11DeviceContext> ctx;
++      device->GetImmediateContext(getter_AddRefs(ctx));
++      ctx->UpdateSubresource(texture11, 0, &box, sourceMap.mData,
++                             sourceMap.mStride, 0);
++    }
+   }
+ 
+   if (srcSurf) {
+diff --git a/gfx/tests/gtest/TestConfigManager.cpp b/gfx/tests/gtest/TestConfigManager.cpp
+index 1a1257400eb3d..a2d73d74dd6e5 100644
+--- a/gfx/tests/gtest/TestConfigManager.cpp
++++ b/gfx/tests/gtest/TestConfigManager.cpp
+@@ -309,6 +309,7 @@ class GfxConfigManager : public ::testing::Test, public gfxConfigManager {
+     mWrCompositorDCompRequired = true;
+     mWrScissoredCacheClearsEnabled = true;
+     ++mHwStretchingSupport.mBoth;
++    mIsWin10OrLater = true;
+     mIsWin11OrLater = true;
+     mIsNightly = true;
+     mIsEarlyBetaOrEarlier = true;
+@@ -522,6 +523,23 @@ TEST_F(GfxConfigManager, WebRenderSafeMode) {
+   EXPECT_TRUE(mFeatures.mD3D11HwAngle.IsEnabled());
+ }
+ 
++TEST_F(GfxConfigManager, WebRenderEarlierThanWindows10) {
++  mIsWin10OrLater = false;
++  ConfigureWebRender();
++
++  EXPECT_TRUE(mFeatures.mWr.IsEnabled());
++  EXPECT_FALSE(mFeatures.mWrCompositor.IsEnabled());
++  EXPECT_TRUE(mFeatures.mWrAngle.IsEnabled());
++  EXPECT_FALSE(mFeatures.mWrDComp.IsEnabled());
++  EXPECT_TRUE(mFeatures.mWrPartial.IsEnabled());
++  EXPECT_TRUE(mFeatures.mWrShaderCache.IsEnabled());
++  EXPECT_TRUE(mFeatures.mWrOptimizedShaders.IsEnabled());
++  EXPECT_TRUE(mFeatures.mWrScissoredCacheClears.IsEnabled());
++  EXPECT_TRUE(mFeatures.mHwCompositing.IsEnabled());
++  EXPECT_TRUE(mFeatures.mGPUProcess.IsEnabled());
++  EXPECT_TRUE(mFeatures.mD3D11HwAngle.IsEnabled());
++}
++
+ TEST_F(GfxConfigManager, WebRenderDCompDisabled) {
+   mWrDCompWinEnabled = false;
+   ConfigureWebRender();
+@@ -648,6 +666,7 @@ TEST_F(GfxConfigManager, WebRenderIntelBatteryNoHwStretchingNotNightly) {
+ }
+ 
+ TEST_F(GfxConfigManager, WebRenderNvidiaHighMixedRefreshRateWin10) {
++  mIsWin10OrLater = true;
+   mIsWin11OrLater = false;
+   mMockGfxInfo->mMaxRefreshRate = 120;
+   mMockGfxInfo->mHasMixedRefreshRate = true;
+@@ -667,6 +686,7 @@ TEST_F(GfxConfigManager, WebRenderNvidiaHighMixedRefreshRateWin10) {
+ }
+ 
+ TEST_F(GfxConfigManager, WebRenderNvidiaHighMixedRefreshRateWin11) {
++  mIsWin10OrLater = true;
+   mIsWin11OrLater = true;
+   mMockGfxInfo->mMaxRefreshRate = 120;
+   mMockGfxInfo->mHasMixedRefreshRate = true;
+@@ -811,6 +831,27 @@ TEST_F(GfxConfigManager, WebRenderSoftwareReleaseWindowsGPUProcessDisabled) {
+   EXPECT_TRUE(mFeatures.mD3D11HwAngle.IsEnabled());
+ }
+ 
++TEST_F(GfxConfigManager, WebRenderSoftwareReleaseGPUProcessDisabled) {
++  mIsNightly = mIsEarlyBetaOrEarlier = false;
++  mIsWin10OrLater = false;
++  mFeatureD3D11Compositing = nullptr;
++  mMockGfxInfo->mStatusWr = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
++  mFeatures.mGPUProcess.UserDisable("", ""_ns);
++  ConfigureWebRender();
++
++  EXPECT_FALSE(mFeatures.mWr.IsEnabled());
++  EXPECT_FALSE(mFeatures.mWrCompositor.IsEnabled());
++  EXPECT_FALSE(mFeatures.mWrAngle.IsEnabled());
++  EXPECT_FALSE(mFeatures.mWrDComp.IsEnabled());
++  EXPECT_TRUE(mFeatures.mWrPartial.IsEnabled());
++  EXPECT_FALSE(mFeatures.mWrShaderCache.IsEnabled());
++  EXPECT_FALSE(mFeatures.mWrOptimizedShaders.IsEnabled());
++  EXPECT_TRUE(mFeatures.mWrScissoredCacheClears.IsEnabled());
++  EXPECT_TRUE(mFeatures.mHwCompositing.IsEnabled());
++  EXPECT_FALSE(mFeatures.mGPUProcess.IsEnabled());
++  EXPECT_TRUE(mFeatures.mD3D11HwAngle.IsEnabled());
++}
++
+ TEST_F(GfxConfigManager, WebRenderShaderCacheDisabled) {
+   mWrShaderCache = Some(false);
+   ConfigureWebRender();
+diff --git a/gfx/thebes/DeviceManagerDx.cpp b/gfx/thebes/DeviceManagerDx.cpp
+index cfd1169e959ee..b708bbe8da180 100644
+--- a/gfx/thebes/DeviceManagerDx.cpp
++++ b/gfx/thebes/DeviceManagerDx.cpp
+@@ -12,6 +12,7 @@
+ #include "mozilla/StaticPrefs_gfx.h"
+ #include "mozilla/StaticPrefs_layers.h"
+ #include "mozilla/Telemetry.h"
++#include "mozilla/WindowsVersion.h"
+ #include "mozilla/gfx/GPUParent.h"
+ #include "mozilla/gfx/GPUProcessManager.h"
+ #include "mozilla/gfx/GraphicsMessages.h"
+@@ -67,7 +68,9 @@ DeviceManagerDx::DeviceManagerDx()
+     : mDeviceLock("gfxWindowsPlatform.mDeviceLock"),
+       mCompositorDeviceSupportsVideo(false) {
+   // Set up the D3D11 feature levels we can ask for.
+-  mFeatureLevels.AppendElement(D3D_FEATURE_LEVEL_11_1);
++  if (IsWin8OrLater()) {
++    mFeatureLevels.AppendElement(D3D_FEATURE_LEVEL_11_1);
++  }
+   mFeatureLevels.AppendElement(D3D_FEATURE_LEVEL_11_0);
+   mFeatureLevels.AppendElement(D3D_FEATURE_LEVEL_10_1);
+   mFeatureLevels.AppendElement(D3D_FEATURE_LEVEL_10_0);
+@@ -946,7 +949,12 @@ void DeviceManagerDx::CreateWARPCompositorDevice() {
+     return;
+   }
+ 
+-  bool textureSharingWorks = D3D11Checks::DoesTextureSharingWork(device);
++  // Only test for texture sharing on Windows 8 since it puts the device into
++  // an unusable state if used on Windows 7
++  bool textureSharingWorks = false;
++  if (IsWin8OrLater()) {
++    textureSharingWorks = D3D11Checks::DoesTextureSharingWork(device);
++  }
+ 
+   RefPtr<ID3D10Multithread> multi;
+   hr = device->QueryInterface(__uuidof(ID3D10Multithread),
+@@ -1394,6 +1402,15 @@ bool DeviceManagerDx::CanInitializeKeyedMutexTextures() {
+          gfxVars::AllowD3D11KeyedMutex();
+ }
+ 
++bool DeviceManagerDx::HasCrashyInitData() {
++  MutexAutoLock lock(mDeviceLock);
++  if (!mDeviceStatus) {
++    return false;
++  }
++
++  return (mDeviceStatus->adapter().VendorId == 0x8086 && !IsWin10OrLater());
++}
++
+ bool DeviceManagerDx::IsWARP() {
+   MutexAutoLock lock(mDeviceLock);
+   if (!mDeviceStatus) {
+diff --git a/gfx/thebes/DeviceManagerDx.h b/gfx/thebes/DeviceManagerDx.h
+index 9444c7f64d7cc..f58487c9c390e 100644
+--- a/gfx/thebes/DeviceManagerDx.h
++++ b/gfx/thebes/DeviceManagerDx.h
+@@ -88,6 +88,10 @@ class DeviceManagerDx final {
+   // need to avoid it.
+   bool CanInitializeKeyedMutexTextures();
+ 
++  // Intel devices on older windows versions seem to occasionally have
++  // stability issues when supplying InitData to CreateTexture2D.
++  bool HasCrashyInitData();
++
+   // Enumerate and return all outputs on the current adapter.
+   nsTArray<DXGI_OUTPUT_DESC1> EnumerateOutputs();
+ 
+diff --git a/gfx/thebes/gfxPlatform.cpp b/gfx/thebes/gfxPlatform.cpp
+index 94a83a2e5bace..963407ad6d7f5 100644
+--- a/gfx/thebes/gfxPlatform.cpp
++++ b/gfx/thebes/gfxPlatform.cpp
+@@ -2478,7 +2478,8 @@ void gfxPlatform::InitAcceleration() {
+       gfxCriticalNote << "Cannot evaluate keyed mutex feature status";
+       gfxVars::SetAllowD3D11KeyedMutex(true);
+     }
+-    if (StaticPrefs::gfx_direct3d11_use_double_buffering()) {
++    if (StaticPrefs::gfx_direct3d11_use_double_buffering() &&
++        IsWin10OrLater()) {
+       gfxVars::SetUseDoubleBufferingWithCompositor(true);
+     }
+ #endif
+@@ -2862,7 +2863,8 @@ void gfxPlatform::InitWebRenderConfig() {
+ 
+   bool useHwVideoZeroCopy = false;
+   if (StaticPrefs::media_wmf_zero_copy_nv12_textures_AtStartup()) {
+-    if (hasHardware) {
++    // XXX relax limitation to Windows 8.1
++    if (IsWin10OrLater() && hasHardware) {
+       useHwVideoZeroCopy = true;
+     }
+ 

@@ -1,0 +1,1 @@
+Bug 1845540 - Remove some unused win-specific system colors and appearance values. r=mstange,devtools-reviewers,mhowell    2023-07-27 04:57:47    1827dc203b57541436452997261b24efd98f11e6

@@ -1,0 +1,138 @@
+diff --git a/browser/base/content/browser-customtitlebar.js b/browser/base/content/browser-customtitlebar.js
+index 5767b19ea6ac3..525c7baf3fcde 100644
+--- a/browser/base/content/browser-customtitlebar.js
++++ b/browser/base/content/browser-customtitlebar.js
+@@ -40,7 +40,7 @@ var CustomTitlebar = {
+   },
+ 
+   get enabled() {
+-    return document.documentElement.hasAttribute("customtitlebar");
++    return document.documentElement.getAttribute("customtitlebar") == "true";
+   },
+ 
+   observe(subject, topic) {
+@@ -67,10 +67,16 @@ var CustomTitlebar = {
+       this.systemSupported &&
+       !window.fullScreen &&
+       !Object.keys(this._disallowed).length;
+-
+-    document.documentElement.toggleAttribute("customtitlebar", allowed);
+-    if (AppConstants.platform == "macosx") {
+-      document.documentElement.toggleAttribute("drawtitle", !allowed);
++    if (allowed) {
++      document.documentElement.setAttribute("customtitlebar", "true");
++      if (AppConstants.platform == "macosx") {
++        document.documentElement.removeAttribute("drawtitle");
++      }
++    } else {
++      document.documentElement.removeAttribute("customtitlebar");
++      if (AppConstants.platform == "macosx") {
++        document.documentElement.setAttribute("drawtitle", "true");
++      }
+     }
+ 
+     ToolbarIconColor.inferFromText("customtitlebar", allowed);
+diff --git a/dom/xul/ChromeObserver.cpp b/dom/xul/ChromeObserver.cpp
+index ca04553663b00..a3c066bcd7f8a 100644
+--- a/dom/xul/ChromeObserver.cpp
++++ b/dom/xul/ChromeObserver.cpp
+@@ -82,27 +82,39 @@ void ChromeObserver::AttributeChanged(dom::Element* aElement,
+     return;
+   }
+ 
+-  if (aModType == dom::MutationEvent_Binding::ADDITION ||
+-      aModType == dom::MutationEvent_Binding::REMOVAL) {
+-    const bool added = aModType == dom::MutationEvent_Binding::ADDITION;
++  const nsAttrValue* value = aElement->GetParsedAttr(aName, aNamespaceID);
++  if (value) {
++    // Hide chrome if needed
+     if (aName == nsGkAtoms::hidechrome) {
+-      HideWindowChrome(added);
++      HideWindowChrome(value->Equals(u"true"_ns, eCaseMatters));
+     } else if (aName == nsGkAtoms::customtitlebar) {
+-      SetCustomTitlebar(added);
++      SetCustomTitlebar(true);
++    }
++    // title and drawintitlebar are settable on
++    // any root node (windows, dialogs, etc)
++    else if (aName == nsGkAtoms::title) {
++      mDocument->NotifyPossibleTitleChange(false);
+     } else if (aName == nsGkAtoms::drawtitle) {
+-      SetDrawsTitle(added);
++      SetDrawsTitle(value->Equals(u"true"_ns, eCaseMatters));
+     } else if (aName == nsGkAtoms::windowsmica) {
+-      SetMica(added);
++      SetMica(value->Equals(u"true"_ns, eCaseMatters));
++    } else if (aName == nsGkAtoms::localedir) {
++      // if the localedir changed on the root element, reset the document
++      // direction
++      mDocument->ResetDocumentDirection();
++    }
++  } else {
++    if (aName == nsGkAtoms::hidechrome) {
++      HideWindowChrome(false);
++    } else if (aName == nsGkAtoms::customtitlebar) {
++      SetCustomTitlebar(false);
++    } else if (aName == nsGkAtoms::localedir) {
++      // if the localedir changed on the root element, reset the document
++      // direction
++      mDocument->ResetDocumentDirection();
++    } else if (aName == nsGkAtoms::drawtitle) {
++      SetDrawsTitle(false);
+     }
+-  }
+-  if (aName == nsGkAtoms::localedir) {
+-    // if the localedir changed on the root element, reset the document
+-    // direction
+-    mDocument->ResetDocumentDirection();
+-  }
+-  if (aName == nsGkAtoms::title &&
+-      aModType != dom::MutationEvent_Binding::REMOVAL) {
+-    mDocument->NotifyPossibleTitleChange(false);
+   }
+ }
+ 
+diff --git a/xpfe/appshell/AppWindow.cpp b/xpfe/appshell/AppWindow.cpp
+index f1730c059afad..04379dfbc0a0a 100644
+--- a/xpfe/appshell/AppWindow.cpp
++++ b/xpfe/appshell/AppWindow.cpp
+@@ -1509,12 +1509,11 @@ void AppWindow::SyncAttributesToWidget() {
+   bool maintainClientSize = mDominantClientSize;
+ 
+   // "hidechrome" attribute
+-  // FIXME(emilio): This should arguably be
+-  // HideWindowChrome(windowElement->GetBoolAttr(...)), but that has
+-  // side-effects in some platforms.
+-  if (windowElement->GetBoolAttr(nsGkAtoms::hidechrome)) {
++  if (windowElement->AttrValueIs(kNameSpaceID_None, nsGkAtoms::hidechrome,
++                                 nsGkAtoms::_true, eCaseMatters)) {
+     mWindow->HideWindowChrome(true);
+   }
++
+   NS_ENSURE_TRUE_VOID(mWindow);
+ 
+   // "customtitlebar" attribute
+@@ -1552,17 +1551,18 @@ void AppWindow::SyncAttributesToWidget() {
+   }
+ 
+   // "drawtitle" attribute
+-  mWindow->SetDrawsTitle(windowElement->GetBoolAttr(nsGkAtoms::drawtitle));
++  windowElement->GetAttribute(u"drawtitle"_ns, attr);
++  mWindow->SetDrawsTitle(attr.LowerCaseEqualsLiteral("true"));
+   NS_ENSURE_TRUE_VOID(mWindow);
+ 
+   // "toggletoolbar" attribute
+-  mWindow->SetShowsToolbarButton(
+-      windowElement->HasAttribute(u"toggletoolbar"_ns));
++  windowElement->GetAttribute(u"toggletoolbar"_ns, attr);
++  mWindow->SetShowsToolbarButton(attr.LowerCaseEqualsLiteral("true"));
+   NS_ENSURE_TRUE_VOID(mWindow);
+ 
+   // "macnativefullscreen" attribute
+-  mWindow->SetSupportsNativeFullscreen(
+-      windowElement->HasAttribute(u"macnativefullscreen"_ns));
++  windowElement->GetAttribute(u"macnativefullscreen"_ns, attr);
++  mWindow->SetSupportsNativeFullscreen(attr.LowerCaseEqualsLiteral("true"));
+   NS_ENSURE_TRUE_VOID(mWindow);
+ 
+   // "macanimationtype" attribute

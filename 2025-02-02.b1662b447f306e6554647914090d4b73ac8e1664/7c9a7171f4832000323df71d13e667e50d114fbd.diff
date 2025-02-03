@@ -1,0 +1,316 @@
+
+
+diff --git a/dom/geolocation/GeolocationSystemWin.cpp b/dom/geolocation/GeolocationSystemWin.cpp
+index af2bfcca7f2e0..a02bda587f457 100644
+--- a/dom/geolocation/GeolocationSystemWin.cpp
++++ b/dom/geolocation/GeolocationSystemWin.cpp
+@@ -8,7 +8,6 @@
+ #include "mozilla/dom/BrowsingContext.h"
+ #include "mozilla/ScopeExit.h"
+ #include "nsIGeolocationUIUtilsWin.h"
+-#include "nsIWifiMonitor.h"
+ 
+ #include <windows.system.h>
+ #include <windows.security.authorization.appcapabilityaccess.h>
+@@ -61,21 +60,9 @@ Maybe<AppCapabilityAccessStatus> GetWifiControlAccess() {
+ 
+ bool SystemWillPromptForPermissionHint() {
+   auto wifiAccess = GetWifiControlAccess();
+-  if (wifiAccess !=
+-      mozilla::Some(AppCapabilityAccessStatus::
+-                        AppCapabilityAccessStatus_UserPromptRequired)) {
+-    return false;
+-  }
+-
+-  // If wifi is not available (e.g. because there is no wifi device present)
+-  // then the API may report that Windows will request geolocation permission
+-  // but it can't without the wifi scanner.  Check for that case.
+-  nsresult rv = NS_OK;
+-  nsCOMPtr<nsIWifiMonitor> wifiMonitor =
+-      do_GetService("@mozilla.org/wifi/monitor;1", &rv);
+-  NS_ENSURE_SUCCESS(rv, false);
+-  NS_ENSURE_TRUE(wifiMonitor, false);
+-  return wifiMonitor->GetHasWifiAdapter();
++  return wifiAccess ==
++         mozilla::Some(AppCapabilityAccessStatus::
++                           AppCapabilityAccessStatus_UserPromptRequired);
+ }
+ 
+ bool LocationIsPermittedHint() {
+diff --git a/netwerk/wifi/nsIWifiMonitor.idl b/netwerk/wifi/nsIWifiMonitor.idl
+index cf90c4e500c56..feda68f77e64a 100644
+--- a/netwerk/wifi/nsIWifiMonitor.idl
++++ b/netwerk/wifi/nsIWifiMonitor.idl
+@@ -6,7 +6,7 @@
+ 
+ interface nsIWifiListener;
+ 
+-[scriptable, builtinclass, uuid(F289701E-D9AF-4685-BC2F-E4226FF7C018)]
++[scriptable, uuid(F289701E-D9AF-4685-BC2F-E4226FF7C018)]
+ interface nsIWifiMonitor : nsISupports
+ {
+   /*
+@@ -24,10 +24,4 @@ interface nsIWifiMonitor : nsISupports
+    * cancels all notifications to the |aListener|.
+    */
+   void stopWatching(in nsIWifiListener aListener);
+-
+-  /**
+-   * True if there is a wifi adapter present that can perform a scan.
+-   * Only valid on Windows.
+-   */
+-  [notxpcom, nostdcall] readonly attribute boolean hasWifiAdapter;
+ };
+diff --git a/netwerk/wifi/nsWifiMonitor.cpp b/netwerk/wifi/nsWifiMonitor.cpp
+index 82efedda5d924..ccab3cae4bf9e 100644
+--- a/netwerk/wifi/nsWifiMonitor.cpp
++++ b/netwerk/wifi/nsWifiMonitor.cpp
+@@ -174,15 +174,6 @@ nsWifiMonitor::Observe(nsISupports* subject, const char* topic,
+   return NS_OK;
+ }
+ 
+-void nsWifiMonitor::EnsureWifiScanner() {
+-  if (mWifiScanner) {
+-    return;
+-  }
+-
+-  LOG(("Constructing WifiScanner"));
+-  mWifiScanner = MakeUnique<mozilla::WifiScannerImpl>();
+-}
+-
+ NS_IMETHODIMP nsWifiMonitor::StartWatching(nsIWifiListener* aListener,
+                                            bool aForcePolling) {
+   LOG(("nsWifiMonitor::StartWatching %p | listener %p | mPollingId %" PRIu64
+@@ -325,7 +316,10 @@ void nsWifiMonitor::Scan(uint64_t aPollingId) {
+ nsresult nsWifiMonitor::DoScan() {
+   MOZ_ASSERT(IsBackgroundThread());
+ 
+-  EnsureWifiScanner();
++  if (!mWifiScanner) {
++    LOG(("Constructing WifiScanner"));
++    mWifiScanner = MakeUnique<mozilla::WifiScannerImpl>();
++  }
+   MOZ_ASSERT(mWifiScanner);
+ 
+   LOG(("Scanning Wifi for access points"));
+@@ -398,15 +392,3 @@ nsresult nsWifiMonitor::PassErrorToWifiListeners(nsresult rv) {
+     aListener->OnError(rv);
+   });
+ }
+-
+-bool nsWifiMonitor::GetHasWifiAdapter() {
+-#ifdef XP_WIN
+-  EnsureWifiScanner();
+-  MOZ_ASSERT(mWifiScanner);
+-  return static_cast<WifiScannerImpl*>(mWifiScanner.get())->HasWifiAdapter();
+-#else
+-  MOZ_ASSERT_UNREACHABLE(
+-      "nsWifiMonitor::HasWifiAdapter is not available on this platform");
+-  return false;
+-#endif
+-}
+diff --git a/netwerk/wifi/nsWifiMonitor.h b/netwerk/wifi/nsWifiMonitor.h
+index 4890e8290d652..55a3feedeaff7 100644
+--- a/netwerk/wifi/nsWifiMonitor.h
++++ b/netwerk/wifi/nsWifiMonitor.h
+@@ -62,8 +62,6 @@ class nsWifiMonitor final : public nsIWifiMonitor, public nsIObserver {
+ 
+   ~nsWifiMonitor();
+ 
+-  void EnsureWifiScanner();
+-
+   nsresult DispatchScanToBackgroundThread(uint64_t aPollingId = 0,
+                                           uint32_t aWaitMs = 0);
+ 
+diff --git a/netwerk/wifi/win/WinWifiScanner.cpp b/netwerk/wifi/win/WinWifiScanner.cpp
+index 4052cf0b13a6b..b24fb4a2f1f7d 100644
+--- a/netwerk/wifi/win/WinWifiScanner.cpp
++++ b/netwerk/wifi/win/WinWifiScanner.cpp
+@@ -9,10 +9,6 @@
+ 
+ namespace mozilla {
+ 
+-LazyLogModule gWifiScannerLog("WifiScanner");
+-#define WIFISCAN_LOG(args) \
+-  MOZ_LOG(mozilla::gWifiScannerLog, mozilla::LogLevel::Debug, args)
+-
+ class InterfaceScanCallbackData {
+  public:
+   explicit InterfaceScanCallbackData(uint32_t numInterfaces)
+@@ -46,7 +42,6 @@ class InterfaceScanCallbackData {
+ };
+ 
+ static void WINAPI OnScanComplete(PWLAN_NOTIFICATION_DATA data, PVOID context) {
+-  WIFISCAN_LOG(("WinWifiScanner OnScanComplete"));
+   if (WLAN_NOTIFICATION_SOURCE_ACM != data->NotificationSource) {
+     return;
+   }
+@@ -70,29 +65,19 @@ WifiScannerImpl::WifiScannerImpl() {
+   // WLAN API in the edge case.
+   mWlanLibrary.reset(WinWLANLibrary::Load());
+   if (!mWlanLibrary) {
+-    WIFISCAN_LOG(
+-        ("[%p] WinWifiScanner could not initialize Windows Wi-Fi scanner",
+-         this));
++    NS_WARNING("Could not initialize Windows Wi-Fi scanner");
+   }
+-  WIFISCAN_LOG(("[%p] WinWifiScanner created WifiScannerImpl", this));
+ }
+ 
+-WifiScannerImpl::~WifiScannerImpl() {
+-  WIFISCAN_LOG(("[%p] WinWifiScanner destroyed WifiScannerImpl", this));
+-}
++WifiScannerImpl::~WifiScannerImpl() {}
+ 
+ nsresult WifiScannerImpl::GetAccessPointsFromWLAN(
+     nsTArray<RefPtr<nsIWifiAccessPoint>>& accessPoints) {
+-  WIFISCAN_LOG(("[%p] WinWifiScanner::GetAccessPointsFromWLAN", this));
+   accessPoints.Clear();
+ 
+   // NOTE: We do not try to load the WLAN library if we previously failed
+   // to load it. See the note in WifiScannerImpl constructor
+   if (!mWlanLibrary) {
+-    WIFISCAN_LOG(
+-        ("[%p] WinWifiScanner::GetAccessPointsFromWLAN WLAN library is not "
+-         "available",
+-         this));
+     return NS_ERROR_NOT_AVAILABLE;
+   }
+ 
+@@ -101,18 +86,11 @@ nsresult WifiScannerImpl::GetAccessPointsFromWLAN(
+   if (ERROR_SUCCESS !=
+       (*mWlanLibrary->GetWlanEnumInterfacesPtr())(mWlanLibrary->GetWLANHandle(),
+                                                   nullptr, &interface_list)) {
+-    WIFISCAN_LOG(
+-        ("[%p] WinWifiScanner::GetAccessPointsFromWLAN WlanEnumInterfaces "
+-         "failed",
+-         this));
+     return NS_ERROR_FAILURE;
+   }
+ 
+   // This ensures we call WlanFreeMemory on interface_list
+   ScopedWLANObject scopedInterfaceList(*mWlanLibrary, interface_list);
+-  WIFISCAN_LOG(
+-      ("[%p] WinWifiScanner::GetAccessPointsFromWLAN found %lu interfaces",
+-       this, interface_list->dwNumberOfItems));
+ 
+   if (!interface_list->dwNumberOfItems) {
+     return NS_OK;
+@@ -126,10 +104,6 @@ nsresult WifiScannerImpl::GetAccessPointsFromWLAN(
+                            WLAN_NOTIFICATION_SOURCE_ACM, TRUE,
+                            (WLAN_NOTIFICATION_CALLBACK)OnScanComplete, &cbData,
+                            NULL, &wlanNotifySource)) {
+-    WIFISCAN_LOG(
+-        ("[%p] WinWifiScanner::GetAccessPointsFromWLAN "
+-         "WlanRegisterNotification failed",
+-         this));
+     return NS_ERROR_FAILURE;
+   }
+ 
+@@ -139,9 +113,6 @@ nsresult WifiScannerImpl::GetAccessPointsFromWLAN(
+                              mWlanLibrary->GetWLANHandle(),
+                              &interface_list->InterfaceInfo[i].InterfaceGuid,
+                              NULL, NULL, NULL)) {
+-      WIFISCAN_LOG(
+-          ("[%p] WinWifiScanner::GetAccessPointsFromWLAN WlanScan failed.",
+-           this));
+       cbData.OnInterfaceScanComplete();
+     }
+   }
+@@ -170,18 +141,9 @@ nsresult WifiScannerImpl::GetAccessPointsFromWLAN(
+                                        // unused
+                              nullptr,  // reserved
+                              &bss_list)) {
+-      WIFISCAN_LOG(
+-          ("[%p] WinWifiScanner::GetAccessPointsFromWLAN unable to get BSS "
+-           "list from interface %u",
+-           this, i));
+       continue;
+     }
+ 
+-    WIFISCAN_LOG(
+-        ("[%p] WinWifiScanner::GetAccessPointsFromWLAN BSS list has %lu access "
+-         "points",
+-         this, bss_list->dwNumberOfItems));
+-
+     // This ensures we call WlanFreeMemory on bss_list
+     ScopedWLANObject scopedBssList(*mWlanLibrary, bss_list);
+ 
+@@ -206,5 +168,3 @@ nsresult WifiScannerImpl::GetAccessPointsFromWLAN(
+ }
+ 
+ }  // namespace mozilla
+-
+-#undef WIFISCAN_LOG
+diff --git a/netwerk/wifi/win/WinWifiScanner.h b/netwerk/wifi/win/WinWifiScanner.h
+index 98d9b338eba2c..ce36c1156ded3 100644
+--- a/netwerk/wifi/win/WinWifiScanner.h
++++ b/netwerk/wifi/win/WinWifiScanner.h
+@@ -17,11 +17,6 @@ class WifiScannerImpl final : public WifiScanner {
+   WifiScannerImpl();
+   ~WifiScannerImpl();
+ 
+-  /**
+-   * True if there is a wifi adapter present that can perform a scan.
+-   */
+-  bool HasWifiAdapter() { return !!mWlanLibrary; }
+-
+   /**
+    * GetAccessPointsFromWLAN
+    *
+diff --git a/netwerk/wifi/win/WlanLibrary.cpp b/netwerk/wifi/win/WlanLibrary.cpp
+index 067a66aecf0c3..0fd36be660975 100644
+--- a/netwerk/wifi/win/WlanLibrary.cpp
++++ b/netwerk/wifi/win/WlanLibrary.cpp
+@@ -4,14 +4,7 @@
+ 
+ #include "WlanLibrary.h"
+ 
+-#include "mozilla/Logging.h"
+-
+ // Moz headers (alphabetical)
+-namespace mozilla {
+-extern LazyLogModule gWifiScannerLog;
+-}
+-#define WIFISCAN_LOG(args) \
+-  MOZ_LOG(mozilla::gWifiScannerLog, mozilla::LogLevel::Debug, args)
+ 
+ WinWLANLibrary* WinWLANLibrary::Load() {
+   WinWLANLibrary* ret = new WinWLANLibrary();
+@@ -64,8 +57,6 @@ decltype(::WlanScan)* WinWLANLibrary::GetWlanScanPtr() const {
+ bool WinWLANLibrary::Initialize() {
+   mWlanLibrary = LoadLibraryW(L"Wlanapi.dll");
+   if (!mWlanLibrary) {
+-    WIFISCAN_LOG(
+-        ("WinWLANLibrary::Initialize failed - couldn't open wlanapi.dll"));
+     return false;
+   }
+ 
+@@ -90,8 +81,6 @@ bool WinWLANLibrary::Initialize() {
+   if (!mWlanOpenHandlePtr || !mWlanEnumInterfacesPtr ||
+       !mWlanRegisterNotificationPtr || !mWlanGetNetworkBssListPtr ||
+       !mWlanScanPtr || !mWlanFreeMemoryPtr || !mWlanCloseHandlePtr) {
+-    WIFISCAN_LOG(
+-        ("WinWLANLibrary::Initialize failed to find functions in wlanapi.dll"));
+     return false;
+   }
+ 
+@@ -104,12 +93,9 @@ bool WinWLANLibrary::Initialize() {
+   if (ERROR_SUCCESS != (*mWlanOpenHandlePtr)(kXpWlanClientVersion, nullptr,
+                                              &negotiated_version,
+                                              &mWlanHandle)) {
+-    WIFISCAN_LOG(("WinWLANLibrary::Initialize: WlanOpenHandle failed"));
+     return false;
+   }
+ 
+-  WIFISCAN_LOG(("WinWLANLibrary::Initialize succeeded - version is %lu",
+-                negotiated_version));
+   return true;
+ }
+ 
+@@ -123,5 +109,3 @@ WinWLANLibrary::~WinWLANLibrary() {
+     mWlanLibrary = nullptr;
+   }
+ }
+-
+-#undef WIFISCAN_LOG

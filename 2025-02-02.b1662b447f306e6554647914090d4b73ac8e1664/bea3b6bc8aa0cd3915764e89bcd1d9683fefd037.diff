@@ -1,0 +1,131 @@
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 845af2714d72..37b8c4885f0e 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -2827,6 +2827,12 @@ nsAutoRegion nsWindow::ComputeNonClientHRGN() {
+   return nsAutoRegion(winRgn.out());
+ }
+ 
++void nsWindow::InvalidateNonClientRegion() {
++  nsAutoRegion winRgn(ComputeNonClientHRGN());
++  // triggers ncpaint and paint events for the two areas
++  RedrawWindow(mWnd, nullptr, winRgn, RDW_FRAME | RDW_INVALIDATE);
++}
++
+ HRGN nsWindow::ExcludeNonClientFromPaintRegion(HRGN aRegion) {
+   RECT rect;
+   HRGN rgn = nullptr;
+@@ -5069,6 +5075,10 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+       }
+ 
+     case WM_NCACTIVATE: {
++      /*
++       * WM_NCACTIVATE paints nc areas. Avoid this and re-route painting
++       * through WM_NCPAINT via InvalidateNonClientRegion.
++       */
+       if (!mCustomNonClient) {
+         break;
+       }
+@@ -5079,17 +5089,26 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+             "nsWindow::ForcePresent", this, &nsWindow::ForcePresent));
+       }
+ 
+-      // ::DefWindowProc would paint nc areas. Avoid this, since we just want
+-      // dwm to take care of re-displaying the glass effect if any. Quoting the
+-      // docs[1]:
+-      //
+-      //     If this parameter is set to -1, DefWindowProc does not repaint the
+-      //     nonclient area to reflect the state change.
+-      //
+-      // [1]:
+-      // https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-ncactivate
+-      lParam = -1;
+-    } break;
++      // let the dwm handle nc painting on glass
++      // Never allow native painting if we are on fullscreen
++      if (mFrameState->GetSizeMode() != nsSizeMode_Fullscreen) break;
++
++      if (wParam == TRUE) {
++        // going active
++        *aRetValue = FALSE;  // ignored
++        result = true;
++        // invalidate to trigger a paint
++        InvalidateNonClientRegion();
++        break;
++      } else {
++        // going inactive
++        *aRetValue = TRUE;  // go ahead and deactive
++        result = true;
++        // invalidate to trigger a paint
++        InvalidateNonClientRegion();
++        break;
++      }
++    }
+ 
+     case WM_NCPAINT: {
+       /*
+@@ -5096,12 +5116,6 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+        * do seem to always send a WM_NCPAINT message, so let's update on that.
+        */
+       gfxDWriteFont::UpdateSystemTextVars();
+-      if (mCustomNonClient) {
+-        // We rely on dwm for glass / semi-transparent window painting, so we
+-        // just need to make sure to clear the non-client area next time we get
+-        // around to doing a main-thread paint.
+-        mNeedsNCAreaClear = true;
+-      }
+ 
+       /*
+        * Reset the non-client paint region so that it excludes the
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index e3be246df37f..2a4dc408e76f 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -564,6 +564,7 @@ class nsWindow final : public nsBaseWidget {
+   void UpdateDarkModeToolbar();
+   void ResetLayout();
+   nsAutoRegion ComputeNonClientHRGN();
++  void InvalidateNonClientRegion();
+   HRGN ExcludeNonClientFromPaintRegion(HRGN aRegion);
+   HWND GetOwnerWnd() const { return ::GetWindow(mWnd, GW_OWNER); }
+   bool IsOwnerForegroundWindow() const {
+diff --git a/widget/windows/nsWindowGfx.cpp b/widget/windows/nsWindowGfx.cpp
+index cf07794300de..a5a85b28c4fc 100644
+--- a/widget/windows/nsWindowGfx.cpp
++++ b/widget/windows/nsWindowGfx.cpp
+@@ -180,6 +180,7 @@ bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+   const bool usingMemoryDC =
+       IsPopup() && renderer->GetBackendType() == LayersBackend::LAYERS_NONE &&
+       mTransparencyMode == TransparencyMode::Transparent;
++  HDC hDC = nullptr;
+   const LayoutDeviceIntRect winRect = [&] {
+     RECT r;
+     ::GetWindowRect(mWnd, &r);
+@@ -188,21 +189,19 @@ bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+   }();
+   LayoutDeviceIntRegion region;
+   LayoutDeviceIntRegion translucentRegion;
+-  // BeginPaint/EndPaint must be called to make Windows think that invalid
+-  // area is painted. Otherwise it will continue sending the same message
+-  // endlessly. Note that we need to call it after WillPaintWindow, which
+-  // informs us of our transparent region, but also before clearing the
+-  // nc-area, since ::BeginPaint might send WM_NCPAINT messages[1].
+-  // [1]:
+-  // https://learn.microsoft.com/en-us/windows/win32/gdi/the-wm-paint-message
+-  HDC hDC = ::BeginPaint(mWnd, &ps);
+   if (usingMemoryDC) {
++    // BeginPaint/EndPaint must be called to make Windows think that invalid
++    // area is painted. Otherwise it will continue sending the same message
++    // endlessly.
++    ::BeginPaint(mWnd, &ps);
+     ::EndPaint(mWnd, &ps);
++
+     // We're guaranteed to have a widget proxy since we called
+     // GetLayerManager().
+     hDC = mBasicLayersSurface->GetTransparentDC();
+     region = translucentRegion = LayoutDeviceIntRegion{winRect};
+   } else {
++    hDC = ::BeginPaint(mWnd, &ps);
+     region = GetRegionToPaint(ps, hDC);
+     if (mTransparencyMode == TransparencyMode::Transparent) {
+       translucentRegion = LayoutDeviceIntRegion{winRect};

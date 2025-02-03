@@ -1,0 +1,1 @@
+Bug 1845623 - Make some form controls always non-native on Windows. r=mhowell,desktop-theme-reviewers,dao    2023-07-28 19:06:47    e49eb28e3089c187f649895e2505917813dbb112

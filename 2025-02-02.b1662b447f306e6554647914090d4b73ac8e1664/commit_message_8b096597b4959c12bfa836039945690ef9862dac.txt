@@ -1,0 +1,1 @@
+Bug 1882752 - Remove nsButtonFrameRenderer. r=dholbert    2024-03-13 02:47:09    8b096597b4959c12bfa836039945690ef9862dac

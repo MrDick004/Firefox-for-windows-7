@@ -1,0 +1,1 @@
+Bug 1858349 - Remove now-unused menuarrow code. r=spohl,mac-reviewers,win-reviewers,rkraesig    2023-10-12 03:37:40    0cc423b3e32c32214331a420d1a53d7370d311b6

@@ -1,0 +1,265 @@
+diff --git a/toolkit/content/widgets/menulist.js b/toolkit/content/widgets/menulist.js
+index efe12263e75e..81f0969d359c 100644
+--- a/toolkit/content/widgets/menulist.js
++++ b/toolkit/content/widgets/menulist.js
+@@ -87,10 +87,12 @@
+ 
+     static get inheritedAttributes() {
+       return {
+-        image: "src=image",
+-        "#label": "value=label,crop,accesskey",
+-        "#highlightable-label": "text=label,crop,accesskey",
+-        dropmarker: "disabled,open",
++        "#label-box": "native",
++        image: "src=image,native",
++        "#label": "value=label,crop,accesskey,highlightable,native",
++        "#highlightable-label":
++          "text=label,crop,accesskey,highlightable,native",
++        dropmarker: "disabled,open,native",
+       };
+     }
+ 
+diff --git a/toolkit/themes/linux/global/menulist.css b/toolkit/themes/linux/global/menulist.css
+index 5c520292002c..00b6ea66853b 100644
+--- a/toolkit/themes/linux/global/menulist.css
++++ b/toolkit/themes/linux/global/menulist.css
+@@ -4,10 +4,19 @@
+ 
+ @import url("chrome://global/skin/menulist-shared.css");
+ 
+-:host([native]) {
++@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
++
++label {
++  margin: 1px 3px;
++}
++
++:host([native])  {
++  appearance: auto;
++  -moz-default-appearance: menulist;
+   margin: 2px 4px;
+   color: -moz-DialogText;
+   font: menu;
++  text-shadow: none;
+ }
+ 
+ :host([native]:not([disabled="true"]):hover) {
+@@ -19,10 +28,20 @@
+   color: -moz-buttonactivetext;
+ }
+ 
+-:host([native]) label {
+-  margin: 1px 3px;
++:host([native][disabled="true"]) {
++  color: GrayText;
+ }
+ 
+-:host([native]) dropmarker {
++/* Label box */
++
++#label-box[native] {
++  align-items: center;
++  justify-content: center;
++  color: inherit;
++}
++
++/* Dropmarker */
++
++dropmarker[native] {
+   display: none;
+ }
+diff --git a/toolkit/themes/osx/global/menulist.css b/toolkit/themes/osx/global/menulist.css
+index 86c4f9deee2a..86d35a62ce41 100644
+--- a/toolkit/themes/osx/global/menulist.css
++++ b/toolkit/themes/osx/global/menulist.css
+@@ -4,20 +4,44 @@
+ 
+ @import url("chrome://global/skin/menulist-shared.css");
+ 
++@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
++
++label:not([native]) {
++  margin: 0 3px;
++}
++
+ :host([native]) {
++  appearance: auto;
++  -moz-default-appearance: menulist;
+   margin: 5px 2px 3px;
+   min-height: 20px;
+   color: -moz-DialogText;
++  text-shadow: none;
++  padding: unset;
++}
++
++:host([native][disabled="true"]) {
++  color: GrayText;
+ }
+ 
+-:host([native]) #label-box {
++:host([native][disabled="true"]) > dropmarker {
++  padding-inline-start: 7px !important;
++}
++
++/* Label box */
++
++#label-box[native] {
++  align-items: center;
++  justify-content: center;
+   margin-bottom: 1px;
+ }
+ 
+-:host([native]) label {
+-  margin: 1px 3px;
++label[native] {
++  margin: 1px 3px !important;
+ }
+ 
+-:host([native]) dropmarker {
++/* Dropmarker */
++
++dropmarker[native] {
+   display: none;
+ }
+diff --git a/toolkit/themes/shared/menulist-shared.css b/toolkit/themes/shared/menulist-shared.css
+index 2fb36808bbcd..b775b66cbf37 100644
+--- a/toolkit/themes/shared/menulist-shared.css
++++ b/toolkit/themes/shared/menulist-shared.css
+@@ -2,15 +2,7 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+-:host([native]) {
+-  appearance: auto;
+-  -moz-default-appearance: menulist;
+-  text-shadow: none;
+-}
+-
+-:host([native][disabled="true"]) {
+-  color: GrayText;
+-}
++@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
+ 
+ :host(:not([native])) {
+   appearance: none;
+@@ -48,33 +40,34 @@
+ #label-box {
+   min-width: 0;
+   pointer-events: none;
++}
++
++#label-box:not([native]) {
+   align-items: center;
+   justify-content: center;
+-
+-  :host(:not([native])) & {
+-    font-weight: 600;
+-  }
++  font-weight: 600;
+ }
+ 
+ dropmarker {
+   pointer-events: none;
+   flex: 0;
+   align-self: center;
++}
+ 
+-  :host(:not([native])) & {
+-    display: flex;
+-    appearance: none;
+-    content: url(chrome://global/skin/icons/arrow-down-12.svg);
+-    -moz-context-properties: fill;
+-    fill: currentColor;
+-  }
++dropmarker:not([native]) {
++  display: flex;
++  appearance: none;
++  width: 12px;
++  height: unset;
+ }
+ 
+-:host(:not([highlightable])) #highlightable-label,
+-:host([highlightable]) #label {
+-  display: none;
++dropmarker:not([native])::part(icon) {
++  content: url(chrome://global/skin/icons/arrow-down-12.svg);
++  -moz-context-properties: fill;
++  fill: currentColor;
+ }
+ 
+-label {
+-  margin: 0 3px;
++#highlightable-label:not([highlightable="true"]),
++#label[highlightable="true"] {
++  display: none;
+ }
+diff --git a/toolkit/themes/windows/global/menulist.css b/toolkit/themes/windows/global/menulist.css
+index 45b3864019aa..e3107f62e292 100644
+--- a/toolkit/themes/windows/global/menulist.css
++++ b/toolkit/themes/windows/global/menulist.css
+@@ -4,26 +4,54 @@
+ 
+ @import url("chrome://global/skin/menulist-shared.css");
+ 
++@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
++
++label {
++  margin: 0 3px;
++}
++
+ :host([native]) {
++  appearance: auto;
++  -moz-default-appearance: menulist;
+   margin: 2px 4px;
+   color: FieldText;
++  text-shadow: none;
+ }
+ 
+-@media (prefers-contrast) {
+-  :host([native]:not([open="true"]):focus) > #label-box {
+-    background-color: SelectedItem;
+-    color: SelectedItemText;
+-  }
++:host([native][disabled="true"]) {
++  background-color: -moz-Dialog;
++  color: GrayText;
+ }
+ 
+-:host([native]:not([open="true"]):focus-visible) > #label-box {
+-  outline: var(--default-focusring);
++/* Label box */
++
++#label-box[native] {
++  align-items: center;
++  justify-content: center;
+ }
+ 
+-:host([native]) :is(image, label) {
+-  margin-block: -1px;
++:host([native]:not([open="true"]):focus) > #label-box {
++  background-color: SelectedItem;
++  color: SelectedItemText;
+ }
+ 
+-:host([native]) dropmarker {
+-  margin-inline: 3px -3px;
++:host([native]:not([open="true"]):-moz-focusring) > #label-box {
++  outline: var(--default-focusring);
++}
++
++
++@media not (prefers-contrast) {
++  #label-box[native] {
++    background-color: transparent !important;
++    color: inherit !important;
++  }
++
++  image[native],
++  label[native] {
++    margin-block: -1px !important;
++  }
++
++  dropmarker[native] {
++    margin-inline: 3px -3px;
++  }
+ }

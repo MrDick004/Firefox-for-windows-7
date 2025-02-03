@@ -1,0 +1,191 @@
+
+
+diff --git a/ipc/mscom/AgileReference.cpp b/ipc/mscom/AgileReference.cpp
+index 39c3cba106e36..7135e4673da26 100644
+--- a/ipc/mscom/AgileReference.cpp
++++ b/ipc/mscom/AgileReference.cpp
+@@ -99,7 +99,7 @@ AgileReference& AgileReference::operator=(AgileReference&& aOther) noexcept {
+ }
+ 
+ HRESULT
+-AgileReference::ResolveRaw(REFIID aIid, void** aOutInterface) const {
++AgileReference::Resolve(REFIID aIid, void** aOutInterface) const {
+   MOZ_ASSERT(aOutInterface);
+   MOZ_ASSERT(mAgileRef);
+   MOZ_ASSERT(IsCOMInitializedOnCurrentThread());
+diff --git a/ipc/mscom/AgileReference.h b/ipc/mscom/AgileReference.h
+index da5d37b50a164..cad33c994c3cf 100644
+--- a/ipc/mscom/AgileReference.h
++++ b/ipc/mscom/AgileReference.h
+@@ -58,23 +58,14 @@ class AgileReference final {
+     Assign(__uuidof(T), aOther);
+   }
+ 
+-  // Raw version, and implementation, of Resolve(). Can be used directly if
+-  // necessary, but in general, prefer one of the templated versions below
+-  // (depending on whether or not you need the HRESULT).
+-  HRESULT ResolveRaw(REFIID aIid, void** aOutInterface) const;
+-
+-  template <typename Interface>
+-  HRESULT Resolve(RefPtr<Interface>& aOutInterface) const {
+-    return this->ResolveRaw(__uuidof(Interface), getter_AddRefs(aOutInterface));
+-  }
+-
+   template <typename T>
+-  RefPtr<T> Resolve() {
+-    RefPtr<T> p;
+-    Resolve<T>(p);
+-    return p;
++  AgileReference& operator=(const RefPtr<T>& aOther) {
++    Assign(aOther);
++    return *this;
+   }
+ 
++  HRESULT Resolve(REFIID aIid, void** aOutInterface) const;
++
+   AgileReference& operator=(const AgileReference& aOther);
+   AgileReference& operator=(AgileReference&& aOther) noexcept;
+ 
+@@ -100,4 +91,21 @@ class AgileReference final {
+ 
+ }  // namespace mozilla::mscom
+ 
++template <typename T>
++RefPtr<T>::RefPtr(const mozilla::mscom::AgileReference& aAgileRef)
++    : mRawPtr(nullptr) {
++  (*this) = aAgileRef;
++}
++
++template <typename T>
++RefPtr<T>& RefPtr<T>::operator=(
++    const mozilla::mscom::AgileReference& aAgileRef) {
++  void* newRawPtr;
++  if (FAILED(aAgileRef.Resolve(__uuidof(T), &newRawPtr))) {
++    newRawPtr = nullptr;
++  }
++  assign_assuming_AddRef(static_cast<T*>(newRawPtr));
++  return *this;
++}
++
+ #endif  // mozilla_mscom_AgileReference_h
+diff --git a/mfbt/RefPtr.h b/mfbt/RefPtr.h
+index 27f22356babfb..30bde2c0a8f11 100644
+--- a/mfbt/RefPtr.h
++++ b/mfbt/RefPtr.h
+@@ -33,6 +33,11 @@ template <class T>
+ class StaticLocalRefPtr;
+ template <class T>
+ class StaticRefPtr;
++#if defined(XP_WIN)
++namespace mscom {
++class AgileReference;
++}  // namespace mscom
++#endif  // defined(XP_WIN)
+ 
+ // Traditionally, RefPtr supports automatic refcounting of any pointer type
+ // with AddRef() and Release() methods that follow the traditional semantics.
+@@ -161,6 +166,9 @@ class MOZ_IS_REFPTR RefPtr {
+ 
+   MOZ_IMPLICIT RefPtr(const nsQueryReferent& aHelper);
+   MOZ_IMPLICIT RefPtr(const nsCOMPtr_helper& aHelper);
++#if defined(XP_WIN)
++  MOZ_IMPLICIT RefPtr(const mozilla::mscom::AgileReference& aAgileRef);
++#endif  // defined(XP_WIN)
+ 
+   // Defined in OwningNonNull.h
+   template <class U>
+@@ -221,6 +229,9 @@ class MOZ_IS_REFPTR RefPtr {
+ 
+   RefPtr<T>& operator=(const nsQueryReferent& aQueryReferent);
+   RefPtr<T>& operator=(const nsCOMPtr_helper& aHelper);
++#if defined(XP_WIN)
++  RefPtr<T>& operator=(const mozilla::mscom::AgileReference& aAgileRef);
++#endif  // defined(XP_WIN)
+ 
+   template <typename I,
+             typename = std::enable_if_t<std::is_convertible_v<I*, T*>>>
+diff --git a/widget/windows/LegacyJumpListBuilder.cpp b/widget/windows/LegacyJumpListBuilder.cpp
+index a4493306c73da..03500a069a065 100644
+--- a/widget/windows/LegacyJumpListBuilder.cpp
++++ b/widget/windows/LegacyJumpListBuilder.cpp
+@@ -112,7 +112,7 @@ LegacyJumpListBuilder::LegacyJumpListBuilder()
+     ReentrantMonitorAutoEnter lock(mMonitor);
+     // Since we are accessing mJumpListMgr across different threads
+     // (ie, different apartments), mJumpListMgr must be an agile reference.
+-    mJumpListMgr = mscom::AgileReference(jumpListMgr);
++    mJumpListMgr = jumpListMgr;
+   });
+ 
+   if (!mJumpListMgr) {
+@@ -131,7 +131,7 @@ LegacyJumpListBuilder::LegacyJumpListBuilder()
+     observerService->AddObserver(this, TOPIC_CLEAR_PRIVATE_DATA, false);
+   }
+ 
+-  RefPtr jumpListMgr = mJumpListMgr.Resolve<ICustomDestinationList>();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return;
+   }
+@@ -146,7 +146,7 @@ NS_IMETHODIMP LegacyJumpListBuilder::SetAppUserModelID(
+   ReentrantMonitorAutoEnter lock(mMonitor);
+   if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
+ 
+-  RefPtr jumpListMgr = mJumpListMgr.Resolve<ICustomDestinationList>();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return NS_ERROR_NOT_AVAILABLE;
+   }
+@@ -187,7 +187,7 @@ NS_IMETHODIMP LegacyJumpListBuilder::GetMaxListItems(int16_t* aMaxItems) {
+     return NS_OK;
+   }
+ 
+-  RefPtr jumpListMgr = mJumpListMgr.Resolve<ICustomDestinationList>();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return NS_ERROR_UNEXPECTED;
+   }
+@@ -260,7 +260,7 @@ void LegacyJumpListBuilder::DoInitListBuild(RefPtr<Promise>&& aPromise) {
+         }));
+   });
+ 
+-  RefPtr jumpListMgr = mJumpListMgr.Resolve<ICustomDestinationList>();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return;
+   }
+@@ -335,7 +335,7 @@ NS_IMETHODIMP LegacyJumpListBuilder::AddListToBuild(int16_t aCatType,
+   ReentrantMonitorAutoEnter lock(mMonitor);
+   if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
+ 
+-  RefPtr jumpListMgr = mJumpListMgr.Resolve<ICustomDestinationList>();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return NS_ERROR_UNEXPECTED;
+   }
+@@ -459,7 +459,7 @@ NS_IMETHODIMP LegacyJumpListBuilder::AbortListBuild() {
+   ReentrantMonitorAutoEnter lock(mMonitor);
+   if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
+ 
+-  RefPtr jumpListMgr = mJumpListMgr.Resolve<ICustomDestinationList>();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return NS_ERROR_UNEXPECTED;
+   }
+@@ -508,7 +508,7 @@ void LegacyJumpListBuilder::DoCommitListBuild(
+     Unused << NS_DispatchToMainThread(aCallback);
+   });
+ 
+-  RefPtr jumpListMgr = mJumpListMgr.Resolve<ICustomDestinationList>();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return;
+   }
+@@ -531,7 +531,7 @@ NS_IMETHODIMP LegacyJumpListBuilder::DeleteActiveList(bool* _retval) {
+     AbortListBuild();
+   }
+ 
+-  RefPtr jumpListMgr = mJumpListMgr.Resolve<ICustomDestinationList>();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return NS_ERROR_UNEXPECTED;
+   }

@@ -1,0 +1,1 @@
+Bug 1933958 - Add a test for the widget opaque region. r=gfx-reviewers,aosmond    2024-11-28 23:09:12    6f6de92999bfdf4d34e6c8a5a98d1ca1eb346a9e

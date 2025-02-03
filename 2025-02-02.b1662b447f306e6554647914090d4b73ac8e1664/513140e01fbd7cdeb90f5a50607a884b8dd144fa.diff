@@ -1,0 +1,69 @@
+
+
+diff --git a/mozglue/baseprofiler/core/shared-libraries-win32.cc b/mozglue/baseprofiler/core/shared-libraries-win32.cc
+index fc92914101f29..03d05e439ad03 100644
+--- a/mozglue/baseprofiler/core/shared-libraries-win32.cc
++++ b/mozglue/baseprofiler/core/shared-libraries-win32.cc
+@@ -10,6 +10,7 @@
+ #include "mozilla/NativeNt.h"
+ #include "mozilla/WindowsEnumProcessModules.h"
+ #include "mozilla/WindowsProcessMitigations.h"
++#include "mozilla/WindowsVersion.h"
+ 
+ #include <cctype>
+ #include <string>
+@@ -59,6 +60,29 @@ static bool IsModuleUnsafeToLoad(const std::string& aModuleName) {
+ }
+ 
+ static bool IsModuleUnsafeToLoad(const std::string& aModuleName) {
++#if defined(_M_AMD64) || defined(_M_IX86)
++  // Hackaround for Bug 1607574.  Nvidia's shim driver nvd3d9wrap[x].dll detours
++  // LoadLibraryExW and it causes AV when the following conditions are met.
++  //   1. LoadLibraryExW was called for "detoured.dll"
++  //   2. nvinit[x].dll was unloaded
++  //   3. OS version is older than 6.2
++#  if defined(_M_AMD64)
++  LPCWSTR kNvidiaShimDriver = L"nvd3d9wrapx.dll";
++  LPCWSTR kNvidiaInitDriver = L"nvinitx.dll";
++#  elif defined(_M_IX86)
++  LPCWSTR kNvidiaShimDriver = L"nvd3d9wrap.dll";
++  LPCWSTR kNvidiaInitDriver = L"nvinit.dll";
++#  endif
++  constexpr std::string_view detoured_dll = "detoured.dll";
++  if (std::equal(aModuleName.cbegin(), aModuleName.cend(),
++                 detoured_dll.cbegin(), detoured_dll.cend(),
++                 LowerCaseEqualsLiteral) &&
++      !mozilla::IsWin8OrLater() && ::GetModuleHandleW(kNvidiaShimDriver) &&
++      !::GetModuleHandleW(kNvidiaInitDriver)) {
++    return true;
++  }
++#endif  // defined(_M_AMD64) || defined(_M_IX86)
++
+   // Hackaround for Bug 1723868.  There is no safe way to prevent the module
+   // Microsoft's VP9 Video Decoder from being unloaded because mfplat.dll may
+   // have posted more than one task to unload the module in the work queue
+diff --git a/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.cpp b/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.cpp
+index 348bd785ac416..5272cd2e02929 100644
+--- a/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.cpp
++++ b/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.cpp
+@@ -9,6 +9,7 @@
+ #include "nsWindowsDllInterceptor.h"
+ #include "mozilla/NativeNt.h"
+ #include "mozilla/StackWalk_windows.h"
+ #include "mozilla/WindowsDiagnostics.h"
++#include "mozilla/WindowsVersion.h"
+ 
+ namespace mozilla {
+@@ -54,7 +55,10 @@ void WindowsStackWalkInitialization() {
+   NtDllIntercept.Init("ntdll.dll");
+   stub_LdrUnloadDll.Set(NtDllIntercept, "LdrUnloadDll", &patched_LdrUnloadDll);
+-  stub_LdrResolveDelayLoadedAPI.Set(NtDllIntercept, "LdrResolveDelayLoadedAPI",
+-                                    &patched_LdrResolveDelayLoadedAPI);
++  if (IsWin8OrLater()) {  // LdrResolveDelayLoadedAPI was introduced in Win8
++    stub_LdrResolveDelayLoadedAPI.Set(NtDllIntercept,
++                                      "LdrResolveDelayLoadedAPI",
++                                      &patched_LdrResolveDelayLoadedAPI);
++  }
+ }
+ 
+ [[clang::optnone]] void UnoptimizedLookup() {

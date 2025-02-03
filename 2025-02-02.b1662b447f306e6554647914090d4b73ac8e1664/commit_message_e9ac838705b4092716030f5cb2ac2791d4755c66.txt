@@ -1,0 +1,1 @@
+Bug 1911763 - Make window transparency not apply WS_EX_LAYERED for toplevels, and allow them to be accelerated. r=win-reviewers,rkraesig    2024-09-30 20:16:08    e9ac838705b4092716030f5cb2ac2791d4755c66
