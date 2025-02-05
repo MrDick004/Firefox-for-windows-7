@@ -1,0 +1,1175 @@
+diff --git a/browser/base/content/browser-init.js b/browser/base/content/browser-init.js
+index 7aa16be1cb8db..9c1bff62835de 100644
+--- a/browser/base/content/browser-init.js
++++ b/browser/base/content/browser-init.js
+@@ -105,8 +105,7 @@ var gBrowserInit = {
+     // Run menubar initialization first, to avoid TabsInTitlebar code picking
+     // up mutations from it and causing a reflow.
+     AutoHideMenubar.init();
+-    // Update the customtitlebar attribute so the window can be sized
+-    // correctly.
++    // Update the chromemargin attribute so the window can be sized correctly.
+     window.TabBarVisibility.update();
+     TabsInTitlebar.init();
+ 
+diff --git a/browser/base/content/browser-tabsintitlebar.js b/browser/base/content/browser-tabsintitlebar.js
+index 5cdc1849aaa25..7d39d033ab5c8 100644
+--- a/browser/base/content/browser-tabsintitlebar.js
++++ b/browser/base/content/browser-tabsintitlebar.js
+@@ -69,13 +69,13 @@ var TabsInTitlebar = {
+       !Object.keys(this._disallowed).length;
+     if (allowed) {
+       document.documentElement.setAttribute("tabsintitlebar", "true");
+-      document.documentElement.setAttribute("customtitlebar", "true");
++      document.documentElement.setAttribute("chromemargin", "0,0,0,0");
+       if (AppConstants.platform == "macosx") {
+         document.documentElement.removeAttribute("drawtitle");
+       }
+     } else {
+       document.documentElement.removeAttribute("tabsintitlebar");
+-      document.documentElement.removeAttribute("customtitlebar");
++      document.documentElement.removeAttribute("chromemargin");
+       if (AppConstants.platform == "macosx") {
+         document.documentElement.setAttribute("drawtitle", "true");
+       }
+diff --git a/browser/base/content/browser.xhtml b/browser/base/content/browser.xhtml
+index a4c028fa3caa8..6a63601bb7220 100644
+--- a/browser/base/content/browser.xhtml
++++ b/browser/base/content/browser.xhtml
+@@ -17,7 +17,7 @@
+ #endif
+         data-l10n-args="{&quot;content-title&quot;:&quot;CONTENTTITLE&quot;,&quot;profile-name&quot;:&quot;PROFILENAME&quot;}"
+         data-l10n-attrs="data-content-title-default, data-content-title-private, data-title-default, data-title-private, data-content-title-default-with-profile, data-content-title-private-with-profile, data-title-default-with-profile, data-title-private-with-profile"
+-        customtitlebar="true"
++        chromemargin="0,0,0,0"
+         tabsintitlebar="true"
+         windowtype="navigator:browser"
+         macanimationtype="document"
+diff --git a/browser/base/content/pageinfo/pageInfo.xhtml b/browser/base/content/pageinfo/pageInfo.xhtml
+index 7525e4976afb4..cca293c534f51 100644
+--- a/browser/base/content/pageinfo/pageInfo.xhtml
++++ b/browser/base/content/pageinfo/pageInfo.xhtml
+@@ -12,7 +12,7 @@
+   windowtype="Browser:page-info"
+ #ifdef XP_MACOSX
+   drawtitle="true"
+-  customtitlebar="true"
++  chromemargin="0,0,0,0"
+ #endif
+   align="stretch"
+   screenX="10" screenY="10"
+diff --git a/browser/base/content/webrtcIndicator.xhtml b/browser/base/content/webrtcIndicator.xhtml
+index 79bd7b697e72f..f47837774b8e4 100644
+--- a/browser/base/content/webrtcIndicator.xhtml
++++ b/browser/base/content/webrtcIndicator.xhtml
+@@ -10,7 +10,7 @@
+   xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+   id="webrtcIndicator"
+   windowtype="Browser:WebRTCGlobalIndicator"
+-  customtitlebar="true"
++  chromemargin="0,0,0,0"
+ >
+   <head>
+     <link rel="stylesheet" href="chrome://global/skin/global.css" />
+diff --git a/browser/components/BrowserGlue.sys.mjs b/browser/components/BrowserGlue.sys.mjs
+index ee0f0eb0ddd2e..a672c05a5b170 100644
+--- a/browser/components/BrowserGlue.sys.mjs
++++ b/browser/components/BrowserGlue.sys.mjs
+@@ -1822,7 +1822,7 @@ BrowserGlue.prototype = {
+     // Hide the titlebar if the actual browser window will draw in it.
+     let hiddenTitlebar = Services.appinfo.drawInTitlebar;
+     if (hiddenTitlebar) {
+-      win.windowUtils.setCustomTitlebar(true);
++      win.windowUtils.setChromeMargin(0, 0, 0, 0);
+     }
+ 
+     let docElt = win.document.documentElement;
+diff --git a/browser/components/places/content/places.xhtml b/browser/components/places/content/places.xhtml
+index b18de70185bf9..e2d47a009f568 100644
+--- a/browser/components/places/content/places.xhtml
++++ b/browser/components/places/content/places.xhtml
+@@ -17,7 +17,7 @@
+         screenX="10" screenY="10"
+ #ifdef XP_MACOSX
+         drawtitle="true"
+-        customtitlebar="true"
++        chromemargin="0,0,0,0"
+ #endif
+         toggletoolbar="true"
+         persist="width height screenX screenY sizemode"
+diff --git a/browser/themes/shared/browser-shared.css b/browser/themes/shared/browser-shared.css
+index ce56d2c234b28..ed0858f20f23a 100644
+--- a/browser/themes/shared/browser-shared.css
++++ b/browser/themes/shared/browser-shared.css
+@@ -263,7 +263,7 @@ body {
+     visibility: hidden;
+   }
+ 
+-  :root:not([customtitlebar], [inFullscreen]) & {
++  :root:not([chromemargin], [inFullscreen]) & {
+     display: none;
+   }
+ }
+diff --git a/dom/base/nsContentUtils.cpp b/dom/base/nsContentUtils.cpp
+index 6740893e1b1ad..13ba7fa81c67f 100644
+--- a/dom/base/nsContentUtils.cpp
++++ b/dom/base/nsContentUtils.cpp
+@@ -1819,6 +1819,50 @@ bool nsContentUtils::IsHTMLBlockLevelElement(nsIContent* aContent) {
+       nsGkAtoms::ul, nsGkAtoms::xmp);
+ }
+ 
++/* static */
++bool nsContentUtils::ParseIntMarginValue(const nsAString& aString,
++                                         nsIntMargin& result) {
++  nsAutoString marginStr(aString);
++  marginStr.CompressWhitespace(true, true);
++  if (marginStr.IsEmpty()) {
++    return false;
++  }
++
++  int32_t start = 0, end = 0;
++  for (int count = 0; count < 4; count++) {
++    if ((uint32_t)end >= marginStr.Length()) return false;
++
++    // top, right, bottom, left
++    if (count < 3)
++      end = Substring(marginStr, start).FindChar(',');
++    else
++      end = Substring(marginStr, start).Length();
++
++    if (end <= 0) return false;
++
++    nsresult ec;
++    int32_t val = nsString(Substring(marginStr, start, end)).ToInteger(&ec);
++    if (NS_FAILED(ec)) return false;
++
++    switch (count) {
++      case 0:
++        result.top = val;
++        break;
++      case 1:
++        result.right = val;
++        break;
++      case 2:
++        result.bottom = val;
++        break;
++      case 3:
++        result.left = val;
++        break;
++    }
++    start += end + 1;
++  }
++  return true;
++}
++
+ // static
+ int32_t nsContentUtils::ParseLegacyFontSize(const nsAString& aValue) {
+   nsAString::const_iterator iter, end;
+diff --git a/dom/base/nsContentUtils.h b/dom/base/nsContentUtils.h
+index 7e8e11e3b002e..a1efe3efc7f48 100644
+--- a/dom/base/nsContentUtils.h
++++ b/dom/base/nsContentUtils.h
+@@ -874,6 +874,17 @@ class nsContentUtils {
+                                       ParseHTMLIntegerResultFlags* aResult);
+ 
+  public:
++  /**
++   * Parse a margin string of format 'top, right, bottom, left' into
++   * an nsIntMargin.
++   *
++   * @param aString the string to parse
++   * @param aResult the resulting integer
++   * @return whether the value could be parsed
++   */
++  static bool ParseIntMarginValue(const nsAString& aString,
++                                  nsIntMargin& aResult);
++
+   /**
+    * Parse the value of the <font size=""> attribute according to the HTML5
+    * spec as of April 16, 2012.
+diff --git a/dom/base/nsDOMWindowUtils.cpp b/dom/base/nsDOMWindowUtils.cpp
+index ed2d6c4999853..ff56217bc9447 100644
+--- a/dom/base/nsDOMWindowUtils.cpp
++++ b/dom/base/nsDOMWindowUtils.cpp
+@@ -4192,27 +4192,32 @@ nsDOMWindowUtils::PostRestyleSelfEvent(Element* aElement) {
+ }
+ 
+ NS_IMETHODIMP
+-nsDOMWindowUtils::SetCustomTitlebar(bool aCustomTitlebar) {
+-  // TODO(emilio): Can't we use nsDOMWindowUtils::GetWidget()?
+-  if (nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow)) {
+-    if (nsCOMPtr<nsIBaseWindow> baseWindow =
+-            do_QueryInterface(window->GetDocShell())) {
++nsDOMWindowUtils::SetChromeMargin(int32_t aTop, int32_t aRight, int32_t aBottom,
++                                  int32_t aLeft) {
++  nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow);
++  if (window) {
++    nsCOMPtr<nsIBaseWindow> baseWindow =
++        do_QueryInterface(window->GetDocShell());
++    if (baseWindow) {
+       nsCOMPtr<nsIWidget> widget;
+       baseWindow->GetMainWidget(getter_AddRefs(widget));
+       if (widget) {
+-        widget->SetCustomTitlebar(aCustomTitlebar);
++        LayoutDeviceIntMargin margins(aTop, aRight, aBottom, aLeft);
++        return widget->SetNonClientMargins(margins);
+       }
+     }
+   }
++
+   return NS_OK;
+ }
+ 
+ NS_IMETHODIMP
+ nsDOMWindowUtils::SetResizeMargin(int32_t aResizeMargin) {
+-  // TODO(emilio): Can't we use nsDOMWindowUtils::GetWidget()?
+-  if (nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow)) {
+-    if (nsCOMPtr<nsIBaseWindow> baseWindow =
+-            do_QueryInterface(window->GetDocShell())) {
++  nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow);
++  if (window) {
++    nsCOMPtr<nsIBaseWindow> baseWindow =
++        do_QueryInterface(window->GetDocShell());
++    if (baseWindow) {
+       nsCOMPtr<nsIWidget> widget;
+       baseWindow->GetMainWidget(getter_AddRefs(widget));
+       if (widget) {
+diff --git a/dom/interfaces/base/nsIDOMWindowUtils.idl b/dom/interfaces/base/nsIDOMWindowUtils.idl
+index 40ddbcdac5d18..b4d065ff31974 100644
+--- a/dom/interfaces/base/nsIDOMWindowUtils.idl
++++ b/dom/interfaces/base/nsIDOMWindowUtils.idl
+@@ -2053,11 +2053,14 @@ interface nsIDOMWindowUtils : nsISupports {
+   readonly attribute boolean refreshDriverHasPendingTick;
+ 
+   /**
+-   * Controls whether we paint to the titlebar of the window.
+-   * Works like the customtitlebar xul:window attribute.
++   * Controls the amount of chrome that should be visible on each side of
++   * the window. Works like the chromemargin xul:window attribute.
+    * This should only be used with non-XUL windows.
+    */
+-  void setCustomTitlebar(in boolean aCustomTitlebar);
++  void setChromeMargin(in int32_t aTop,
++                       in int32_t aRight,
++                       in int32_t aBottom,
++                       in int32_t aLeft);
+ 
+   /**
+    * Controls the amount of space on each edge of the window that can be
+diff --git a/dom/xul/ChromeObserver.cpp b/dom/xul/ChromeObserver.cpp
+index a3c066bcd7f8a..73f712e30cc8e 100644
+--- a/dom/xul/ChromeObserver.cpp
++++ b/dom/xul/ChromeObserver.cpp
+@@ -39,8 +39,8 @@ void ChromeObserver::Init() {
+   for (uint32_t i = 0; i < attributeCount; i++) {
+     BorrowedAttrInfo info = rootElement->GetAttrInfoAt(i);
+     const nsAttrName* name = info.mName;
+-    if (name->LocalName() == nsGkAtoms::customtitlebar) {
+-      // Some linux windows managers have an issue when the customtitlebar is
++    if (name->LocalName() == nsGkAtoms::chromemargin) {
++      // Some linux windows managers have an issue when the chrome margin is
+       // applied while the browser is loading (bug 1598848). For now, skip
+       // applying this attribute when initializing.
+       continue;
+@@ -73,6 +73,43 @@ void ChromeObserver::SetDrawsTitle(bool aState) {
+   }
+ }
+ 
++class MarginSetter : public Runnable {
++ public:
++  explicit MarginSetter(nsIWidget* aWidget)
++      : mozilla::Runnable("MarginSetter"),
++        mWidget(aWidget),
++        mMargin(-1, -1, -1, -1) {}
++  MarginSetter(nsIWidget* aWidget, const LayoutDeviceIntMargin& aMargin)
++      : mozilla::Runnable("MarginSetter"), mWidget(aWidget), mMargin(aMargin) {}
++
++  NS_IMETHOD Run() override {
++    // SetNonClientMargins can dispatch native events, hence doing
++    // it off a script runner.
++    mWidget->SetNonClientMargins(mMargin);
++    return NS_OK;
++  }
++
++ private:
++  nsCOMPtr<nsIWidget> mWidget;
++  LayoutDeviceIntMargin mMargin;
++};
++
++void ChromeObserver::SetChromeMargins(const nsAttrValue* aValue) {
++  if (!aValue) return;
++
++  nsIWidget* mainWidget = GetWindowWidget();
++  if (!mainWidget) return;
++
++  // top, right, bottom, left - see nsAttrValue
++  nsAutoString tmp;
++  aValue->ToString(tmp);
++  nsIntMargin margins;
++  if (nsContentUtils::ParseIntMarginValue(tmp, margins)) {
++    nsContentUtils::AddScriptRunner(new MarginSetter(
++        mainWidget, LayoutDeviceIntMargin::FromUnknownMargin(margins)));
++  }
++}
++
+ void ChromeObserver::AttributeChanged(dom::Element* aElement,
+                                       int32_t aNamespaceID, nsAtom* aName,
+                                       int32_t aModType,
+@@ -87,8 +124,8 @@ void ChromeObserver::AttributeChanged(dom::Element* aElement,
+     // Hide chrome if needed
+     if (aName == nsGkAtoms::hidechrome) {
+       HideWindowChrome(value->Equals(u"true"_ns, eCaseMatters));
+-    } else if (aName == nsGkAtoms::customtitlebar) {
+-      SetCustomTitlebar(true);
++    } else if (aName == nsGkAtoms::chromemargin) {
++      SetChromeMargins(value);
+     }
+     // title and drawintitlebar are settable on
+     // any root node (windows, dialogs, etc)
+@@ -104,8 +141,8 @@ void ChromeObserver::AttributeChanged(dom::Element* aElement,
+   } else {
+     if (aName == nsGkAtoms::hidechrome) {
+       HideWindowChrome(false);
+-    } else if (aName == nsGkAtoms::customtitlebar) {
+-      SetCustomTitlebar(false);
++    } else if (aName == nsGkAtoms::chromemargin) {
++      ResetChromeMargins();
+     } else if (aName == nsGkAtoms::localedir) {
+       // if the localedir changed on the root element, reset the document
+       // direction
+@@ -120,14 +157,11 @@ void ChromeObserver::NodeWillBeDestroyed(nsINode* aNode) {
+   }
+ }
+ 
+-void ChromeObserver::SetCustomTitlebar(bool aCustomTitlebar) {
+-  if (nsIWidget* mainWidget = GetWindowWidget()) {
+-    // SetCustomTitlebar can dispatch native events, hence doing it off a
+-    // script runner
+-    nsContentUtils::AddScriptRunner(NewRunnableMethod<bool>(
+-        "SetCustomTitlebar", mainWidget, &nsIWidget::SetCustomTitlebar,
+-        aCustomTitlebar));
+-  }
++void ChromeObserver::ResetChromeMargins() {
++  nsIWidget* mainWidget = GetWindowWidget();
++  if (!mainWidget) return;
++  // See nsIWidget
++  nsContentUtils::AddScriptRunner(new MarginSetter(mainWidget));
+ }
+ 
+ nsresult ChromeObserver::HideWindowChrome(bool aShouldHide) {
+diff --git a/dom/xul/ChromeObserver.h b/dom/xul/ChromeObserver.h
+index 639d7be4d9bbb..c651389487b89 100644
+--- a/dom/xul/ChromeObserver.h
++++ b/dom/xul/ChromeObserver.h
+@@ -27,8 +27,11 @@ class ChromeObserver final : public nsStubMutationObserver {
+  protected:
+   nsIWidget* GetWindowWidget();
+   void SetDrawsTitle(bool aState);
++  void SetChromeMargins(const nsAttrValue* aValue);
+   nsresult HideWindowChrome(bool aShouldHide);
+-  void SetCustomTitlebar(bool);
++
++ private:
++  void ResetChromeMargins();
+   void SetMica(bool);
+   ~ChromeObserver();
+   // A weak pointer cleared when the element will be destroyed.
+diff --git a/mozglue/misc/PreXULSkeletonUI.cpp b/mozglue/misc/PreXULSkeletonUI.cpp
+index eb905b34200a7..ed9da18f77714 100644
+--- a/mozglue/misc/PreXULSkeletonUI.cpp
++++ b/mozglue/misc/PreXULSkeletonUI.cpp
+@@ -1997,10 +1997,13 @@ static Result<Ok, PreXULSkeletonUIError> CreateAndStorePreXULSkeletonUIImpl(
+   // These match the offsets that we get with default prefs. We don't use the
+   // skeleton ui if tabsInTitlebar is disabled, see bug 1673092.
+   if (sMaximized) {
+-    sNonClientOffset = Margin{sCaptionHeight, 0, 0, 0};
++    sNonClientOffset.top = sCaptionHeight;
+   } else {
+     // See nsWindow::NormalWindowNonClientOffset()
+-    sNonClientOffset = Margin{sCaptionHeight + sVerticalResizeMargin, 0, 0, 0};
++    sNonClientOffset.top = sCaptionHeight + sVerticalResizeMargin;
++    sNonClientOffset.bottom = 0;
++    sNonClientOffset.left = 0;
++    sNonClientOffset.right = 0;
+   }
+ 
+   if (sMaximized) {
+diff --git a/toolkit/components/pictureinpicture/content/player.xhtml b/toolkit/components/pictureinpicture/content/player.xhtml
+index 440ce51e8e67e..9982bf35be35f 100644
+--- a/toolkit/components/pictureinpicture/content/player.xhtml
++++ b/toolkit/components/pictureinpicture/content/player.xhtml
+@@ -7,7 +7,7 @@
+       xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+       windowtype="Toolkit:PictureInPicture"
+       macnativefullscreen="true"
+-      customtitlebar="true"
++      chromemargin="0,0,0,0"
+       scrolling="false"
+       >
+   <head>
+diff --git a/toolkit/content/tests/chrome/chrome.toml b/toolkit/content/tests/chrome/chrome.toml
+index 25407cf79e100..6b2cab021fee1 100644
+--- a/toolkit/content/tests/chrome/chrome.toml
++++ b/toolkit/content/tests/chrome/chrome.toml
+@@ -143,6 +143,10 @@ skip-if = [
+ 
+ ["test_button.xhtml"]
+ 
++["test_chromemargin.xhtml"]
++support-files = "window_chromemargin.xhtml"
++skip-if = ["apple_catalina"]
++
+ ["test_closemenu_attribute.xhtml"]
+ 
+ ["test_contextmenu_list.xhtml"]
+diff --git a/toolkit/content/tests/chrome/test_chromemargin.xhtml b/toolkit/content/tests/chrome/test_chromemargin.xhtml
+new file mode 100644
+index 0000000000000..d1a6a568be1a2
+--- /dev/null
++++ b/toolkit/content/tests/chrome/test_chromemargin.xhtml
+@@ -0,0 +1,35 @@
++<?xml version="1.0"?>
++<!-- This Source Code Form is subject to the terms of the Mozilla Public
++   - License, v. 2.0. If a copy of the MPL was not distributed with this
++   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
++<?xml-stylesheet href="chrome://global/skin" type="text/css"?>
++<?xml-stylesheet href="chrome://mochikit/content/tests/SimpleTest/test.css" type="text/css"?>
++
++<window title="Custom chrome margin tests"
++  onload="setTimeout(runTest, 0);"
++  xmlns:html="http://www.w3.org/1999/xhtml"
++  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
++
++  <script src="chrome://mochikit/content/tests/SimpleTest/SimpleTest.js"/>
++
++<script>
++
++// Tests parsing of the chrome margin attrib on a window.
++
++SimpleTest.waitForExplicitFinish();
++function runTest()
++{
++  window.openDialog("window_chromemargin.xhtml", "_blank", "chrome,width=600,height=600,noopener", window);
++}
++</script>
++
++<body xmlns="http://www.w3.org/1999/xhtml">
++<p id="display">
++</p>
++<div id="content" style="display: none">
++</div>
++<pre id="test">
++</pre>
++</body>
++
++</window>
+diff --git a/toolkit/content/tests/chrome/window_chromemargin.xhtml b/toolkit/content/tests/chrome/window_chromemargin.xhtml
+new file mode 100644
+index 0000000000000..8c7cf5c0d3cdd
+--- /dev/null
++++ b/toolkit/content/tests/chrome/window_chromemargin.xhtml
+@@ -0,0 +1,73 @@
++<?xml version="1.0"?>
++<!-- This Source Code Form is subject to the terms of the Mozilla Public
++   - License, v. 2.0. If a copy of the MPL was not distributed with this
++   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
++<?xml-stylesheet href="chrome://global/skin" type="text/css"?>
++
++<window id="window" title="Subframe Origin Tests"
++        xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
++<script src="chrome://mochikit/content/tests/SimpleTest/EventUtils.js"/>
++chrome margins rock!
++<script>
++
++// Tests parsing of the chrome margin attrib on a window.
++
++function ok(condition, message) {
++  window.arguments[0].SimpleTest.ok(condition, message);
++}
++
++function is(a, b, message) {
++  window.arguments[0].SimpleTest.is(a, b, message);
++}
++
++function doSingleTest(param)
++{
++  var exception = null;
++  try {
++    document.documentElement.removeAttribute("chromemargin");
++    document.documentElement.setAttribute("chromemargin", param);
++    is(document.
++       documentElement.
++       getAttribute("chromemargin"), param, "couldn't set/get chromemargin?");
++  } catch (ex) {
++    exception = ex;
++  }
++  ok(!exception, "failed for param:'" + param + "'");
++  return true;
++}
++
++function runTests()
++{
++  var doc = document.documentElement;
++
++  // make sure we can set and get
++  doc.setAttribute("chromemargin", "0,0,0,0");
++  ok(doc.getAttribute("chromemargin") == "0,0,0,0", "couldn't set/get chromemargin?");
++  doc.setAttribute("chromemargin", "-1,-1,-1,-1");
++  ok(doc.getAttribute("chromemargin") == "-1,-1,-1,-1", "couldn't set/get chromemargin?");
++
++  // test remove
++  doc.removeAttribute("chromemargin");
++  is(doc.getAttribute("chromemargin"), null, "couldn't remove chromemargin?");
++
++  // we already test these really well in a c++ test in widget
++  doSingleTest("1,2,3,4");
++  doSingleTest("-2,-2,-2,-2");
++  doSingleTest("1,1,1,1");
++  doSingleTest("");
++  doSingleTest("12123123");
++  doSingleTest("0,-1,-1,-1");
++  doSingleTest("-1,0,-1,-1");
++  doSingleTest("-1,-1,0,-1");
++  doSingleTest("-1,-1,-1,0");
++  doSingleTest("1234567890,1234567890,1234567890,1234567890");
++  doSingleTest("-1,-1,-1,-1");
++
++  window.arguments[0].SimpleTest.finish();
++  window.close();
++}
++
++window.arguments[0].SimpleTest.waitForFocus(runTests, window);
++
++</script>
++</window>
+diff --git a/toolkit/content/tests/chrome/window_maximized_persist_with_no_titlebar.xhtml b/toolkit/content/tests/chrome/window_maximized_persist_with_no_titlebar.xhtml
+index 8d3f7709cb6b5..785f3bff967fe 100644
+--- a/toolkit/content/tests/chrome/window_maximized_persist_with_no_titlebar.xhtml
++++ b/toolkit/content/tests/chrome/window_maximized_persist_with_no_titlebar.xhtml
+@@ -5,7 +5,7 @@
+         height="300"
+         width="300"
+         sizemode="normal"
+-        customtitlebar="true"
++        chromemargin="0,0,0,0"
+         id="window"
+         persist="height width sizemode">
+ <script type="application/javascript"><![CDATA[
+diff --git a/widget/cocoa/nsCocoaWindow.h b/widget/cocoa/nsCocoaWindow.h
+index a8aabc3c3bc32..15a87c727b480 100644
+--- a/widget/cocoa/nsCocoaWindow.h
++++ b/widget/cocoa/nsCocoaWindow.h
+@@ -283,7 +283,8 @@ class nsCocoaWindow final : public nsBaseWidget {
+   void SetSupportsNativeFullscreen(bool aShow) override;
+   void SetWindowAnimationType(WindowAnimationType aType) override;
+   void SetDrawsTitle(bool aDrawTitle) override;
+-  void SetCustomTitlebar(bool) override;
++  nsresult SetNonClientMargins(const LayoutDeviceIntMargin&) override;
++  void SetDrawsInTitlebar(bool aState);
+   void UpdateThemeGeometries(
+       const nsTArray<ThemeGeometry>& aThemeGeometries) override;
+   nsresult SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
+diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
+index ddb755155e8f6..f1c87dd8faef8 100644
+--- a/widget/cocoa/nsCocoaWindow.mm
++++ b/widget/cocoa/nsCocoaWindow.mm
+@@ -2464,7 +2464,18 @@ void nsCocoaWindow::SetDrawsTitle(bool aDrawTitle) {
+   NS_OBJC_END_TRY_IGNORE_BLOCK;
+ }
+ 
+-void nsCocoaWindow::SetCustomTitlebar(bool aState) {
++nsresult nsCocoaWindow::SetNonClientMargins(
++    const LayoutDeviceIntMargin& margins) {
++  NS_OBJC_BEGIN_TRY_BLOCK_RETURN;
++
++  SetDrawsInTitlebar(margins.top == 0);
++
++  return NS_OK;
++
++  NS_OBJC_END_TRY_BLOCK_RETURN(NS_ERROR_FAILURE);
++}
++
++void nsCocoaWindow::SetDrawsInTitlebar(bool aState) {
+   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
+ 
+   if (mWindow) {
+diff --git a/widget/gtk/nsWindow.cpp b/widget/gtk/nsWindow.cpp
+index 6e83b4e51a2ff..a55ccd579a962 100644
+--- a/widget/gtk/nsWindow.cpp
++++ b/widget/gtk/nsWindow.cpp
+@@ -8774,6 +8774,11 @@ void nsWindow::SetCompositorWidgetDelegate(CompositorWidgetDelegate* delegate) {
+   }
+ }
+ 
++nsresult nsWindow::SetNonClientMargins(const LayoutDeviceIntMargin& aMargins) {
++  SetDrawsInTitlebar(aMargins.top == 0);
++  return NS_OK;
++}
++
+ bool nsWindow::IsAlwaysUndecoratedWindow() const {
+   if (mIsPIPWindow || gKioskMode) {
+     return true;
+@@ -8788,8 +8793,8 @@ bool nsWindow::IsAlwaysUndecoratedWindow() const {
+   return false;
+ }
+ 
+-void nsWindow::SetCustomTitlebar(bool aState) {
+-  LOG("nsWindow::SetCustomTitlebar() State %d mGtkWindowDecoration %d\n",
++void nsWindow::SetDrawsInTitlebar(bool aState) {
++  LOG("nsWindow::SetDrawsInTitlebar() State %d mGtkWindowDecoration %d\n",
+       aState, (int)mGtkWindowDecoration);
+ 
+   if (mGtkWindowDecoration == GTK_DECORATION_NONE ||
+diff --git a/widget/gtk/nsWindow.h b/widget/gtk/nsWindow.h
+index 29ec375c6868f..38e148313652d 100644
+--- a/widget/gtk/nsWindow.h
++++ b/widget/gtk/nsWindow.h
+@@ -373,7 +373,8 @@ class nsWindow final : public nsBaseWidget {
+   void GetCompositorWidgetInitData(
+       mozilla::widget::CompositorWidgetInitData* aInitData) override;
+ 
+-  void SetCustomTitlebar(bool) override;
++  nsresult SetNonClientMargins(const LayoutDeviceIntMargin&) override;
++  void SetDrawsInTitlebar(bool aState);
+   void UpdateWindowDraggingRegion(
+       const LayoutDeviceIntRegion& aRegion) override;
+ 
+diff --git a/widget/headless/HeadlessWidget.h b/widget/headless/HeadlessWidget.h
+index 39833c28e40c6..f07f7284495cf 100644
+--- a/widget/headless/HeadlessWidget.h
++++ b/widget/headless/HeadlessWidget.h
+@@ -39,7 +39,7 @@ namespace mozilla {
+ enum class NativeKeyBindingsType : uint8_t;
+ namespace widget {
+ 
+-class HeadlessWidget final : public nsBaseWidget {
++class HeadlessWidget : public nsBaseWidget {
+  public:
+   HeadlessWidget();
+ 
+@@ -77,6 +77,10 @@ class HeadlessWidget final : public nsBaseWidget {
+     // Headless widgets have no title, so just ignore it.
+     return NS_OK;
+   }
++  nsresult SetNonClientMargins(const LayoutDeviceIntMargin& margins) override {
++    // Headless widgets have no chrome margins, so just ignore the call.
++    return NS_OK;
++  }
+   LayoutDeviceIntPoint WidgetToScreenOffset() override;
+   void SetInputContext(const InputContext& aContext,
+                        const InputContextAction& aAction) override {
+diff --git a/widget/nsBaseWidget.cpp b/widget/nsBaseWidget.cpp
+index 0041870237151..02fde7eaa63b5 100644
+--- a/widget/nsBaseWidget.cpp
++++ b/widget/nsBaseWidget.cpp
+@@ -1747,6 +1747,12 @@ LayoutDeviceIntPoint nsBaseWidget::GetClientOffset() {
+   return LayoutDeviceIntPoint(0, 0);
+ }
+ 
++nsresult nsBaseWidget::SetNonClientMargins(const LayoutDeviceIntMargin&) {
++  return NS_ERROR_NOT_IMPLEMENTED;
++}
++
++void nsBaseWidget::SetResizeMargin(LayoutDeviceIntCoord aResizeMargin) {}
++
+ uint32_t nsBaseWidget::GetMaxTouchPoints() const { return 0; }
+ 
+ bool nsBaseWidget::HasPendingInputEvent() { return false; }
+diff --git a/widget/nsBaseWidget.h b/widget/nsBaseWidget.h
+index d79a9b5d4aed5..297f280a7ae55 100644
+--- a/widget/nsBaseWidget.h
++++ b/widget/nsBaseWidget.h
+@@ -252,9 +252,11 @@ class nsBaseWidget : public nsIWidget, public nsSupportsWeakReference {
+   LayoutDeviceIntRect GetClientBounds() override;
+   LayoutDeviceIntRect GetScreenBounds() override;
+   [[nodiscard]] nsresult GetRestoredBounds(LayoutDeviceIntRect& aRect) override;
++  nsresult SetNonClientMargins(const LayoutDeviceIntMargin&) override;
+   LayoutDeviceIntPoint GetClientOffset() override;
+   void EnableDragDrop(bool aEnable) override {};
+   nsresult AsyncEnableDragDrop(bool aEnable) override;
++  void SetResizeMargin(mozilla::LayoutDeviceIntCoord aResizeMargin) override;
+   [[nodiscard]] nsresult GetAttention(int32_t aCycleCount) override {
+     return NS_OK;
+   }
+diff --git a/widget/nsIWidget.h b/widget/nsIWidget.h
+index b303094405338..06fd73d819b40 100644
+--- a/widget/nsIWidget.h
++++ b/widget/nsIWidget.h
+@@ -870,15 +870,24 @@ class nsIWidget : public nsISupports {
+    */
+   virtual LayoutDeviceIntRect GetClientBounds() = 0;
+ 
+-  /** Whether to extend the client area into the titlebar. */
+-  virtual void SetCustomTitlebar(bool) {}
++  /**
++   * Sets the non-client area dimensions of the window. Pass -1 to restore
++   * the system default frame size for that border. Pass zero to remove
++   * a border, or pass a specific value adjust a border. Units are in
++   * pixels. (DPI dependent)
++   *
++   * Platform notes:
++   *  Windows: shrinking top non-client height will remove application
++   *  icon and window title text. Glass desktops will refuse to set
++   *  dimensions between zero and size < system default.
++   */
++  virtual nsresult SetNonClientMargins(const LayoutDeviceIntMargin&) = 0;
+ 
+   /**
+    * Sets the region around the edges of the window that can be dragged to
+    * resize the window. All four sides of the window will get the same margin.
+    */
+-  virtual void SetResizeMargin(mozilla::LayoutDeviceIntCoord) {}
+-
++  virtual void SetResizeMargin(mozilla::LayoutDeviceIntCoord aResizeMargin) = 0;
+   /**
+    * Get the client offset from the window origin.
+    *
+diff --git a/widget/tests/TestChromeMargin.cpp b/widget/tests/TestChromeMargin.cpp
+new file mode 100644
+index 0000000000000..0eed86b208bcd
+--- /dev/null
++++ b/widget/tests/TestChromeMargin.cpp
+@@ -0,0 +1,130 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* This tests the margin parsing functionality in nsAttrValue.cpp, which
++ * is accessible via nsContentUtils, and is used in setting chromemargins
++ * to widget windows. It's located here due to linking issues in the
++ * content directory.
++ */
++
++/* This test no longer compiles now that we've removed nsIContentUtils (bug
++ * 647273).  We need to be internal code in order to include nsContentUtils.h,
++ * but defining MOZILLA_INTERNAL_API is not enough to make us internal.
++ */
++
++#include "TestHarness.h"
++
++#ifndef MOZILLA_INTERNAL_API
++#  error This test needs MOZILLA_INTERNAL_API (see bug 652123)
++#endif
++
++#include "nscore.h"
++#include "nsContentUtils.h"
++#include "nsString.h"
++
++struct DATA {
++  bool shouldfail;
++  const char* margins;
++  int top;
++  int right;
++  int bottom;
++  int left;
++};
++
++const bool SHOULD_FAIL = true;
++const int SHOULD_PASS = false;
++
++const DATA Data[] = {
++    {SHOULD_FAIL, "", 1, 2, 3, 4},
++    {SHOULD_FAIL, "1,0,0,0", 1, 2, 3, 4},
++    {SHOULD_FAIL, "1,2,0,0", 1, 2, 3, 4},
++    {SHOULD_FAIL, "1,2,3,0", 1, 2, 3, 4},
++    {SHOULD_FAIL, "4,3,2,1", 1, 2, 3, 4},
++    {SHOULD_FAIL, "azsasdasd", 0, 0, 0, 0},
++    {SHOULD_FAIL, ",azsasdasd", 0, 0, 0, 0},
++    {SHOULD_FAIL, "           ", 1, 2, 3, 4},
++    {SHOULD_FAIL,
++     "azsdfsdfsdfsdfsdfsasdasd,asdasdasdasdasdasd,asdadasdasd,asdasdasdasd", 0,
++     0, 0, 0},
++    {SHOULD_FAIL, "as,as,as,as", 0, 0, 0, 0},
++    {SHOULD_FAIL, "0,0,0", 0, 0, 0, 0},
++    {SHOULD_FAIL, "0,0", 0, 0, 0, 0},
++    {SHOULD_FAIL, "4.6,1,1,1", 0, 0, 0, 0},
++    {SHOULD_FAIL, ",,,,", 0, 0, 0, 0},
++    {SHOULD_FAIL, "1, , , ,", 0, 0, 0, 0},
++    {SHOULD_FAIL, "1, , ,", 0, 0, 0, 0},
++    {SHOULD_FAIL, "@!@%^&^*()", 1, 2, 3, 4},
++    {SHOULD_PASS, "4,3,2,1", 4, 3, 2, 1},
++    {SHOULD_PASS, "-4,-3,-2,-1", -4, -3, -2, -1},
++    {SHOULD_PASS, "10000,3,2,1", 10000, 3, 2, 1},
++    {SHOULD_PASS, "4  , 3   , 2 , 1", 4, 3, 2, 1},
++    {SHOULD_PASS, "4,    3   ,2,1", 4, 3, 2, 1},
++    {SHOULD_FAIL, "4,3,2,10000000000000 --", 4, 3, 2, 10000000000000},
++    {SHOULD_PASS, "4,3,2,1000", 4, 3, 2, 1000},
++    {SHOULD_PASS, "2147483647,3,2,1000", 2147483647, 3, 2, 1000},
++    {SHOULD_PASS, "2147483647,2147483647,2147483647,2147483647", 2147483647,
++     2147483647, 2147483647, 2147483647},
++    {SHOULD_PASS, "-2147483647,3,2,1000", -2147483647, 3, 2, 1000},
++    {SHOULD_FAIL, "2147483648,3,2,1000", 1, 3, 2, 1000},
++    {0, nullptr, 0, 0, 0, 0}};
++
++void DoAttrValueTest() {
++  int idx = -1;
++  bool didFail = false;
++  while (Data[++idx].margins) {
++    nsAutoString str;
++    str.AssignLiteral(Data[idx].margins);
++    nsIntMargin values(99, 99, 99, 99);
++    bool result = nsContentUtils::ParseIntMarginValue(str, values);
++
++    // if the parse fails
++    if (!result) {
++      if (Data[idx].shouldfail) continue;
++      fail(Data[idx].margins);
++      didFail = true;
++      printf("*1\n");
++      continue;
++    }
++
++    if (Data[idx].shouldfail) {
++      if (Data[idx].top == values.top && Data[idx].right == values.right &&
++          Data[idx].bottom == values.bottom && Data[idx].left == values.left) {
++        // not likely
++        fail(Data[idx].margins);
++        didFail = true;
++        printf("*2\n");
++        continue;
++      }
++      // good failure, parse failed and that's what we expected.
++      continue;
++    }
++#if 0
++    printf("%d==%d %d==%d %d==%d %d==%d\n",
++      Data[idx].top, values.top,
++      Data[idx].right, values.right,
++      Data[idx].bottom, values.bottom,
++      Data[idx].left, values.left);
++#endif
++    if (Data[idx].top == values.top && Data[idx].right == values.right &&
++        Data[idx].bottom == values.bottom && Data[idx].left == values.left) {
++      // good parse results
++      continue;
++    } else {
++      fail(Data[idx].margins);
++      didFail = true;
++      printf("*3\n");
++      continue;
++    }
++  }
++
++  if (!didFail) passed("nsAttrValue margin parsing tests passed.");
++}
++
++int main(int argc, char** argv) {
++  ScopedXPCOM xpcom("");
++  if (xpcom.failed()) return 1;
++  DoAttrValueTest();
++  return 0;
++}
+diff --git a/widget/tests/moz.build b/widget/tests/moz.build
+index 25fce5bde2c40..fe0d068efd491 100644
+--- a/widget/tests/moz.build
++++ b/widget/tests/moz.build
+@@ -16,6 +16,9 @@ with Files("unit/*macwebapputils*"):
+ with Files("unit/*taskbar_jumplistitems*"):
+     BUG_COMPONENT = ("Core", "Widget: Win32")
+ 
++with Files("TestChromeMargin.cpp"):
++    BUG_COMPONENT = ("Core", "Widget: Win32")
++
+ with Files("*413277*"):
+     BUG_COMPONENT = ("Core", "Widget: Cocoa")
+ 
+@@ -114,3 +117,9 @@ XPCSHELL_TESTS_MANIFESTS += ["unit/xpcshell.toml"]
+ MOCHITEST_MANIFESTS += ["mochitest.toml"]
+ MOCHITEST_CHROME_MANIFESTS += ["chrome.toml"]
+ BROWSER_CHROME_MANIFESTS += ["browser/browser.toml"]
++
++# if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
++#
++#     Test disabled because it requires the internal API. Re-enabling this test
++#     is bug 652123.
++#     CPP_UNIT_TESTS += ['TestChromeMargin']
+diff --git a/widget/tests/window_bug522217.xhtml b/widget/tests/window_bug522217.xhtml
+index 080716f8ce667..80eb4b6e5ad9e 100644
+--- a/widget/tests/window_bug522217.xhtml
++++ b/widget/tests/window_bug522217.xhtml
+@@ -43,13 +43,13 @@ async function start() {
+   await waitForEvent(window, "focus");
+   var oldOuterWidth = window.outerWidth, oldOuterHeight = window.outerHeight;
+   var oldInnerWidth = window.innerWidth, oldInnerHeight = window.innerHeight;
+-  document.documentElement.setAttribute("customtitlebar", "true");
++  document.documentElement.setAttribute("chromemargin", "0,0,0,0");
+ 
+   await executeSoon();
+-  is(window.outerWidth, oldOuterWidth, "customtitlebar shouldn't change the window's outerWidth");
+-  is(window.outerHeight, oldOuterHeight, "customtitlebar shouldn't change the window's outerHeight");
+-  is(window.innerWidth, oldOuterWidth, "if customtitlebar is set, innerWidth and outerWidth should be the same");
+-  is(window.innerHeight, oldOuterHeight, "if customtitlebar is set, innerHeight and outerHeight should be the same");
++  is(window.outerWidth, oldOuterWidth, "chromemargin shouldn't change the window's outerWidth");
++  is(window.outerHeight, oldOuterHeight, "chromemargin shouldn't change the window's outerHeight");
++  is(window.innerWidth, oldOuterWidth, "if chromemargin is set, innerWidth and outerWidth should be the same");
++  is(window.innerHeight, oldOuterHeight, "if chromemargin is set, innerHeight and outerHeight should be the same");
+ 
+   // Wait for going full screen and back.
+   let sizemodeChange = waitForEvent(window, "sizemodechange");
+@@ -62,13 +62,13 @@ async function start() {
+   is(window.outerHeight, oldOuterHeight, "wrong outerHeight after fullscreen mode");
+   is(window.innerWidth, oldOuterWidth, "wrong innerWidth after fullscreen mode");
+   is(window.innerHeight, oldOuterHeight, "wrong innerHeight after fullscreen mode");
+-  document.documentElement.removeAttribute("customtitlebar");
++  document.documentElement.removeAttribute("chromemargin");
+ 
+   await executeSoon();
+-  is(window.outerWidth, oldOuterWidth, "wrong outerWidth after removing customtitlebar");
+-  is(window.outerHeight, oldOuterHeight, "wrong outerHeight after removing customtitlebar");
+-  is(window.innerWidth, oldInnerWidth, "wrong innerWidth after removing customtitlebar");
+-  is(window.innerHeight, oldInnerHeight, "wrong innerHeight after removing customtitlebar");
++  is(window.outerWidth, oldOuterWidth, "wrong outerWidth after removing chromemargin");
++  is(window.outerHeight, oldOuterHeight, "wrong outerHeight after removing chromemargin");
++  is(window.innerWidth, oldInnerWidth, "wrong innerWidth after removing chromemargin");
++  is(window.innerHeight, oldInnerHeight, "wrong innerHeight after removing chromemargin");
+   window.arguments[0].SimpleTest.finish();
+   window.close();
+ }
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index e9040c1ed81c1..0bebe100e5811 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -940,8 +940,10 @@ nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
+           DesktopIntRect::Round(LayoutDeviceRect(GetBounds()) / scale)
+               .ToUnknownRect());
+ 
+-      // Skeleton ui is disabled when custom titlebar is off, see bug 1673092.
+-      SetCustomTitlebar(true);
++      // These match the margins set in browser-tabsintitlebar.js with
++      // default prefs on Windows. Bug 1673092 tracks lining this up with
++      // that more correctly instead of hard-coding it.
++      SetNonClientMargins(LayoutDeviceIntMargin());
+       // The skeleton UI already painted over the NC area, so there's no need
+       // to do that again; the effective non-client margins haven't changed.
+       mNeedsNCAreaClear = false;
+@@ -2335,7 +2337,7 @@ void nsWindow::SetFocus(Raise aRaise, mozilla::dom::CallerType aCallerType) {
+  * SECTION: Bounds
+  *
+  * GetBounds, GetClientBounds, GetScreenBounds,
+- * GetRestoredBounds, GetClientOffset, SetCustomTitlebar
++ * GetRestoredBounds, GetClientOffset, SetNonClientMargins
+  *
+  * Bound calculations.
+  *
+@@ -2521,18 +2523,31 @@ void nsWindow::SetColorScheme(const Maybe<ColorScheme>& aScheme) {
+ }
+ 
+ LayoutDeviceIntMargin nsWindow::NormalWindowNonClientOffset() const {
+-  MOZ_ASSERT(mCustomNonClient);
++  LayoutDeviceIntMargin nonClientOffset;
++
+   // We're dealing with a "normal" window (not maximized, minimized, or
+-  // fullscreen), so set `mNonClientOffset` accordingly.
++  // fullscreen), so process `mNonClientMargins` and set `mNonClientOffset`
++  // accordingly.
+   //
+   // Setting `mNonClientOffset` to 0 has the effect of leaving the default
+   // frame intact.  Setting it to a value greater than 0 reduces the frame
+   // size by that amount.
+-  //
+-  // When using custom titlebar, we hide the titlebar and leave the default
+-  // frame on the other sides.
+-   return LayoutDeviceIntMargin(mCustomNonClientMetrics.DefaultMargins().top, 0,
+-                                0, 0);
++  constexpr LayoutDeviceIntCoord kZero(0);
++  if (mNonClientMargins.top == 0) {
++    // Top is a bit special, because we rely on 0 removing the caption entirely.
++    nonClientOffset.top = mCustomNonClientMetrics.mCaptionHeight + mCustomNonClientMetrics.mVertResizeMargin;
++  } else {
++    nonClientOffset.top =
++        std::clamp(mNonClientMargins.top, kZero, mCustomNonClientMetrics.mVertResizeMargin);
++  }
++  nonClientOffset.bottom =
++      std::clamp(mNonClientMargins.bottom, kZero, mCustomNonClientMetrics.mVertResizeMargin);
++  nonClientOffset.left =
++      std::clamp(mNonClientMargins.left, kZero, mCustomNonClientMetrics.mHorResizeMargin);
++  nonClientOffset.right =
++      std::clamp(mNonClientMargins.right, kZero, mCustomNonClientMetrics.mHorResizeMargin);
++
++  return nonClientOffset;
+ }
+ 
+ /**
+@@ -2540,14 +2556,23 @@ LayoutDeviceIntMargin nsWindow::NormalWindowNonClientOffset() const {
+  * margins and fires off a frame changed event, which triggers an nc calc
+  * size windows event, kicking the changes in.
+  *
++ * The offsets calculated here are based on the value of `mNonClientMargins`
++ * which is specified in the "chromemargins" attribute of the window.  For
++ * each margin, the value specified has the following meaning:
++ *    -1  - leave the default frame in place
++ *    >=0 - frame size equals min(0, (default frame size - margin value))
++ *
+  * This function calculates and populates `mNonClientOffset`.
+  * In our processing of `WM_NCCALCSIZE`, the frame size will be calculated
+  * as (default frame size - offset).  For example, if the left frame should
+  * be 1 pixel narrower than the default frame size, `mNonClientOffset.left`
+  * will equal 1.
+  *
+- * For maximized, fullscreen, and minimized windows special processing takes
+- * place.
++ * For maximized, fullscreen, and minimized windows, the values stored in
++ * `mNonClientMargins` are ignored, and special processing takes place.
++ *
++ * For non-glass windows, we only allow frames to be their default size
++ * or removed entirely.
+  */
+ bool nsWindow::UpdateNonClientMargins(bool aReflowWindow) {
+   if (!mCustomNonClient) {
+@@ -2653,23 +2678,26 @@ bool nsWindow::UpdateNonClientMargins(bool aReflowWindow) {
+   return true;
+ }
+ 
+-void nsWindow::SetCustomTitlebar(bool aCustomTitlebar) {
++nsresult nsWindow::SetNonClientMargins(const LayoutDeviceIntMargin& margins) {
+   if (!IsTopLevelWidget() || mBorderStyle == BorderStyle::None) {
+-    return;
++    return NS_ERROR_INVALID_ARG;
+   }
+ 
+-  if (mCustomNonClient == aCustomTitlebar) {
+-    return;
++  if (mNonClientMargins == margins) {
++    return NS_OK;
+   }
+ 
+   if (mHideChrome) {
+-    mCustomTitlebarOnceChromeShows = Some(aCustomTitlebar);
+-    return;
++    mFutureMarginsOnceChromeShows = margins;
++    mFutureMarginsToUse = true;
++    return NS_OK;
+   }
+ 
+-  mCustomTitlebarOnceChromeShows.reset();
++  mFutureMarginsToUse = false;
+ 
+-  mCustomNonClient = aCustomTitlebar;
++  // -1 margins request a reset
++  mCustomNonClient = margins != LayoutDeviceIntMargin(-1, -1, -1, -1);
++  mNonClientMargins = margins;
+ 
+   // Force a reflow of content based on the new client dimensions.
+   if (mCustomNonClient) {
+@@ -2677,6 +2705,8 @@ void nsWindow::SetCustomTitlebar(bool aCustomTitlebar) {
+     mCustomNonClientMetrics = {};
+     ResetLayout();
+   }
++
++  return NS_OK;
+ }
+ 
+ void nsWindow::SetResizeMargin(mozilla::LayoutDeviceIntCoord aResizeMargin) {
+@@ -2975,9 +3005,8 @@ void nsWindow::HideWindowChrome(bool aShouldHide) {
+     // if there's nothing to "restore" it to, just use what's there now
+     oldChrome = mOldStyles.refOr(currentChrome);
+     newChrome = oldChrome;
+-    if (mCustomTitlebarOnceChromeShows) {
+-      SetCustomTitlebar(mCustomTitlebarOnceChromeShows.extract());
+-      MOZ_ASSERT(!mCustomTitlebarOnceChromeShows);
++    if (mFutureMarginsToUse) {
++      SetNonClientMargins(mFutureMarginsOnceChromeShows);
+     }
+   }
+ 
+@@ -4922,9 +4951,8 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+        * sending the message with an updated title
+        */
+ 
+-      if (mSendingSetText || !mCustomNonClient) {
++      if (mSendingSetText || !mCustomNonClient || mNonClientMargins.top == -1)
+         break;
+-      }
+ 
+       {
+         // From msdn, the way around this is to disable the visible state
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index f8572be02b5f5..9f9cc21681143 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -293,7 +293,7 @@ class nsWindow final : public nsBaseWidget {
+   TextEventDispatcherListener* GetNativeTextEventDispatcherListener() override;
+   void SetTransparencyMode(TransparencyMode aMode) override;
+   TransparencyMode GetTransparencyMode() override;
+-  void SetCustomTitlebar(bool) override;
++  nsresult SetNonClientMargins(const LayoutDeviceIntMargin&) override;
+   void SetResizeMargin(mozilla::LayoutDeviceIntCoord aResizeMargin) override;
+   void UpdateWindowDraggingRegion(
+       const LayoutDeviceIntRegion& aRegion) override;
+@@ -802,12 +802,15 @@ class nsWindow final : public nsBaseWidget {
+       return margins;
+     }
+   } mCustomNonClientMetrics;
+-
+-  // Indicates the custom titlebar is enabled.
++  // Margins set by the owner
++  LayoutDeviceIntMargin mNonClientMargins{-1, -1, -1, -1};
++  // Margins we'd like to set once chrome is reshown:
++  LayoutDeviceIntMargin mFutureMarginsOnceChromeShows;
++  // Indicates we need to apply margins once toggling chrome into showing:
++  bool mFutureMarginsToUse = false;
++
++  // Indicates custom frames are enabled
+   bool mCustomNonClient = false;
+-  // Whether we want to draw to the titlebar once the chrome shows. (Always
+-  // Nothing if mHideChrome is false.)
+-  mozilla::Maybe<bool> mCustomTitlebarOnceChromeShows;
+   // Custom extra resize margin width.
+   mozilla::LayoutDeviceIntCoord mCustomResizeMargin{0};
+ 
+diff --git a/xpcom/ds/StaticAtoms.py b/xpcom/ds/StaticAtoms.py
+index ccc367d5096a4..b5cbcf8a5755e 100644
+--- a/xpcom/ds/StaticAtoms.py
++++ b/xpcom/ds/StaticAtoms.py
+@@ -235,7 +235,7 @@ STATIC_ATOMS = [
+     Atom("childList", "childList"),
+     Atom("child_item_count", "child-item-count"),
+     Atom("choose", "choose"),
+-    Atom("customtitlebar", "customtitlebar"),
++    Atom("chromemargin", "chromemargin"),
+     Atom("exposeToUntrustedContent", "exposeToUntrustedContent"),
+     Atom("circ", "circ"),
+     Atom("circle", "circle"),
+diff --git a/xpfe/appshell/AppWindow.cpp b/xpfe/appshell/AppWindow.cpp
+index 04379dfbc0a0a..e47cff101ac81 100644
+--- a/xpfe/appshell/AppWindow.cpp
++++ b/xpfe/appshell/AppWindow.cpp
+@@ -1501,7 +1501,7 @@ void AppWindow::SyncAttributesToWidget() {
+ 
+   nsAutoString attr;
+ 
+-  // Some attributes can change the client size (e.g. customtitlebar on Windows
++  // Some attributes can change the client size (e.g. chromemargin on Windows
+   // and MacOS). But we might want to keep it.
+   const LayoutDeviceIntSize oldClientSize = mWindow->GetClientSize();
+   // We have to check now whether we want to restore the client size, as any
+@@ -1516,13 +1516,12 @@ void AppWindow::SyncAttributesToWidget() {
+ 
+   NS_ENSURE_TRUE_VOID(mWindow);
+ 
+-  // "customtitlebar" attribute
+-  // FIXME(emilio): This should arguably be
+-  // SetCustomTitlebar(windowElement->GetBoolAttr(...)), but that breaks with
+-  // the early blank window which sets the custom titlebar via
+-  // nsIDOMWindowUtils...
+-  if (windowElement->GetBoolAttr(nsGkAtoms::customtitlebar)) {
+-    mWindow->SetCustomTitlebar(true);
++  // "chromemargin" attribute
++  nsIntMargin margins;
++  windowElement->GetAttribute(u"chromemargin"_ns, attr);
++  if (nsContentUtils::ParseIntMarginValue(attr, margins)) {
++    mWindow->SetNonClientMargins(
++        LayoutDeviceIntMargin::FromUnknownMargin(margins));
+   }
+ 
+   NS_ENSURE_TRUE_VOID(mWindow);
+@@ -2347,7 +2346,7 @@ NS_IMETHODIMP
+ AppWindow::BeforeStartLayout() {
+   ApplyChromeFlags();
+   // Ordering here is important, loading width/height values in
+-  // LoadPersistentWindowState() depends on the customtitlebar attribute (since
++  // LoadPersistentWindowState() depends on the chromemargin attribute (since
+   // we need to translate outer to inner sizes).
+   SyncAttributesToWidget();
+   LoadPersistentWindowState();

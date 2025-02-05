@@ -1,0 +1,59 @@
+diff --git a/browser/base/content/browser.js b/browser/base/content/browser.js
+index 391a8ef4bc91..7b5f51c624b2 100644
+--- a/browser/base/content/browser.js
++++ b/browser/base/content/browser.js
+@@ -1887,6 +1887,6 @@ var gBrowserInit = {
+ // more like non-tablet mode and has no need for this.)
+ const Win10TabletModeUpdater = {
+   init() {
+-    if (AppConstants.platform == "win") {
++    if (AppConstants.isPlatformAndVersionAtLeast("win", "10")) {
+       this.update(WindowsUIUtils.inWin10TabletMode);
+       Services.obs.addObserver(this, "tablet-mode-change");
+@@ -2492,6 +2492,6 @@ var gBrowserInit = {
+   },
+ 
+   uninit() {
+-      if (AppConstants.platform == "win") {
++      if (AppConstants.isPlatformAndVersionAtLeast("win", "10")) {
+       Services.obs.removeObserver(this, "tablet-mode-change");
+     }
+@@ -6653,7 +6653,7 @@ var gUIDensity = {
+  getCurrentDensity() {
+    // Automatically override the uidensity to touch in Windows tablet mode
+    // (either Win10 or Win11).
+-      if (AppConstants.platform == "win") {
++      if (AppConstants.isPlatformAndVersionAtLeast("win", "10")) {
+       const inTablet =
+         WindowsUIUtils.inWin10TabletMode || WindowsUIUtils.inWin11TabletMode;
+       if (inTablet && Services.prefs.getBoolPref(this.autoTouchModePref)) {
+diff --git a/browser/components/BrowserContentHandler.sys.mjs b/browser/components/BrowserContentHandler.sys.mjs
+index 06d53ae15ce4..2884c0840759 100644
+--- a/browser/components/BrowserContentHandler.sys.mjs
++++ b/browser/components/BrowserContentHandler.sys.mjs
+@@ -1360,7 +1360,7 @@ nsDefaultCommandLineHandler.prototype = {
+       }
+     } else if (!cmdLine.preventDefault) {
+       if (
+-        AppConstants.platform == "win" &&
++        AppConstants.isPlatformAndVersionAtLeast("win", "10") &&
+         cmdLine.state != Ci.nsICommandLine.STATE_INITIAL_LAUNCH &&
+         lazy.WindowsUIUtils.inWin10TabletMode
+       ) {
+diff --git a/toolkit/content/aboutSupport.js b/toolkit/content/aboutSupport.js
+index 747e0f132135..fecab0db3084 100644
+--- a/toolkit/content/aboutSupport.js
++++ b/toolkit/content/aboutSupport.js
+@@ -342,6 +342,12 @@ var snapshotFormatters = {
+       return;
+     }
+ 
++    if (!AppConstants.isPlatformAndVersionAtLeast("win", "6.2")) {
++      $("security-software").hidden = true;
++      $("security-software-table").hidden = true;
++      return;
++    }
++
+     $("security-software-antivirus").textContent = data.registeredAntiVirus;
+     $("security-software-antispyware").textContent = data.registeredAntiSpyware;
+     $("security-software-firewall").textContent = data.registeredFirewall;

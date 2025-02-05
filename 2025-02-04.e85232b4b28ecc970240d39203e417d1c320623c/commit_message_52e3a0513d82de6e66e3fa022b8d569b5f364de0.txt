@@ -1,0 +1,1 @@
+Bug 1845746 - Remove gfxWindowsPlatform::DwmCompositionEnabled. r=gfx-reviewers,jrmuizel    2023-08-11 02:58:03    c7abf6233b441308d399a6e7624b349fc3daed01

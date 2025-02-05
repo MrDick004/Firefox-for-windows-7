@@ -1,0 +1,1 @@
+Bug 1888203 - Remove appearance: {toolbar,toolbox}. r=mac-reviewers,desktop-theme-reviewers,mstange,dao    2024-03-30 20:17:57    716b863fb4d860e83ceb9d25939630cbb15e6c6b

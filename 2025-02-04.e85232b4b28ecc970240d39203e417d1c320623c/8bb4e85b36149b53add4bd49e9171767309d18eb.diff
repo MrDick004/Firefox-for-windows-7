@@ -1,0 +1,542 @@
+diff --git a/accessible/tests/mochitest/attributes.js b/accessible/tests/mochitest/attributes.js
+index 65afebd83a06..ebb5a54b85cd 100644
+--- a/accessible/tests/mochitest/attributes.js
++++ b/accessible/tests/mochitest/attributes.js
+@@ -295,10 +295,13 @@ const kBoldFontWeight = function equalsToBold(aWeight) {
+   return aWeight > 400;
+ };
+ 
++let isNNT = SpecialPowers.getBoolPref("widget.non-native-theme.enabled");
+ // The pt font size of the input element can vary by Linux distro.
+ const kInputFontSize =
+-  WIN || MAC
++  WIN || (MAC && isNNT)
+     ? "10pt"
++    : MAC
++    ? "8pt"
+     : function () {
+         return true;
+       };
+diff --git a/dom/base/Document.cpp b/dom/base/Document.cpp
+index 68e41005404f..8a7b1c8206e5 100644
+--- a/dom/base/Document.cpp
++++ b/dom/base/Document.cpp
+@@ -18938,7 +18938,8 @@ void Document::AddPendingFrameStaticClone(nsFrameLoaderOwner* aElement,
+ }
+ 
+ bool Document::ShouldAvoidNativeTheme() const {
+-  return !IsInChromeDocShell() || XRE_IsContentProcess();
++  return StaticPrefs::widget_non_native_theme_enabled() &&
++         (!IsInChromeDocShell() || XRE_IsContentProcess());
+ }
+ 
+ bool Document::UseRegularPrincipal() const {
+diff --git a/dom/ipc/ContentParent.cpp b/dom/ipc/ContentParent.cpp
+index 2884f6cb45d0..f0ff183e9e94 100644
+--- a/dom/ipc/ContentParent.cpp
++++ b/dom/ipc/ContentParent.cpp
+@@ -2635,7 +2635,9 @@ bool ContentParent::BeginSubprocessLaunch(ProcessPriority aPriority) {
+ 
+ #ifdef MOZ_WIDGET_GTK
+   // This is X11-only pending a solution for WebGL in Wayland mode.
+-  if (StaticPrefs::dom_ipc_avoid_gtk() && widget::GdkIsX11Display()) {
++  if (StaticPrefs::dom_ipc_avoid_gtk() &&
++      StaticPrefs::widget_non_native_theme_enabled() &&
++      widget::GdkIsX11Display()) {
+     mSubprocess->SetEnv("MOZ_HEADLESS", "1");
+   }
+ #endif
+diff --git a/layout/forms/test/mochitest.toml b/layout/forms/test/mochitest.toml
+index 5eddbf6a7b8a..0748041524ee 100644
+--- a/layout/forms/test/mochitest.toml
++++ b/layout/forms/test/mochitest.toml
+@@ -75,6 +75,8 @@ skip-if = ["os == 'android'"] # Bug 1635771
+ 
+ ["test_bug717878_input_scroll.html"]
+ 
++["test_bug869314.html"]
++
+ ["test_bug903715.html"]
+ skip-if = ["true"]
+ 
+diff --git a/layout/forms/test/test_bug869314.html b/layout/forms/test/test_bug869314.html
+new file mode 100644
+index 000000000000..7c786fccfcab
+--- /dev/null
++++ b/layout/forms/test/test_bug869314.html
+@@ -0,0 +1,55 @@
++<!DOCTYPE HTML>
++<html>
++<!--
++https://bugzilla.mozilla.org/show_bug.cgi?id=869314
++-->
++<head>
++  <meta charset="utf-8">
++  <title>Test for Bug 869314</title>
++  <script src="/tests/SimpleTest/SimpleTest.js"></script>
++  <link rel="stylesheet" type="text/css" href="/tests/SimpleTest/test.css"/>
++
++  <style type="text/css">
++    .selectbox {
++      background-color: #00FF00;
++    }
++  </style>
++
++</head>
++<body>
++<a target="_blank" href="https://bugzilla.mozilla.org/show_bug.cgi?id=869314">Mozilla Bug 869314</a>
++<p id="display"></p>
++<div id="content">
++
++  <select id="selectbox1" name="non-native selectbox" class="selectbox">
++    <option value="item">test item</option>
++  </select>
++
++  <select id="selectbox2" name="native selectbox">
++    <option value="item">test item</option>
++  </select>
++
++  <script type="application/javascript">
++  let Cc = SpecialPowers.Cc;
++  let Ci = SpecialPowers.Ci;
++  let sysInfo = Cc["@mozilla.org/system-info;1"].getService(Ci.nsIPropertyBag2);
++  let osName = sysInfo.getProperty("name");
++  let isNNT = SpecialPowers.getBoolPref("widget.non-native-theme.enabled");
++  if (osName == "Darwin" && !isNNT) { // Native styled macOS form controls.
++    // This test is for macOS with native styled form controls only. See bug for more info.
++    ok(document.getElementById("selectbox1").clientWidth >
++       document.getElementById("selectbox2").clientWidth,
++       "Non-native styled combobox does not have enough space for a " +
++       "dropmarker!");
++  } else {
++    // We need to call at least one test function to make the test harness
++    // happy.
++    ok(true, "Test wasn't ignored but should have been.");
++  }
++  </script>
++
++</div>
++<pre id="test">
++</pre>
++</body>
++</html>
+diff --git a/layout/reftests/reftest.list b/layout/reftests/reftest.list
+index c8911b2f2095..68b87f6bb2f7 100644
+--- a/layout/reftests/reftest.list
++++ b/layout/reftests/reftest.list
+@@ -361,6 +361,9 @@ include text-svgglyphs/reftest.list
+ # text-transform/
+ include text-transform/reftest.list
+ 
++# theme (osx)
++include ../../toolkit/themes/osx/reftests/reftest.list
++
+ include ../../toolkit/content/tests/reftests/reftest.list
+ 
+ # transform/
+diff --git a/layout/tools/reftest/jar.mn b/layout/tools/reftest/jar.mn
+index 4fc1b7e10f81..b879ac164670 100644
+--- a/layout/tools/reftest/jar.mn
++++ b/layout/tools/reftest/jar.mn
+@@ -25,6 +25,7 @@ reftest.jar:
+   content/xul (../../reftests/xul/*)
+   content/xul/reftest (../../xul/reftest/*)
+   content/toolkit/reftests (../../../toolkit/content/tests/reftests/*)
++  content/osx-theme (../../../toolkit/themes/osx/reftests/*)
+   content/reftest.xhtml (reftest.xhtml)
+ 
+ # Crash tests
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 6db70456dd8b..9bb7928df61f 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -14615,6 +14615,7 @@
+   # Run content processes in headless mode and disallow
+   # connections to the X server.  Requires:
+   # * `webgl.out-of-process` (or else WebGL breaks)
++  # * `widget.non-native-theme.enabled` (scrollbars & form controls)
+   # Changing it requires a restart because sandbox policy information
+   # dependent on it is cached.  See bug 1640345 for details.
+ - name: security.sandbox.content.headless
+@@ -16114,6 +16115,15 @@
+ # Prefs starting with "widget."
+ #---------------------------------------------------------------------------
+ 
++# Global user preference for disabling native theme in content processes.
++#
++# NOTE(emilio): When changing this make sure to update the non_native_theme
++# entry in python/mozbuild/mozbuild/mozinfo.py and test_fission_autostart.py
++- name: widget.non-native-theme.enabled
++  type: RelaxedAtomicBool
++  value: true
++  mirror: always
++
+ # Whether the non-native theme should always use system colors. Useful mostly
+ # for testing forced colors mode.
+ - name: widget.non-native-theme.always-high-contrast
+diff --git a/security/sandbox/win/src/sandboxbroker/sandboxBroker.cpp b/security/sandbox/win/src/sandboxbroker/sandboxBroker.cpp
+index 798884261115..3e2ce617bd70 100644
+--- a/security/sandbox/win/src/sandboxbroker/sandboxBroker.cpp
++++ b/security/sandbox/win/src/sandboxbroker/sandboxBroker.cpp
+@@ -866,7 +866,10 @@ void SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
+   }
+ 
+   if (aSandboxLevel > 4) {
+-    result = mPolicy->SetAlternateDesktop(true);
++    // Alternate winstation breaks native theming.
++    bool useAlternateWinstation =
++        StaticPrefs::widget_non_native_theme_enabled();
++    result = mPolicy->SetAlternateDesktop(useAlternateWinstation);
+     if (NS_WARN_IF(result != sandbox::SBOX_ALL_OK)) {
+       LOG_W("SetAlternateDesktop failed, result: %i, last error: %lx", result,
+             ::GetLastError());
+diff --git a/toolkit/content/tests/chrome/chrome.toml b/toolkit/content/tests/chrome/chrome.toml
+index e037f45ecff4..986822ac487c 100644
+--- a/toolkit/content/tests/chrome/chrome.toml
++++ b/toolkit/content/tests/chrome/chrome.toml
+@@ -51,6 +51,7 @@ support-files = [
+ ]
+ prefs = [
+   "gfx.font_rendering.fallback.async=false",
++  "widget.non-native-theme.enabled=false",
+ ]
+ 
+ ["test_about_networking.html"]
+diff --git a/toolkit/themes/osx/reftests/482681-ref.xhtml b/toolkit/themes/osx/reftests/482681-ref.xhtml
+new file mode 100644
+index 000000000000..62fb4bb8d53f
+--- /dev/null
++++ b/toolkit/themes/osx/reftests/482681-ref.xhtml
+@@ -0,0 +1,21 @@
++<?xml version="1.0"?>
++<?xml-stylesheet href="chrome://global/skin" type="text/css"?>
++<?xml-stylesheet href="data:text/css,
++vbox { height: 50px; }
++box {
++  -moz-appearance: button;
++}
++" type="text/css"?>
++
++<window title="Reference for mini, small and regular button sizes"
++        xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
++  <vbox>
++    <hbox><box width="79" height="16"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox><box width="79" height="19"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox><box width="79" height="22"/></hbox>
++  </vbox>
++</window>
+diff --git a/toolkit/themes/osx/reftests/checkboxsize-ref.xhtml b/toolkit/themes/osx/reftests/checkboxsize-ref.xhtml
+new file mode 100644
+index 000000000000..30ed9dfe9022
+--- /dev/null
++++ b/toolkit/themes/osx/reftests/checkboxsize-ref.xhtml
+@@ -0,0 +1,33 @@
++<?xml version="1.0"?>
++<?xml-stylesheet href="chrome://global/skin" type="text/css"?>
++
++<window title="Reference for mini, small and regular checkbox sizes"
++        xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
++  <style xmlns="http://www.w3.org/1999/xhtml">
++    vbox { height: 50px; }
++    box {
++      appearance: auto;
++      -moz-default-appearance: checkbox;
++      margin-left: 2px;
++      margin-top: 1px;
++    }
++  </style>
++  <vbox>
++    <hbox><box style="width: 11px; height: 11px"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox><box style="width: 13px; height: 13px"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox><box style="width: 16px; height: 16px"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox checked="true"><box style="width: 11px; height: 11px"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox checked="true"><box style="width: 13px; height: 13px"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox checked="true"><box style="width: 16px; height: 16px"/></hbox>
++  </vbox>
++</window>
+diff --git a/toolkit/themes/osx/reftests/checkboxsize.xhtml b/toolkit/themes/osx/reftests/checkboxsize.xhtml
+new file mode 100644
+index 000000000000..1e5c62535e37
+--- /dev/null
++++ b/toolkit/themes/osx/reftests/checkboxsize.xhtml
+@@ -0,0 +1,31 @@
++<?xml version="1.0"?>
++<?xml-stylesheet href="chrome://global/skin" type="text/css"?>
++<?xml-stylesheet href="data:text/css,
++vbox { height: 50px; }
++checkbox {
++  color: transparent;
++  margin: 0;
++}
++" type="text/css"?>
++
++<window title="Checkboxes with mini, small and regular control font"
++        xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
++  <vbox style="font-size: 9px">
++    <hbox><checkbox native="true" label="Mini"/></hbox>
++  </vbox>
++  <vbox style="font: message-box">
++    <hbox><checkbox native="true" label="Small"/></hbox>
++  </vbox>
++  <vbox style="font: menu">
++    <hbox><checkbox native="true" label="Regular"/></hbox>
++  </vbox>
++  <vbox style="font-size: 9px">
++    <hbox><checkbox native="true" label="Mini" checked="true"/></hbox>
++  </vbox>
++  <vbox style="font: message-box">
++    <hbox><checkbox native="true" label="Small" checked="true"/></hbox>
++  </vbox>
++  <vbox style="font: menu">
++    <hbox><checkbox native="true" label="Regular" checked="true"/></hbox>
++  </vbox>
++</window>
+diff --git a/toolkit/themes/osx/reftests/radiosize-ref.xhtml b/toolkit/themes/osx/reftests/radiosize-ref.xhtml
+new file mode 100644
+index 000000000000..219d8980820d
+--- /dev/null
++++ b/toolkit/themes/osx/reftests/radiosize-ref.xhtml
+@@ -0,0 +1,33 @@
++<?xml version="1.0"?>
++<?xml-stylesheet href="chrome://global/skin" type="text/css"?>
++
++<window title="Reference for mini, small and regular radio button sizes"
++        xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
++  <style xmlns="http://www.w3.org/1999/xhtml">
++    vbox { height: 50px; }
++    box {
++      appearance: auto;
++      -moz-default-appearance: radio;
++      margin-left: 2px;
++      margin-top: 1px;
++    }
++  </style>
++  <vbox>
++    <hbox><box style="width: 11px; height: 11px;"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox><box style="width: 13px; height: 13px;"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox><box style="width: 16px; height: 16px;"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox selected="true"><box style="width: 11px; height: 11px"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox selected="true"><box style="width: 13px; height: 13px"/></hbox>
++  </vbox>
++  <vbox>
++    <hbox selected="true"><box style="width: 16px; height: 16px"/></hbox>
++  </vbox>
++</window>
+diff --git a/toolkit/themes/osx/reftests/radiosize.xhtml b/toolkit/themes/osx/reftests/radiosize.xhtml
+new file mode 100644
+index 000000000000..15b4d5dd9287
+--- /dev/null
++++ b/toolkit/themes/osx/reftests/radiosize.xhtml
+@@ -0,0 +1,31 @@
++<?xml version="1.0"?>
++<?xml-stylesheet href="chrome://global/skin" type="text/css"?>
++<?xml-stylesheet href="data:text/css,
++vbox { height: 50px; }
++radio {
++  color: transparent;
++  margin: 0;
++}
++" type="text/css"?>
++
++<window title="Radio buttons with mini, small and regular control font"
++        xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
++  <vbox style="font-size: 9px">
++    <hbox><radio label="Mini"/></hbox>
++  </vbox>
++  <vbox style="font: message-box">
++    <hbox><radio label="Small"/></hbox>
++  </vbox>
++  <vbox style="font: menu">
++    <hbox><radio label="Regular"/></hbox>
++  </vbox>
++  <vbox style="font-size: 9px">
++    <hbox><radio label="Mini" selected="true"/></hbox>
++  </vbox>
++  <vbox style="font: message-box">
++    <hbox><radio label="Small" selected="true"/></hbox>
++  </vbox>
++  <vbox style="font: menu">
++    <hbox><radio label="Regular" selected="true"/></hbox>
++  </vbox>
++</window>
+diff --git a/toolkit/themes/osx/reftests/reftest.list b/toolkit/themes/osx/reftests/reftest.list
+new file mode 100644
+index 000000000000..35a890d4b3e3
+--- /dev/null
++++ b/toolkit/themes/osx/reftests/reftest.list
+@@ -0,0 +1,5 @@
++# This folder is registered in the chrome manifest at layout/tools/reftest/jar.mn.
++defaults pref(widget.non-native-theme.enabled,false) # These are tests for the native theme.
++
++skip-if(!cocoaWidget) == chrome://reftest/content/osx-theme/radiosize.xhtml chrome://reftest/content/osx-theme/radiosize-ref.xhtml
++skip-if(!cocoaWidget) == chrome://reftest/content/osx-theme/checkboxsize.xhtml chrome://reftest/content/osx-theme/checkboxsize-ref.xhtml
+diff --git a/toolkit/xre/nsAppRunner.cpp b/toolkit/xre/nsAppRunner.cpp
+index 2145fe39fd80..6d8abe92dca9 100644
+--- a/toolkit/xre/nsAppRunner.cpp
++++ b/toolkit/xre/nsAppRunner.cpp
+@@ -784,6 +784,11 @@ nsIXULRuntime::ContentWin32kLockdownState GetLiveWin32kLockdownState() {
+     }
+   }
+ 
++  // Non-native theming is required as well
++  if (!StaticPrefs::widget_non_native_theme_enabled()) {
++    return nsIXULRuntime::ContentWin32kLockdownState::MissingNonNativeTheming;
++  }
++
+   // Win32k Lockdown requires Remote WebGL, but it may be disabled on
+   // certain hardware or virtual machines.
+   if (!gfx::gfxVars::AllowWebglOop() || !StaticPrefs::webgl_out_of_process()) {
+diff --git a/widget/ScrollbarDrawingGTK.cpp b/widget/ScrollbarDrawingGTK.cpp
+index 9262667dcb52..3e0cad917961 100644
+--- a/widget/ScrollbarDrawingGTK.cpp
++++ b/widget/ScrollbarDrawingGTK.cpp
+@@ -116,7 +116,10 @@ bool ScrollbarDrawingGTK::PaintScrollbarThumb(
+ }
+ 
+ bool ScrollbarDrawingGTK::ShouldDrawScrollbarButtons() {
+-  return StaticPrefs::widget_non_native_theme_gtk_scrollbar_allow_buttons();
++  if (StaticPrefs::widget_non_native_theme_enabled()) {
++    return StaticPrefs::widget_non_native_theme_gtk_scrollbar_allow_buttons();
++  }
++  return true;
+ }
+ 
+ void ScrollbarDrawingGTK::RecomputeScrollbarParams() {
+diff --git a/widget/nsXPLookAndFeel.cpp b/widget/nsXPLookAndFeel.cpp
+index cb34f7b06733..3c2330794224 100644
+--- a/widget/nsXPLookAndFeel.cpp
++++ b/widget/nsXPLookAndFeel.cpp
+@@ -1233,7 +1233,8 @@ void LookAndFeel::DoHandleGlobalThemeChange() {
+   //
+   // We can use the *DoNotUseDirectly functions directly here, because we want
+   // to notify all possible themes in a given process (but just once).
+-  if (XRE_IsParentProcess()) {
++  if (XRE_IsParentProcess() ||
++      !StaticPrefs::widget_non_native_theme_enabled()) {
+     if (nsCOMPtr<nsITheme> theme = do_GetNativeThemeDoNotUseDirectly()) {
+       theme->ThemeChanged();
+     }
+diff --git a/widget/reftests/reftest.list b/widget/reftests/reftest.list
+index 2170fec4439d..dc788a31aace 100644
+--- a/widget/reftests/reftest.list
++++ b/widget/reftests/reftest.list
+@@ -6,4 +6,4 @@ load 664925.xhtml
+ pref(apz.allow_zooming,true) pref(ui.useOverlayScrollbars,0) skip-if(!cocoaWidget) != scaled-scrollbar.html about:blank
+ 
+ # Test that scrollbar buttons are inhibited on Linux using the non-native theme.
+-skip-if(!gtkWidget) test-pref(ui.scrollArrowStyle,4097) ref-pref(ui.scrollArrowStyle,0) == scrollbar-buttons.html scrollbar-buttons.html
++skip-if(!gtkWidget) pref(widget.non-native-theme.enabled,true) test-pref(ui.scrollArrowStyle,4097) ref-pref(ui.scrollArrowStyle,0) == scrollbar-buttons.html scrollbar-buttons.html
+diff --git a/widget/tests/browser/browser_test_scrollbar_colors.js b/widget/tests/browser/browser_test_scrollbar_colors.js
+index 458cadd84ebb..21524120714c 100644
+--- a/widget/tests/browser/browser_test_scrollbar_colors.js
++++ b/widget/tests/browser/browser_test_scrollbar_colors.js
+@@ -27,6 +27,15 @@ add_task(async () => {
+ 
+     // == Native theme ==
+ 
++    const WIN_REFERENCES = [
++      // Yellow background
++      ["255,255,0", 6889],
++      // Blue scrollbar face
++      ["0,0,255", 540],
++      // Cyan scrollbar track
++      ["0,255,255", 2487],
++    ];
++
+     const MAC_REFERENCES = [
+       // Yellow background
+       ["255,255,0", 7225],
+@@ -36,9 +45,19 @@ add_task(async () => {
+       ["0,255,255", 1760],
+     ];
+ 
++    // Values have been updated from 8100, 720, 1180 for linux1804
++    const LINUX_REFERENCES = [
++      // Yellow background
++      ["255,255,0", 7744],
++      // Blue scrollbar face
++      ["0,0,255", 1104],
++      // Cyan scrollbar track
++      ["0,255,255", 1152],
++    ];
++
+     // == Non-native theme ==
+ 
+-    const WIN10_REFERENCES = [
++    const WIN10_NNT_REFERENCES = [
+       // Yellow background
+       ["255,255,0", 6889],
+       // Blue scrollbar face
+@@ -47,7 +66,7 @@ add_task(async () => {
+       ["0,255,255", 2355],
+     ];
+ 
+-    const WIN11_REFERENCES = [
++    const WIN11_NNT_REFERENCES = [
+       // Yellow background
+       ["255,255,0", 6889],
+       // Blue scrollbar face
+@@ -56,7 +75,9 @@ add_task(async () => {
+       ["0,255,255", 2787],
+     ];
+ 
+-    const LINUX_REFERENCES = [
++    const MAC_NNT_REFERENCES = MAC_REFERENCES;
++
++    const LINUX_NNT_REFERENCES = [
+       // Yellow background
+       ["255,255,0", 7744],
+       // Blue scrollbar face
+@@ -95,19 +116,23 @@ add_task(async () => {
+ 
+     let canvas = snapshotRect(content.window, outerRect);
+     let stats = countPixels(canvas);
++    let isNNT = SpecialPowers.getBoolPref("widget.non-native-theme.enabled");
++
+     let references;
+     if (content.navigator.platform.startsWith("Win")) {
+-      if (WindowsVersionInfo.get().buildNumber >= 22000) {
+-        // Windows 11
+-        references = WIN11_REFERENCES;
++      if (!isNNT) {
++        references = WIN_REFERENCES;
++      } else if (WindowsVersionInfo.get().buildNumber >= 22000) {
++        // Windows 11 NNT
++        references = WIN11_NNT_REFERENCES;
+       } else {
+-        // Windows 10
+-        references = WIN10_REFERENCES;
++        // Windows 10 NNT
++        references = WIN10_NNT_REFERENCES;
+       }
+     } else if (content.navigator.platform.startsWith("Mac")) {
+-      references = MAC_REFERENCES;
++      references = isNNT ? MAC_NNT_REFERENCES : MAC_REFERENCES;
+     } else if (content.navigator.platform.startsWith("Linux")) {
+-      references = LINUX_REFERENCES;
++      references = isNNT ? LINUX_NNT_REFERENCES : LINUX_REFERENCES;
+     } else {
+       ok(false, "Unsupported platform");
+     }

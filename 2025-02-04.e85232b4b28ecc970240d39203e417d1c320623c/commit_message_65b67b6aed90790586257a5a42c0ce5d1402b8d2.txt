@@ -1,0 +1,1 @@
+Bug 1945305: Add check to disallow directly including Windows headers. r=jandem    2025-02-03 19:53:28    65b67b6aed90790586257a5a42c0ce5d1402b8d2

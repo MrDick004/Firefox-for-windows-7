@@ -1,0 +1,1 @@
+Bug 1939185 - Remote unnecessary code in D3D11TextureData::SerializeSpecific() r=gfx-reviewers,lsalzman    2024-12-27 12:21:35    2cb825d3f5fea6d2009b19baa758ae390b05d53e

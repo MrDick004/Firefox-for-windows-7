@@ -1,0 +1,1 @@
+Bug 1856104 - Remove useless version checks from JavaScript code. r=Gijs,webcompat-reviewers,settings-reviewers,search-reviewers,Standard8,twisniewski    2023-10-03 03:00:07    bcd7d268c4e0172d55dc905e36199b8274214e9e

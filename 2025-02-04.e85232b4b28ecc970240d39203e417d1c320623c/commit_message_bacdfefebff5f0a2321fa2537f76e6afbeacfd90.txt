@@ -1,0 +1,1 @@
+Bug 1911763 - Remove implicitly-added chrome window styles. r=win-reviewers,rkraesig    2024-09-30 20:16:07    bacdfefebff5f0a2321fa2537f76e6afbeacfd90

@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from uriloader/exthandler/. r=Gijs    2023-07-26 16:52:53    b5c1244697b7541a4c2587df02552e189ec10cc6

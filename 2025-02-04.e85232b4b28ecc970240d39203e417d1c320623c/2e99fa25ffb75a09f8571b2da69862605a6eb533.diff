@@ -1,0 +1,201 @@
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index 190468a1688c..f883f4d16906 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1485,11 +1485,18 @@ pub enum Appearance {
+     /// A dual toolbar button (e.g., a Back button with a dropdown)
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Dualbutton,
++    /// A groupbox.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Groupbox,
+     /// <menu> and <menuitem> appearances
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Menuitem,
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Checkmenuitem,
++    /// For text on non-iconic menuitems only
++    /// The text part of a dropdown list, to left of button.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    MenulistText,
+     /// Menu Popup background.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Menupopup,
+diff --git a/toolkit/themes/linux/global/menulist.css b/toolkit/themes/linux/global/menulist.css
+index 00b6ea66853b..51170786200f 100644
+--- a/toolkit/themes/linux/global/menulist.css
++++ b/toolkit/themes/linux/global/menulist.css
+@@ -35,6 +35,8 @@ label {
+ /* Label box */
+ 
+ #label-box[native] {
++  appearance: auto;
++  -moz-default-appearance: menulist-text;
+   align-items: center;
+   justify-content: center;
+   color: inherit;
+diff --git a/toolkit/themes/osx/global/menulist.css b/toolkit/themes/osx/global/menulist.css
+index 86d35a62ce41..5fa73182b4ba 100644
+--- a/toolkit/themes/osx/global/menulist.css
++++ b/toolkit/themes/osx/global/menulist.css
+@@ -31,6 +31,8 @@ label:not([native]) {
+ /* Label box */
+ 
+ #label-box[native] {
++  appearance: auto;
++  -moz-default-appearance: menulist-text;
+   align-items: center;
+   justify-content: center;
+   margin-bottom: 1px;
+diff --git a/widget/cocoa/nsNativeThemeCocoa.mm b/widget/cocoa/nsNativeThemeCocoa.mm
+index 2d3bee0c0a8f..09cfac5c1bbb 100644
+--- a/widget/cocoa/nsNativeThemeCocoa.mm
++++ b/widget/cocoa/nsNativeThemeCocoa.mm
+@@ -2381,6 +2381,9 @@ Maybe<nsNativeThemeCocoa::WidgetInfo> nsNativeThemeCocoa::ComputeWidgetInfo(
+           ButtonParams{ComputeControlParams(aFrame, elementState),
+                        ButtonType::eArrowButton}));
+ 
++    case StyleAppearance::Groupbox:
++      return Some(WidgetInfo::GroupBox());
++
+     case StyleAppearance::Textfield:
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+@@ -2755,6 +2758,7 @@ bool nsNativeThemeCocoa::CreateWebRenderCommandsForWidget(
+     case StyleAppearance::Menulist:
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::MozMenulistArrowButton:
++    case StyleAppearance::Groupbox:
+     case StyleAppearance::Textfield:
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+@@ -3135,6 +3139,7 @@ nsNativeThemeCocoa::WidgetStateChanged(nsIFrame* aFrame, StyleAppearance aAppear
+     case StyleAppearance::Tabpanels:
+     case StyleAppearance::Tabpanel:
+     case StyleAppearance::Menupopup:
++    case StyleAppearance::Groupbox:
+     case StyleAppearance::Progresschunk:
+     case StyleAppearance::ProgressBar:
+     case StyleAppearance::Meter:
+@@ -3190,6 +3195,7 @@ bool nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFra
+     case StyleAppearance::Menulist:
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::MozMenulistArrowButton:
++    case StyleAppearance::MenulistText:
+       if (aFrame && aFrame->GetWritingMode().IsVertical()) {
+         return false;
+       }
+@@ -3210,6 +3216,7 @@ bool nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFra
+     case StyleAppearance::Checkbox:
+     case StyleAppearance::CheckboxContainer:
+     case StyleAppearance::Radio:
++    case StyleAppearance::Groupbox:
+     case StyleAppearance::MozMacHelpButton:
+     case StyleAppearance::MozMacDisclosureButtonOpen:
+     case StyleAppearance::MozMacDisclosureButtonClosed:
+@@ -3303,6 +3310,7 @@ bool nsNativeThemeCocoa::ThemeNeedsComboboxDropmarker() { return false; }
+ bool nsNativeThemeCocoa::WidgetAppearanceDependsOnWindowFocus(
+     StyleAppearance aAppearance) {
+   switch (aAppearance) {
++    case StyleAppearance::Groupbox:
+     case StyleAppearance::Tabpanels:
+     case StyleAppearance::Menupopup:
+     case StyleAppearance::Tooltip:
+diff --git a/widget/gtk/nsNativeThemeGTK.cpp b/widget/gtk/nsNativeThemeGTK.cpp
+index baa0c11ba9cf..710b06009c1c 100644
+--- a/widget/gtk/nsNativeThemeGTK.cpp
++++ b/widget/gtk/nsNativeThemeGTK.cpp
+@@ -372,6 +372,8 @@ bool nsNativeThemeGTK::GetGtkWidgetAndState(StyleAppearance aAppearance,
+         *aWidgetFlags =
+             IsFrameContentNodeInNamespace(aFrame, kNameSpaceID_XHTML);
+       break;
++    case StyleAppearance::MenulistText:
++      return false;  // nothing to do, but prevents the bg from being drawn
+     case StyleAppearance::ToolbarbuttonDropdown:
+     case StyleAppearance::ButtonArrowDown:
+     case StyleAppearance::ButtonArrowUp:
+@@ -1324,6 +1326,7 @@ nsNativeThemeGTK::ThemeSupportsWidget(nsPresContext* aPresContext,
+     // Combobox dropdowns don't support native theming in vertical mode.
+     case StyleAppearance::Menulist:
+     case StyleAppearance::MenulistButton:
++    case StyleAppearance::MenulistText:
+       if (aFrame && aFrame->GetWritingMode().IsVertical()) {
+         return false;
+       }
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index 12c52a9599ef..b7206a43f6ff 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -487,6 +487,7 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
+     case StyleAppearance::Button:
+     case StyleAppearance::Radio:
+     case StyleAppearance::Checkbox:
++    case StyleAppearance::Groupbox:
+       return Some(eUXButton);
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+@@ -639,6 +640,13 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
+       aState += inputState * 4;
+       return NS_OK;
+     }
++    case StyleAppearance::Groupbox: {
++      aPart = BP_GROUPBOX;
++      aState = TS_NORMAL;
++      // Since we don't support groupbox disabled and GBS_DISABLED looks the
++      // same as GBS_NORMAL don't bother supporting GBS_DISABLED.
++      return NS_OK;
++    }
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+     case StyleAppearance::Textfield:
+@@ -1413,6 +1421,7 @@ LayoutDeviceIntSize nsNativeThemeWin::GetMinimumWidgetSize(
+   }
+ 
+   switch (aAppearance) {
++    case StyleAppearance::Groupbox:
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+     case StyleAppearance::Textfield:
+@@ -1648,6 +1657,7 @@ bool nsNativeThemeWin::ClassicThemeSupportsWidget(nsIFrame* aFrame,
+     case StyleAppearance::Radio:
+     case StyleAppearance::Range:
+     case StyleAppearance::RangeThumb:
++    case StyleAppearance::Groupbox:
+     case StyleAppearance::Menulist:
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::MozMenulistArrowButton:
+@@ -1670,6 +1680,7 @@ LayoutDeviceIntMargin nsNativeThemeWin::ClassicGetWidgetBorder(
+     nsDeviceContext* aContext, nsIFrame* aFrame, StyleAppearance aAppearance) {
+   LayoutDeviceIntMargin result;
+   switch (aAppearance) {
++    case StyleAppearance::Groupbox:
+     case StyleAppearance::Button:
+       result.top = result.left = result.bottom = result.right = 2;
+       break;
+@@ -1740,6 +1751,7 @@ LayoutDeviceIntSize nsNativeThemeWin::ClassicGetMinimumWidgetSize(
+     case StyleAppearance::Menulist:
+     case StyleAppearance::MenulistButton:
+     case StyleAppearance::Button:
++    case StyleAppearance::Groupbox:
+     case StyleAppearance::Listbox:
+     case StyleAppearance::Treeview:
+     case StyleAppearance::NumberInput:
+@@ -2132,6 +2144,10 @@ RENDER_AGAIN:
+ 
+       break;
+     }
++    case StyleAppearance::Groupbox:
++      ::DrawEdge(hdc, &widgetRect, EDGE_ETCHED, BF_RECT | BF_ADJUST);
++      ::FillRect(hdc, &widgetRect, (HBRUSH)(COLOR_BTNFACE + 1));
++      break;
+     // Draw 3D face background controls
+     case StyleAppearance::ProgressBar:
+       // Draw 3D border
+@@ -2254,6 +2270,7 @@ uint32_t nsNativeThemeWin::GetWidgetNativeDrawingFlags(
+     // these are definitely no; they're all graphics that don't get scaled up
+     case StyleAppearance::Checkbox:
+     case StyleAppearance::Radio:
++    case StyleAppearance::Groupbox:
+       return gfxWindowsNativeDrawing::CANNOT_DRAW_TO_COLOR_ALPHA |
+              gfxWindowsNativeDrawing::CANNOT_AXIS_ALIGNED_SCALE |
+              gfxWindowsNativeDrawing::CANNOT_COMPLEX_TRANSFORM;

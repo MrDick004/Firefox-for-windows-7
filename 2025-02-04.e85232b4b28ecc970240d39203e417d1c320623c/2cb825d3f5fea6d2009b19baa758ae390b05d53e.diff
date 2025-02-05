@@ -1,0 +1,13 @@
+diff --git a/gfx/layers/d3d11/TextureD3D11.cpp b/gfx/layers/d3d11/TextureD3D11.cpp
+index d95409d28073..1eeaf9805a77 100644
+--- a/gfx/layers/d3d11/TextureD3D11.cpp
++++ b/gfx/layers/d3d11/TextureD3D11.cpp
+@@ -430,6 +430,8 @@ void D3D11TextureData::SyncWithObject(RefPtr<SyncObjectClient> aSyncObject) {
+ 
+ bool D3D11TextureData::SerializeSpecific(
+     SurfaceDescriptorD3D10* const aOutDesc) {
++  if (mGpuProcessTextureId.isNothing()) {
++  }
+   *aOutDesc = SurfaceDescriptorD3D10(
+       mSharedHandle, mGpuProcessTextureId, mArrayIndex, mFormat, mSize,
+       mColorSpace, mColorRange, /* hasKeyedMutex */ mHasKeyedMutex,

@@ -1,0 +1,1 @@
+Bug 1912368 - Use GpuProcessTextureId in D3D11TextureData if compositor device is used r=gfx-reviewers,lsalzman    2024-08-14 19:02:38    b9a796eeb7f2652f9396cc13b0fc2ce2cd61312b

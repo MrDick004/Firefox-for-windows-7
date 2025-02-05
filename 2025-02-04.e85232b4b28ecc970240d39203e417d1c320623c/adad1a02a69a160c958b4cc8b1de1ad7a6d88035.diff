@@ -1,0 +1,81 @@
+diff --git a/toolkit/components/alerts/alert.xhtml b/toolkit/components/alerts/alert.xhtml
+index d58733981b61..231cb082f9d5 100644
+--- a/toolkit/components/alerts/alert.xhtml
++++ b/toolkit/components/alerts/alert.xhtml
+@@ -12,7 +12,6 @@
+   xmlns:xhtml="http://www.w3.org/1999/xhtml"
+   role="alert"
+   pack="start"
+-  hidechrome="true"
+   onload="onAlertLoad();"
+   onclick="onAlertClick();"
+   onbeforeunload="onAlertBeforeUnload();"
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index c761dd9bf070..17d6d9256546 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -2991,7 +2991,8 @@ void nsWindow::SetCursor(const Cursor& aCursor) {
+  * SECTION: nsIWidget::Get/SetTransparencyMode
+  *
+  * Manage the transparency mode of the window containing this
+- * widget.
++ * widget. Only works for popup and dialog windows when the
++ * Desktop Window Manager compositor is not enabled.
+  *
+  **************************************************************/
+ 
+@@ -7368,14 +7369,51 @@ void nsWindow::SetWindowTranslucencyInner(TransparencyMode aMode) {
+     return;
+   }
+ 
+-  MOZ_ASSERT(WinUtils::GetTopLevelHWND(mWnd, true) == mWnd);
+-  LONG_PTR exStyle = ::GetWindowLongPtr(mWnd, GWL_EXSTYLE);
++  // stop on dialogs and popups!
++  HWND hWnd = WinUtils::GetTopLevelHWND(mWnd, true);
++  nsWindow* parent = WinUtils::GetNSWindowPtr(hWnd);
++
++  if (!parent) {
++    NS_WARNING("Trying to use transparent chrome in an embedded context");
++    return;
++  }
++
++  if (parent != this) {
++    NS_WARNING(
++        "Setting SetWindowTranslucencyInner on a parent this is not us!");
++  }
++
++  if (aMode == TransparencyMode::Transparent) {
++    // If we're switching to the use of a transparent window, hide the chrome
++    // on our parent.
++    HideWindowChrome(true);
++  } else if (mHideChrome &&
++             mTransparencyMode == TransparencyMode::Transparent) {
++    // if we're switching out of transparent, re-enable our parent's chrome.
++    HideWindowChrome(false);
++  }
++
++  LONG_PTR style = ::GetWindowLongPtrW(hWnd, GWL_STYLE),
++           exStyle = ::GetWindowLongPtr(hWnd, GWL_EXSTYLE);
++
++  if (parent->mIsVisible) {
++    style |= WS_VISIBLE;
++    if (parent->mFrameState->GetSizeMode() == nsSizeMode_Maximized) {
++      style |= WS_MAXIMIZE;
++    } else if (parent->mFrameState->GetSizeMode() == nsSizeMode_Minimized) {
++      style |= WS_MINIMIZE;
++    }
++  }
++
+   if (aMode == TransparencyMode::Transparent) {
+     exStyle |= WS_EX_LAYERED;
+   } else {
+     exStyle &= ~WS_EX_LAYERED;
+   }
+-  ::SetWindowLongPtrW(mWnd, GWL_EXSTYLE, exStyle);
++
++  VERIFY_WINDOW_STYLE(style);
++  ::SetWindowLongPtrW(hWnd, GWL_STYLE, style);
++  ::SetWindowLongPtrW(hWnd, GWL_EXSTYLE, exStyle);
+ 
+   mTransparencyMode = aMode;
+ 

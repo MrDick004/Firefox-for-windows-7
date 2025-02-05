@@ -1,0 +1,1 @@
+Bug 1934040 - Remove WS_SYSMENU when using custom titlebar, so that DWM doesn't draw caption buttons. r=win-reviewers,rkraesig    2024-12-04 00:51:28    255fe1912de6df1ef0f4f27ac58ab408dfe4b13b

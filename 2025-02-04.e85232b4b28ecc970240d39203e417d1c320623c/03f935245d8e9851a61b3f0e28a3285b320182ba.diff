@@ -1,0 +1,258 @@
+diff --git a/toolkit/components/telemetry/app/TelemetryEnvironment.sys.mjs b/toolkit/components/telemetry/app/TelemetryEnvironment.sys.mjs
+index 50be84962bf4..86e7babca857 100644
+--- a/toolkit/components/telemetry/app/TelemetryEnvironment.sys.mjs
++++ b/toolkit/components/telemetry/app/TelemetryEnvironment.sys.mjs
+@@ -12,6 +12,7 @@ import { UpdateUtils } from "resource://gre/modules/UpdateUtils.sys.mjs";
+ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
+ 
+ const Utils = TelemetryUtils;
++const PREF_TELEMETRY_ENABLED = "toolkit.telemetry.enabled";
+ 
+ import {
+   AddonManager,
+@@ -81,10 +82,6 @@ export var Policy = {
+ // startup.
+ var gActiveExperimentStartupBuffer = new Map();
+ 
+-// For Powering arewegleanyet.com (See bug 1944592)
+-// Legacy Count: 120
+-// Glean Count: 9
+-
+ var gGlobalEnvironment;
+ function getGlobal() {
+   if (!gGlobalEnvironment) {
+@@ -1636,6 +1633,8 @@ EnvironmentCache.prototype = {
+       e10sEnabled: Services.appinfo.browserTabsRemoteAutostart,
+       e10sMultiProcesses: Services.appinfo.maxWebProcessCount,
+       fissionEnabled: Services.appinfo.fissionAutostart,
++      telemetryEnabled:
++        Services.prefs.getBoolPref(PREF_TELEMETRY_ENABLED, false) === true,
+       locale: getBrowserLocale(),
+       // We need to wait for browser-delayed-startup-finished to ensure that the locales
+       // have settled, once that's happened we can get the intl data directly.
+@@ -1920,6 +1919,24 @@ EnvironmentCache.prototype = {
+     return {};
+   },
+ 
++  /**
++   * Get the device information, if we are on a portable device.
++   * @return Object containing the device information data, or null if
++   * not a portable device.
++   */
++  _getDeviceData() {
++    if (AppConstants.platform !== "android") {
++      return null;
++    }
++
++    return {
++      model: getSysinfoProperty("device", null),
++      manufacturer: getSysinfoProperty("manufacturer", null),
++      hardware: getSysinfoProperty("hardware", null),
++      isTablet: getSysinfoProperty("tablet", null),
++    };
++  },
++
+   _osData: null,
+   /**
+    * Get the OS information.
+@@ -2025,9 +2042,13 @@ EnvironmentCache.prototype = {
+       DWriteEnabled: getGfxField("DWriteEnabled", null),
+       ContentBackend: getGfxField("ContentBackend", null),
+       Headless: getGfxField("isHeadless", null),
++      EmbeddedInFirefoxReality: getGfxField("EmbeddedInFirefoxReality", null),
+       TargetFrameRate: getGfxField("TargetFrameRate", null),
+       textScaleFactor: getGfxField("textScaleFactor", null),
+ 
++      // The following line is disabled due to main thread jank and will be enabled
++      // again as part of bug 1154500.
++      // DWriteVersion: getGfxField("DWriteVersion", null),
+       adapters: [],
+       monitors: [],
+       features: {},
+@@ -2109,6 +2130,8 @@ EnvironmentCache.prototype = {
+       }
+       data = { ...this._getProcessData(), ...data };
+       data.sec = this._getSecurityAppData();
++    } else if (AppConstants.platform == "android") {
++      data.device = this._getDeviceData();
+     }
+ 
+     return data;
+diff --git a/toolkit/components/telemetry/docs/data/environment.rst b/toolkit/components/telemetry/docs/data/environment.rst
+index 60ed0a34d9c4..93d023cc76b1 100644
+--- a/toolkit/components/telemetry/docs/data/environment.rst
++++ b/toolkit/components/telemetry/docs/data/environment.rst
+@@ -53,6 +53,7 @@ Structure:
+         e10sEnabled: <bool>, // whether e10s is on, i.e. browser tabs open by default in a different process
+         e10sMultiProcesses: <integer>, // Maximum number of processes that will be launched for regular web content
+         fissionEnabled: <bool>, // whether fission is enabled this session, and subframes can load in a different process
++        telemetryEnabled: <bool>, // false on failure
+         locale: <string>, // e.g. "it", null on failure
+         intl: {
+           requestedLocales: [ <string>, ... ], // The locales that are being requested.
+@@ -143,9 +144,16 @@ Structure:
+               // "hasAES", "hasEDSP", "hasARMv6", "hasARMv7", "hasNEON"
+             ],
+         },
++        device: { // This section is only available on mobile devices.
++          model: <string>, // the "device" from FHR, null on failure
++          manufacturer: <string>, // null on failure
++          hardware: <string>, // null on failure
++          isTablet: <bool>, // null on failure
++        },
+         os: {
+             name: <string>, // "Windows_NT" or null on failure
+             version: <string>, // e.g. "6.1", null on failure
++            kernelVersion: <string>, // android only or null on failure
+             servicePackMajor: <number>, // windows only or null on failure
+             servicePackMinor: <number>, // windows only or null on failure
+             windowsBuildNumber: <number>, // windows only or null on failure
+@@ -180,6 +188,7 @@ Structure:
+             ContentBackend: <string> // One of "Cairo", "Skia", or "Direct2D 1.1"
+             Headless: <bool>, // null on failure
+             TargetFrameRate: <number>, // frame rate in Hz, typically 60 or more
++            //DWriteVersion: <string>, // temporarily removed, pending bug 1154500
+             adapters: [
+               {
+                 description: <string>, // e.g. "Intel(R) HD Graphics 4600", null on failure
+@@ -568,6 +577,7 @@ This object contains operating system information.
+ 
+ - ``name``: the name of the OS.
+ - ``version``: a string representing the OS version.
++- ``kernelVersion``: an Android only string representing the kernel version.
+ - ``servicePackMajor``: the Windows only major version number for the installed service pack.
+ - ``servicePackMinor``: the Windows only minor version number for the installed service pack.
+ - ``windowsBuildNumber``: the Windows build number.
+@@ -608,10 +618,6 @@ Note that this list includes other types of deliveries, including Normandy rollo
+ Version History
+ ---------------
+ 
+-- Firefox 137:
+-
+-  - Removed unused and Android-only fields as part of Glean mirroring support. (`bug 1943698 <https://bugzilla.mozilla.org/show_bug.cgi?id=1943698>`_)
+-
+ - Firefox 88:
+ 
+   - Removed ``addons.activePlugins`` as part of removing NPAPI plugin support. (`bug 1682030 <https://bugzilla.mozilla.org/show_bug.cgi?id=1682030>`_)
+diff --git a/toolkit/components/telemetry/tests/unit/TelemetryEnvironmentTesting.sys.mjs b/toolkit/components/telemetry/tests/unit/TelemetryEnvironmentTesting.sys.mjs
+index 46f2edcf31df..25e6a65e3991 100644
+--- a/toolkit/components/telemetry/tests/unit/TelemetryEnvironmentTesting.sys.mjs
++++ b/toolkit/components/telemetry/tests/unit/TelemetryEnvironmentTesting.sys.mjs
+@@ -263,6 +263,7 @@ export var TelemetryEnvironmentTesting = {
+       fissionEnabled: "boolean",
+       intl: "object",
+       locale: "string",
++      telemetryEnabled: "boolean",
+       update: "object",
+       userPrefs: "object",
+     };
+@@ -620,6 +621,8 @@ export var TelemetryEnvironmentTesting = {
+           "windowsUBR must be null or a number."
+         );
+       }
++    } else if (gIsAndroid) {
++      lazy.Assert.ok(this.checkNullOrString(osData.kernelVersion));
+     } else if (gIsLinux) {
+       lazy.Assert.ok(this.checkNullOrString(osData.distro));
+       lazy.Assert.ok(this.checkNullOrString(osData.distroVersion));
+@@ -637,10 +640,17 @@ export var TelemetryEnvironmentTesting = {
+     lazy.Assert.ok("Headless" in gfxData);
+     lazy.Assert.ok("TargetFrameRate" in gfxData);
+     lazy.Assert.equal(typeof gfxData.TargetFrameRate, "number");
++    lazy.Assert.ok("EmbeddedInFirefoxReality" in gfxData);
+     lazy.Assert.ok("textScaleFactor" in gfxData);
++    // DWriteVersion is disabled due to main thread jank and will be enabled
++    // again as part of bug 1154500.
++    // Assert.ok("DWriteVersion" in gfxData);
+     if (gIsWindows) {
+       lazy.Assert.equal(typeof gfxData.D2DEnabled, "boolean");
+       lazy.Assert.equal(typeof gfxData.DWriteEnabled, "boolean");
++      lazy.Assert.equal(typeof gfxData.EmbeddedInFirefoxReality, "boolean");
++      // As above, will be enabled again as part of bug 1154500.
++      // Assert.ok(this.checkString(gfxData.DWriteVersion));
+     }
+ 
+     lazy.Assert.ok("adapters" in gfxData);
+diff --git a/toolkit/components/telemetry/tests/unit/test_TelemetryAndroidEnvironment.js b/toolkit/components/telemetry/tests/unit/test_TelemetryAndroidEnvironment.js
+new file mode 100644
+index 000000000000..b5035ff56c4a
+--- /dev/null
++++ b/toolkit/components/telemetry/tests/unit/test_TelemetryAndroidEnvironment.js
+@@ -0,0 +1,64 @@
++/* Any copyright is dedicated to the Public Domain.
++ * http://creativecommons.org/publicdomain/zero/1.0/
++ */
++/* Android-only TelemetryEnvironment xpcshell test that ensures that the device data is stored in the Environment.
++ */
++
++const { TelemetryEnvironment } = ChromeUtils.importESModule(
++  "resource://gre/modules/TelemetryEnvironment.sys.mjs"
++);
++
++/**
++ * Check that a value is a string and not empty.
++ *
++ * @param aValue The variable to check.
++ * @return True if |aValue| has type "string" and is not empty, False otherwise.
++ */
++function checkString(aValue) {
++  return typeof aValue == "string" && aValue != "";
++}
++
++/**
++ * If value is non-null, check if it's a valid string.
++ *
++ * @param aValue The variable to check.
++ * @return True if it's null or a valid string, false if it's non-null and an invalid
++ *         string.
++ */
++function checkNullOrString(aValue) {
++  if (aValue) {
++    return checkString(aValue);
++  } else if (aValue === null) {
++    return true;
++  }
++
++  return false;
++}
++
++/**
++ * If value is non-null, check if it's a boolean.
++ *
++ * @param aValue The variable to check.
++ * @return True if it's null or a valid boolean, false if it's non-null and an invalid
++ *         boolean.
++ */
++function checkNullOrBool(aValue) {
++  return aValue === null || typeof aValue == "boolean";
++}
++
++function checkSystemSection(data) {
++  Assert.ok("system" in data, "There must be a system section in Environment.");
++  // Device data is only available on Android.
++  if (gIsAndroid) {
++    let deviceData = data.system.device;
++    Assert.ok(checkNullOrString(deviceData.model));
++    Assert.ok(checkNullOrString(deviceData.manufacturer));
++    Assert.ok(checkNullOrString(deviceData.hardware));
++    Assert.ok(checkNullOrBool(deviceData.isTablet));
++  }
++}
++
++add_task(async function test_systemEnvironment() {
++  let environmentData = TelemetryEnvironment.currentEnvironment;
++  checkSystemSection(environmentData);
++});
+diff --git a/toolkit/components/telemetry/tests/unit/xpcshell.toml b/toolkit/components/telemetry/tests/unit/xpcshell.toml
+index 6dd591dd164b..90678b730431 100644
+--- a/toolkit/components/telemetry/tests/unit/xpcshell.toml
++++ b/toolkit/components/telemetry/tests/unit/xpcshell.toml
+@@ -64,6 +64,8 @@ tags = "addons"
+ ["test_SyncPingIntegration.js"]
+ skip-if = ["os == 'android'"]
+ 
++["test_TelemetryAndroidEnvironment.js"]
++
+ ["test_TelemetryClientID_reset.js"]
+ skip-if = ["os == 'android'"] # Disabled as Android/GeckoView doesn't run TelemetryController
+ 

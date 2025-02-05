@@ -1,0 +1,96 @@
+diff --git a/layout/style/test/property_database.js b/layout/style/test/property_database.js
+index 2fe71d701fb9..c6d19cdf7a1d 100644
+--- a/layout/style/test/property_database.js
++++ b/layout/style/test/property_database.js
+@@ -7001,8 +7001,6 @@ var gCSSProperties = {
+       "hidden scroll",
+       "auto hidden",
+       "clip clip",
+-      "overlay",
+-      "overlay overlay",
+     ],
+     invalid_values: [
+       "clip -moz-scrollbars-none",
+@@ -7022,7 +7020,7 @@ var gCSSProperties = {
+       contain: "none",
+     },
+     initial_values: ["visible"],
+-    other_values: ["auto", "scroll", "hidden", "clip", "overlay"],
++    other_values: ["auto", "scroll", "hidden", "clip"],
+     invalid_values: [],
+   },
+   "overflow-y": {
+@@ -7036,7 +7034,7 @@ var gCSSProperties = {
+       contain: "none",
+     },
+     initial_values: ["visible"],
+-    other_values: ["auto", "scroll", "hidden", "clip", "overlay"],
++    other_values: ["auto", "scroll", "hidden", "clip"],
+     invalid_values: [],
+   },
+   "overflow-inline": {
+@@ -11761,16 +11759,24 @@ function get_computed_value(cs, property) {
+   const mozHiddenUnscrollableEnabled = IsCSSPropertyPrefEnabled(
+     "layout.css.overflow-moz-hidden-unscrollable.enabled"
+   );
++  const overlayEnabled = IsCSSPropertyPrefEnabled(
++    "layout.css.overflow-overlay.enabled"
++  );
+   for (let p of ["overflow", "overflow-x", "overflow-y"]) {
+     let prop = gCSSProperties[p];
+     let mozHiddenUnscrollableValues = mozHiddenUnscrollableEnabled
+       ? prop.other_values
+       : prop.invalid_values;
++    let overlayValues = overlayEnabled
++      ? prop.other_values
++      : prop.invalid_values;
+     mozHiddenUnscrollableValues.push("-moz-hidden-unscrollable");
++    overlayValues.push("overlay");
+     if (p == "overflow") {
+       mozHiddenUnscrollableValues.push(
+         "-moz-hidden-unscrollable -moz-hidden-unscrollable"
+       );
++      overlayValues.push("overlay overlay");
+     }
+   }
+ }
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 1c6f86ffb1cc..b22b9a5992bc 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -8593,6 +8593,13 @@
+   mirror: always
+   rust: true
+ 
++# Is support for CSS overflow: overlay enabled
++- name: layout.css.overflow-overlay.enabled
++  type: RelaxedAtomicBool
++  value: true
++  mirror: always
++  rust: true
++
+ # Is support for overscroll-behavior enabled?
+ - name: layout.css.overscroll-behavior.enabled
+   type: bool
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index 8414591c2bd3..858378d49e74 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1851,13 +1851,16 @@ impl Parse for Overflow {
+             "visible" => Self::Visible,
+             "hidden" => Self::Hidden,
+             "scroll" => Self::Scroll,
+-            "auto" | "overlay" => Self::Auto,
++            "auto" => Self::Auto,
+             #[cfg(feature = "gecko")]
+             "clip" => Self::Clip,
+             #[cfg(feature = "gecko")]
+             "-moz-hidden-unscrollable" if static_prefs::pref!("layout.css.overflow-moz-hidden-unscrollable.enabled") => {
+                 Overflow::Clip
+             },
++            "overlay" if static_prefs::pref!("layout.css.overflow-overlay.enabled") => {
++                Overflow::Auto
++            },
+         })
+     }
+ }

@@ -1,0 +1,1 @@
+Bug 1945221 - Stop using WS_EX_LAYERED for transparent popups. r=cmartin,win-reviewers    2025-02-03 19:35:02    bb40a44587ffc9f9736403bf7d2dedc4a2be480c

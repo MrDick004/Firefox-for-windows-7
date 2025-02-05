@@ -1,0 +1,80 @@
+diff --git a/widget/windows/CompositorWidgetChild.cpp b/widget/windows/CompositorWidgetChild.cpp
+index cd5367823f17..7044235ac11b 100644
+--- a/widget/windows/CompositorWidgetChild.cpp
++++ b/widget/windows/CompositorWidgetChild.cpp
+@@ -66,10 +66,6 @@ void CompositorWidgetChild::NotifyVisibilityUpdated(bool aIsFullyOccluded) {
+   Unused << SendNotifyVisibilityUpdated(aIsFullyOccluded);
+ };
+ 
+-void CompositorWidgetChild::UpdateTransparency(TransparencyMode aMode) {
+-  Unused << SendUpdateTransparency(aMode);
+-}
+-
+ void CompositorWidgetChild::ClearTransparentWindow() {
+   Unused << SendClearTransparentWindow();
+ }
+diff --git a/widget/windows/CompositorWidgetChild.h b/widget/windows/CompositorWidgetChild.h
+index ef508bf80268..cac048d68756 100644
+--- a/widget/windows/CompositorWidgetChild.h
++++ b/widget/windows/CompositorWidgetChild.h
+@@ -35,7 +35,7 @@ class CompositorWidgetChild final : public PCompositorWidgetChild,
+   bool OnWindowResize(const LayoutDeviceIntSize& aSize) override;
+   void NotifyVisibilityUpdated(bool aIsFullyOccluded) override;
+ 
+-  void UpdateTransparency(TransparencyMode) override;
++  void UpdateTransparency(TransparencyMode) override {}
+   void ClearTransparentWindow() override;
+ 
+   mozilla::ipc::IPCResult RecvObserveVsync() override;
+diff --git a/widget/windows/CompositorWidgetParent.cpp b/widget/windows/CompositorWidgetParent.cpp
+index b260174f96c9..9addae9d8fd3 100644
+--- a/widget/windows/CompositorWidgetParent.cpp
++++ b/widget/windows/CompositorWidgetParent.cpp
+@@ -138,12 +138,6 @@ bool CompositorWidgetParent::GetWindowIsFullyOccluded() const {
+   return mIsFullyOccluded;
+ }
+ 
+-mozilla::ipc::IPCResult CompositorWidgetParent::RecvUpdateTransparency(
+-    const TransparencyMode& aMode) {
+-  SetTransparencyMode(aMode);
+-  return IPC_OK();
+-}
+-
+ mozilla::ipc::IPCResult CompositorWidgetParent::RecvClearTransparentWindow() {
+   gfx::CriticalSectionAutoEnter lock(&mPresentLock);
+ 
+diff --git a/widget/windows/CompositorWidgetParent.h b/widget/windows/CompositorWidgetParent.h
+index c8b41a6450f1..9426c380934b 100644
+--- a/widget/windows/CompositorWidgetParent.h
++++ b/widget/windows/CompositorWidgetParent.h
+@@ -53,8 +53,6 @@ class CompositorWidgetParent final : public PCompositorWidgetParent,
+   mozilla::ipc::IPCResult RecvLeavePresentLock() override;
+   mozilla::ipc::IPCResult RecvNotifyVisibilityUpdated(
+       const bool& aIsFullyOccluded) override;
+-  mozilla::ipc::IPCResult RecvUpdateTransparency(
+-      const TransparencyMode& aTransparencyMode) override;
+   mozilla::ipc::IPCResult RecvClearTransparentWindow() override;
+   void ActorDestroy(ActorDestroyReason aWhy) override;
+ 
+@@ -75,6 +73,9 @@ class CompositorWidgetParent final : public PCompositorWidgetParent,
+ 
+   gfx::CriticalSection mPresentLock;
+ 
++  // Transparency handling.
++  mozilla::Atomic<uint32_t, MemoryOrdering::Relaxed> mTransparencyMode;
++
+   // Visibility handling.
+   mozilla::Atomic<nsSizeMode, MemoryOrdering::Relaxed> mSizeMode;
+   mozilla::Atomic<bool, MemoryOrdering::Relaxed> mIsFullyOccluded;
+diff --git a/widget/windows/PCompositorWidget.ipdl b/widget/windows/PCompositorWidget.ipdl
+index 81cc9a3891b6..dae852bc9fc4 100644
+--- a/widget/windows/PCompositorWidget.ipdl
++++ b/widget/windows/PCompositorWidget.ipdl
+@@ -34,7 +34,6 @@ parent:
+   sync EnterPresentLock();
+   sync LeavePresentLock();
+   async NotifyVisibilityUpdated(bool aIsFullyOccluded);
+-  async UpdateTransparency(TransparencyMode aMode);
+   sync ClearTransparentWindow();
+   async __delete__();
+ 

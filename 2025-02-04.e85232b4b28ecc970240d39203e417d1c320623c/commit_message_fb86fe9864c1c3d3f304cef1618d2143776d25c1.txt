@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from mozglue/. r=glandium    2023-07-26 16:52:52    f14f9c76f2f115dd1162925a27d712d8a7c4e6c4

@@ -1,0 +1,1 @@
+Bug 1844908 - Remove pre-Win10-specific codepath from security/manager/. r=keeler    2023-07-26 16:52:52    9eef657924d3e4e08edabfe544aecdf0be379f30

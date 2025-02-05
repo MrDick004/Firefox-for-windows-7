@@ -1,0 +1,1 @@
+Bug 1911763 - Simplify non-client-area event handling. r=win-reviewers,rkraesig    2024-09-30 20:16:09    bea3b6bc8aa0cd3915764e89bcd1d9683fefd037

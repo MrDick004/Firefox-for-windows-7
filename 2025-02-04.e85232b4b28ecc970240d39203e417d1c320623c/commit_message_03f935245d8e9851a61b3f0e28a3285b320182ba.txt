@@ -1,0 +1,1 @@
+Bug 1943698 - Remove Legacy Environment fields that never report a value r=TravisLong,florian    2025-02-04 04:37:15    03f935245d8e9851a61b3f0e28a3285b320182ba
