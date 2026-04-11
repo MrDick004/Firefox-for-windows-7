@@ -1,0 +1,1 @@
+Bug 1776197 - mozannotation_server crate implementation r=afranchuk    2023/6/7 20:34:31    b2145d3bb890295b20e170fc79e924fe3e9a5c04

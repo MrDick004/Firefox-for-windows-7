@@ -1,0 +1,1 @@
+Bug 2002998 - Stop calling into Dwm in order to hit test window buttons. r=win-reviewers,gstoll    2025-11-29 06:21:54    81a7119f574ddb72a078967c1225ffc937ad0a0b

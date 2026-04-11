@@ -1,0 +1,1 @@
+Bug 1756621 - Remove nsWindowBase r=handyman    2022-02-28 23:08:03    e6a461db9474bbdbbc9002af60b1b0d80826f7e2

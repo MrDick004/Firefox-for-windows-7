@@ -1,0 +1,17 @@
+diff --git a/toolkit/themes/shared/toolbarbutton.css b/toolkit/themes/shared/toolbarbutton.css
+index 5bcb9ecb7d75..9f915e833645 100644
+--- a/toolkit/themes/shared/toolbarbutton.css
++++ b/toolkit/themes/shared/toolbarbutton.css
+@@ -15,6 +15,12 @@ toolbarbutton {
+     outline: auto;
+   }
+ 
++  @media not (prefers-contrast) {
++    :root[lwtheme-image] & {
++      text-shadow: none;
++    }
++  }
++
+   @media not (-moz-platform: macos) {
+     &:where(:hover) {
+       color: -moz-buttonhovertext;

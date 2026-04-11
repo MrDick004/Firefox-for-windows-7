@@ -1,0 +1,1 @@
+Bug 1727563 - Implement TryLock methods and RAII helpers for RWLock. r=xpcom-reviewers,nika    2021-09-01 18:11:44    a39660a4601deaa34be1c7fb54db4879bc4ddce6

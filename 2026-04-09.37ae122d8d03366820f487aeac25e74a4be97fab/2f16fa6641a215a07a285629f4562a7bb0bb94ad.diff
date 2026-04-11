@@ -1,0 +1,30 @@
+diff --git a/toolkit/themes/shared/checkbox.css b/toolkit/themes/shared/checkbox.css
+index 9f9a135b023b..dc0c88a4a7e1 100644
+--- a/toolkit/themes/shared/checkbox.css
++++ b/toolkit/themes/shared/checkbox.css
+@@ -77,6 +77,12 @@ checkbox {
+   }
+ }
+ 
++@media (-moz-platform: windows) or (-moz-platform: linux) {
++  checkbox[native]:focus-visible > .checkbox-label-box {
++    outline: var(--focus-outline);
++  }
++}
++
+ @media (-moz-platform: windows) {
+   checkbox:where([native]) {
+     margin: 2px 4px;
+diff --git a/toolkit/themes/shared/radio.css b/toolkit/themes/shared/radio.css
+index 38f2c45e437d..b086ae7c3f20 100644
+--- a/toolkit/themes/shared/radio.css
++++ b/toolkit/themes/shared/radio.css
+@@ -83,4 +79,8 @@ radio {
+   radiogroup {
+     margin: 1px 0;
+   }
++
++  .radio-icon {
++    margin-inline-end: 2px;
++  }
+ }

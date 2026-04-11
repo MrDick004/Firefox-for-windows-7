@@ -1,0 +1,1 @@
+Bug 1824053 - [2/4] Cloak and clear new windows on creation  r=win-reviewers,handyman    2024-06-17 22:17:49    c01d783a877f110243d6b33e0db02371955c5a4b

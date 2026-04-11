@@ -1,0 +1,125 @@
+diff --git a/gfx/wr/webrender/src/pattern/mod.rs b/gfx/wr/webrender/src/pattern/mod.rs
+index 286717d0f50e..522d0d54a0be 100644
+--- a/gfx/wr/webrender/src/pattern/mod.rs
++++ b/gfx/wr/webrender/src/pattern/mod.rs
+@@ -13,6 +13,7 @@ use api::{ColorF, units::DeviceRect};
+ use crate::frame_builder::FrameBuilderConfig;
+ use crate::render_task_graph::RenderTaskId;
+ use crate::renderer::GpuBufferBuilder;
++use crate::scene::SceneProperties;
+ use crate::spatial_tree::SpatialTree;
+ use crate::transform::TransformPalette;
+ 
+@@ -76,6 +77,7 @@ impl PatternTextureInput {
+ }
+ 
+ pub struct PatternBuilderContext<'a> {
++    pub scene_properties: &'a SceneProperties,
+     pub spatial_tree: &'a SpatialTree,
+     pub fb_config: &'a FrameBuilderConfig,
+     pub prim_origin: LayoutPoint,
+@@ -150,15 +152,3 @@ pub const TEXTURED_SHADER_MODE_TEXTURE: i32 = 1;
+ // or segment rect.
+ pub const TEXTURED_SHADER_MAP_TO_PRIMITIVE: i32 = 0;
+ pub const TEXTURED_SHADER_MAP_TO_SEGMENT: i32 = 1;
+-
+-impl PatternBuilder for ColorF {
+-    fn build(
+-        &self,
+-        _sub_rect: Option<DeviceRect>,
+-        _offset: LayoutVector2D,
+-        _ctx: &PatternBuilderContext,
+-        _state: &mut PatternBuilderState,
+-    ) -> Pattern {
+-        Pattern::color(*self)
+-    }
+-}
+diff --git a/gfx/wr/webrender/src/prepare.rs b/gfx/wr/webrender/src/prepare.rs
+index 94636a6ad8fe..51318d298665 100644
+--- a/gfx/wr/webrender/src/prepare.rs
++++ b/gfx/wr/webrender/src/prepare.rs
+@@ -636,10 +636,9 @@ fn prepare_interned_prim_for_render(
+             } else {
+                 let prim_data = &data_stores.prim[*data_handle];
+                 let prim_rect = LayoutRect::from_origin_and_size(prim_instance.prim_origin, prim_data.common.prim_size);
+-                let color = prim_data.resolve(frame_context.scene_properties);
+ 
+                 quad::prepare_quad(
+-                    &color,
++                    prim_data,
+                     &prim_rect,
+                     prim_data.common.aligned_aa_edges,
+                     prim_data.common.transformed_aa_edges,
+diff --git a/gfx/wr/webrender/src/prim_store/rectangle.rs b/gfx/wr/webrender/src/prim_store/rectangle.rs
+index 4559c36fa2fe..333afc36cc37 100644
+--- a/gfx/wr/webrender/src/prim_store/rectangle.rs
++++ b/gfx/wr/webrender/src/prim_store/rectangle.rs
+@@ -11,6 +11,8 @@ use crate::prim_store::{
+     ColorBindingIndex, SegmentInstanceIndex,
+     PrimTemplate, PrimTemplateCommonData, PrimitiveOpacity,
+ };
++use api::units::{DeviceRect, LayoutVector2D};
++use crate::pattern::{Pattern, PatternBuilder, PatternBuilderContext, PatternBuilderState};
+ use crate::frame_builder::FrameBuildingState;
+ use crate::scene::SceneProperties;
+ use std::ops;
+@@ -100,12 +102,6 @@ pub struct RectangleData {
+ 
+ pub type RectangleTemplate = PrimTemplate<RectangleData>;
+ 
+-impl RectangleTemplate {
+-    pub fn resolve(&self, scene_properties: &SceneProperties) -> ColorF {
+-        scene_properties.resolve_color(&self.kind.color)
+-    }
+-}
+-
+ impl ops::Deref for RectangleTemplate {
+     type Target = PrimTemplateCommonData;
+     fn deref(&self) -> &Self::Target {
+@@ -119,6 +115,18 @@ impl ops::DerefMut for RectangleTemplate {
+     }
+ }
+ 
++impl PatternBuilder for RectangleTemplate {
++    fn build(
++        &self,
++        _sub_rect: Option<DeviceRect>,
++        _offset: LayoutVector2D,
++        ctx: &PatternBuilderContext,
++        _state: &mut PatternBuilderState,
++    ) -> Pattern {
++        Pattern::color(ctx.scene_properties.resolve_color(&self.kind.color))
++    }
++}
++
+ impl From<RectangleKey> for RectangleTemplate {
+     fn from(item: RectangleKey) -> Self {
+         RectangleTemplate {
+diff --git a/gfx/wr/webrender/src/quad.rs b/gfx/wr/webrender/src/quad.rs
+index 984759541b4c..b28fbb779734 100644
+--- a/gfx/wr/webrender/src/quad.rs
++++ b/gfx/wr/webrender/src/quad.rs
+@@ -185,6 +185,7 @@ pub fn prepare_quad(
+     scratch: &mut PrimitiveScratchBuffer,
+ ) {
+     let pattern_ctx = PatternBuilderContext {
++        scene_properties: frame_context.scene_properties,
+         spatial_tree: frame_context.spatial_tree,
+         fb_config: frame_context.fb_config,
+         prim_origin: local_rect.min,
+@@ -254,6 +255,7 @@ pub fn prepare_repeatable_quad(
+     scratch: &mut PrimitiveScratchBuffer,
+ ) {
+     let pattern_ctx = PatternBuilderContext {
++        scene_properties: frame_context.scene_properties,
+         spatial_tree: frame_context.spatial_tree,
+         fb_config: frame_context.fb_config,
+         prim_origin: local_rect.min,
+@@ -477,6 +479,7 @@ pub fn prepare_border_image_nine_patch(
+     scratch: &mut PrimitiveScratchBuffer,
+ ) {
+     let pattern_ctx = PatternBuilderContext {
++        scene_properties: frame_context.scene_properties,
+         spatial_tree: frame_context.spatial_tree,
+         fb_config: frame_context.fb_config,
+         prim_origin: local_rect.min,

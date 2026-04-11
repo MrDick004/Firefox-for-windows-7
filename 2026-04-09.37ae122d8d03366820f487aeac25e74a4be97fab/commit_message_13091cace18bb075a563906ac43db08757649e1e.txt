@@ -1,0 +1,1 @@
+Bug 1682509 - Add a Windows Error Reporting exception module capable of writing out crash reports r=dmajor    2021-04-07 15:55:23    13091cace18bb075a563906ac43db08757649e1e

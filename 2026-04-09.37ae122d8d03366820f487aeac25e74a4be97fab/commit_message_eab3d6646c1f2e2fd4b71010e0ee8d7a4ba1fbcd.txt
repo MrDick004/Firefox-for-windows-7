@@ -1,0 +1,1 @@
+Bug 2008419 - Remove nsITheme::WidgetIsContainer. r=jwatt    2026-01-04 02:26:51    eab3d6646c1f2e2fd4b71010e0ee8d7a4ba1fbcd

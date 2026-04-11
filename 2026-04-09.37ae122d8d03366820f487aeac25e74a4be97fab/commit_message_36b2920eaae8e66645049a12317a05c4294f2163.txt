@@ -1,0 +1,1 @@
+Bug 1949595 - Include windows invalidated region on the region to clear. r=win-reviewers,rkraesig    2025-02-26 02:23:35    36b2920eaae8e66645049a12317a05c4294f2163

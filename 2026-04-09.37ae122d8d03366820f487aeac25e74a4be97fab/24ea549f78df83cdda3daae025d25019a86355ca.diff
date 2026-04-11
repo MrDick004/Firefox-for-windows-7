@@ -1,0 +1,96 @@
+diff --git a/layout/generic/ScrollContainerFrame.cpp b/layout/generic/ScrollContainerFrame.cpp
+index ebfe2c11105c..3ef5dbe29d94 100644
+--- a/layout/generic/ScrollContainerFrame.cpp
++++ b/layout/generic/ScrollContainerFrame.cpp
+@@ -73,7 +73,6 @@
+ #include "mozilla/layers/ScrollingInteractionContext.h"
+ #include "nsBidiPresUtils.h"
+ #include "nsBidiUtils.h"
+-#include "nsBlockFrame.h"
+ #include "nsCOMPtr.h"
+ #include "nsCSSRendering.h"
+ #include "nsContainerFrame.h"
+@@ -1409,19 +1408,17 @@ nscoord ScrollContainerFrame::SynthesizeFallbackBaseline(
+ Maybe<nscoord> ScrollContainerFrame::GetNaturalBaselineBOffset(
+     WritingMode aWM, BaselineSharingGroup aBaselineGroup,
+     BaselineExportContext aExportContext) const {
+-  // Block containers (except buttons) that are scrollable always have a last
+-  // baseline that are synthesized from block-end margin edge.
++  // Block containers that are scrollable always have a last baseline
++  // that are synthesized from block-end margin edge.
+   // Note(dshin): This behaviour is really only relevant to `inline-block`
+   // alignment context. In the context of table/flex/grid alignment, first/last
+   // baselines are calculated through `GetFirstLineBaseline`, which does
+   // calculations of its own.
+   // https://drafts.csswg.org/css-align/#baseline-export
+   if (aExportContext == BaselineExportContext::LineLayout &&
+-      aBaselineGroup == BaselineSharingGroup::Last) {
+-    if (nsBlockFrame* bf = do_QueryFrame(mScrolledFrame);
+-        bf && !bf->IsButtonLike()) {
+-      return Some(SynthesizeFallbackBaseline(aWM, aBaselineGroup));
+-    }
++      aBaselineGroup == BaselineSharingGroup::Last &&
++      mScrolledFrame->IsBlockFrameOrSubclass()) {
++    return Some(SynthesizeFallbackBaseline(aWM, aBaselineGroup));
+   }
+ 
+   if (StyleDisplay()->IsContainLayout()) {
+diff --git a/layout/generic/nsBlockFrame.h b/layout/generic/nsBlockFrame.h
+index 85c628e4e4e2..75f0f24efe28 100644
+--- a/layout/generic/nsBlockFrame.h
++++ b/layout/generic/nsBlockFrame.h
+@@ -537,14 +537,8 @@ class nsBlockFrame : public nsContainerFrame {
+   }
+ 
+   bool IsButtonLike() const {
+-    if (mContent->IsHTMLElement(nsGkAtoms::button)) {
+-      // NOTE(emilio): We need the IsAnonBox check to deal with things like the
+-      // :-moz-anonymous-item of a <button> with display: grid. We don't want
+-      // that to e.g. center its contents. But we do want the scrolled-content
+-      // box of a button to do it.
+-      auto pseudoType = Style()->GetPseudoType();
+-      return !mozilla::PseudoStyle::IsAnonBox(pseudoType) ||
+-             pseudoType == mozilla::PseudoStyleType::MozScrolledContent;
++    if (!Style()->IsAnonBox() && mContent->IsHTMLElement(nsGkAtoms::button)) {
++      return true;
+     }
+     return IsButtonControlFrame();
+   }
+diff --git a/testing/web-platform/tests/html/rendering/widgets/button-layout/scrollable-button-centering-ref.html b/testing/web-platform/tests/html/rendering/widgets/button-layout/scrollable-button-centering-ref.html
+deleted file mode 100644
+index 39195e5da3cf..000000000000
+--- a/testing/web-platform/tests/html/rendering/widgets/button-layout/scrollable-button-centering-ref.html
++++ /dev/null
+@@ -1,10 +0,0 @@
+-<!doctype html>
+-<meta charset="utf-8">
+-<style>
+-  button {
+-    height: 5em;
+-  }
+-</style>
+-<button>ABC</button>
+-<button>ABC</button>
+-<button>ABC</button>
+diff --git a/testing/web-platform/tests/html/rendering/widgets/button-layout/scrollable-button-centering.html b/testing/web-platform/tests/html/rendering/widgets/button-layout/scrollable-button-centering.html
+deleted file mode 100644
+index b125ded05750..000000000000
+--- a/testing/web-platform/tests/html/rendering/widgets/button-layout/scrollable-button-centering.html
++++ /dev/null
+@@ -1,16 +0,0 @@
+-<!doctype html>
+-<meta charset="utf-8">
+-<title>Scrollable buttons are center-aligned and derive a baseline from their contents</title>
+-<link rel="author" href="mailto:emilio@crisal.io" title="Emilio Cobos Álvarez">
+-<link rel="author" href="https://mozilla.com" title="Mozilla">
+-<link rel="help" href="https://html.spec.whatwg.org/#button-layout">
+-<link rel="help" href="https://bugzilla.mozilla.org/show_bug.cgi?id=1977669">
+-<link rel="match" href="scrollable-button-centering-ref.html">
+-<style>
+-  button {
+-    height: 5em;
+-  }
+-</style>
+-<button style="overflow: hidden">ABC</button>
+-<button>ABC</button>
+-<button style="overflow: auto">ABC</button>
