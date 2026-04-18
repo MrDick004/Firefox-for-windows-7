@@ -1,0 +1,1 @@
+Bug 1892835 - Remove delayed NCACTIVATE hack. r=masayuki,win-reviewers,rkraesig    2024-06-05 00:24:44    17f924a32aa47e90d7246855c3c60728b0473794

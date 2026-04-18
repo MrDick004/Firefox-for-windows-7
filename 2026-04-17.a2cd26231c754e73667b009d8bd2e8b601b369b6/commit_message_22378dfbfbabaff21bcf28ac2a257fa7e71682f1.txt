@@ -1,0 +1,5 @@
+Bug 1880109 - Remove legacy JumpListBuilder references in linting tools. r=Standard8,frontend-codestyle-reviewers    2024-06-13 09:18:00    22378dfbfbabaff21bcf28ac2a257fa7e71682f1
+Bug 1880109 - Remove legacy JumpListBuilder interfaces and backend. r=rkraesig,win-reviewers    2024-06-13 09:17:59    7b252c91af96e3f7e5e2c359dbb3a8e1e453bbef
+Bug 1880109 - Remove legacy JumpListBuilder usage in WinTaskbar. r=rkraesig,win-reviewers    2024-06-13 09:17:59    18138015000965f3abb3d7193e7b05ce9019267e
+Bug 1880109 - Remove legacy JumpListBuilder unit tests. r=rkraesig    2024-06-13 09:17:58    3d522df8a46763ba86e02d96a94d7e42444b0818
+Bug 1880109 - Remove legacy JumpListBuilder support from WindowsJumpLists.sys.mjs. r=rkraesig    2024-06-13 09:17:58    4058284aae1d7b6a7bc8bc1f8f959235f99705de

@@ -1,0 +1,1 @@
+Bug 1958396 - Fix arrow / acceltext alignment on Windows after recent changes. r=desktop-theme-reviewers,Itiel    2025-04-04 20:05:40    2bce1323a840f2e0d97321bf35a754784fd06352

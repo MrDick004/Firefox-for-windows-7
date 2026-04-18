@@ -1,0 +1,13 @@
+diff --git a/gfx/thebes/gfxGDIFont.cpp b/gfx/thebes/gfxGDIFont.cpp
+index efb47f779adf..6261625abc1a 100644
+--- a/gfx/thebes/gfxGDIFont.cpp
++++ b/gfx/thebes/gfxGDIFont.cpp
+@@ -125,7 +125,7 @@ void gfxGDIFont::Initialize() {
+ 
+   LOGFONTW logFont;
+ 
+-  if (mAdjustedSize == 0.0) {
++  if (mAdjustedSize <= 0.0) {
+     mAdjustedSize = GetAdjustedSize();
+     if (FontSizeAdjust::Tag(mStyle.sizeAdjustBasis) !=
+         FontSizeAdjust::Tag::None) {

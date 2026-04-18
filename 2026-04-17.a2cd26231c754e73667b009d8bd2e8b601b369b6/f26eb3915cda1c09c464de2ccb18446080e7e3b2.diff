@@ -1,0 +1,42 @@
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index cef577e51300..d81cc5dbd32a 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -781,6 +781,15 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
+   }
+ }
+ 
++static bool AssumeThemePartAndStateAreTransparent(int32_t aPart,
++                                                  int32_t aState) {
++  if (!LookAndFeel::GetInt(LookAndFeel::IntID::UseAccessibilityTheme) &&
++      aPart == MENU_POPUPITEM && aState == MBI_NORMAL) {
++    return true;
++  }
++  return false;
++}
++
+ // When running with per-monitor DPI (on Win8.1+), and rendering on a display
+ // with a different DPI setting from the system's default scaling, we need to
+ // apply scaling to native-themed elements as the Windows theme APIs assume
+@@ -823,6 +832,10 @@ void nsNativeThemeWin::DrawWidgetBackground(
+     return;
+   }
+ 
++  if (AssumeThemePartAndStateAreTransparent(part, state)) {
++    return;
++  }
++
+   gfxContextMatrixAutoSaveRestore save(aContext);
+ 
+   double themeScale = GetThemeDpiScaleFactor(aFrame);
+@@ -1615,6 +1628,10 @@ nsresult nsNativeThemeWin::ClassicDrawWidgetBackground(
+   MOZ_TRY(
+       ClassicGetThemePartAndState(aFrame, aAppearance, part, state, focused));
+ 
++  if (AssumeThemePartAndStateAreTransparent(part, state)) {
++    return NS_OK;
++  }
++
+   gfxFloat p2a = gfxFloat(aFrame->PresContext()->AppUnitsPerDevPixel());
+   RECT widgetRect;
+   gfxRect tr(aRect.X(), aRect.Y(), aRect.Width(), aRect.Height()),

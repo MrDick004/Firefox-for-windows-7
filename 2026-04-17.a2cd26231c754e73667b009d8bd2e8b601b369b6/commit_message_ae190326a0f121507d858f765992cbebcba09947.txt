@@ -1,0 +1,1 @@
+Bug 1871472: Remove mingw workaround for RoGetAgileReference function r=tjr    2025-06-02 22:33:07    ae190326a0f121507d858f765992cbebcba09947

@@ -1,0 +1,13 @@
+diff --git a/toolkit/crashreporter/nsExceptionHandler.cpp b/toolkit/crashreporter/nsExceptionHandler.cpp
+index 8084acfbf708..28859a993658 100644
+--- a/toolkit/crashreporter/nsExceptionHandler.cpp
++++ b/toolkit/crashreporter/nsExceptionHandler.cpp
+@@ -877,7 +877,7 @@ static void AnnotateMemoryStatus(AnnotationWriter& aWriter) {
+   }
+ 
+   PERFORMANCE_INFORMATION info;
+-  if (K32GetPerformanceInfo(&info, sizeof(info))) {
++  if (GetPerformanceInfo(&info, sizeof(info))) {
+     aWriter.Write(Annotation::TotalPageFile,
+                   static_cast<uint64_t>(info.CommitLimit * info.PageSize));
+     aWriter.Write(Annotation::AvailablePageFile,

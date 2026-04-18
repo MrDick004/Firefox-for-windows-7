@@ -1,0 +1,53 @@
+diff --git a/mozglue/misc/NativeNt.h b/mozglue/misc/NativeNt.h
+index cbc943497c20..1ffd0787b139 100644
+--- a/mozglue/misc/NativeNt.h
++++ b/mozglue/misc/NativeNt.h
+@@ -128,7 +128,7 @@ PVOID NTAPI RtlReAllocateHeap(PVOID aHeapHandle, ULONG aFlags, LPVOID aMem,
+ 
+ BOOLEAN NTAPI RtlFreeHeap(PVOID aHeapHandle, ULONG aFlags, PVOID aHeapBase);
+ 
+-BOOLEAN NTAPI RtlQueryPerformanceCounter(LARGE_INTEGER* aPerfCount);
++NTSTATUS NTAPI NtQueryPerformanceCounter(LARGE_INTEGER* aPerfCount, LARGE_INTEGER*);
+ 
+ #define RTL_DUPLICATE_UNICODE_STRING_NULL_TERMINATE 1
+ #define RTL_DUPLICATE_UNICODE_STRING_ALLOCATE_NULL_STRING 2
+diff --git a/toolkit/xre/dllservices/mozglue/ModuleLoadInfo.h b/toolkit/xre/dllservices/mozglue/ModuleLoadInfo.h
+index 683586a5b058..a13733a0c461 100644
+--- a/toolkit/xre/dllservices/mozglue/ModuleLoadInfo.h
++++ b/toolkit/xre/dllservices/mozglue/ModuleLoadInfo.h
+@@ -36,7 +36,7 @@ struct ModuleLoadInfo final {
+ #  if defined(IMPL_MFBT)
+     ::QueryPerformanceCounter(&mBeginTimestamp);
+ #  else
+-    ::RtlQueryPerformanceCounter(&mBeginTimestamp);
++    ::NtQueryPerformanceCounter(&mBeginTimestamp , NULL);
+ #  endif  // defined(IMPL_MFBT)
+   }
+ 
+@@ -57,7 +57,7 @@ struct ModuleLoadInfo final {
+ #  if defined(IMPL_MFBT)
+     ::QueryPerformanceCounter(&mBeginTimestamp);
+ #  else
+-    ::RtlQueryPerformanceCounter(&mBeginTimestamp);
++    ::NtQueryPerformanceCounter(&mBeginTimestamp , NULL);
+ #  endif  // defined(IMPL_MFBT)
+   }
+ 
+@@ -68,7 +68,7 @@ struct ModuleLoadInfo final {
+ #  if defined(IMPL_MFBT)
+     ::QueryPerformanceCounter(&mLoadTimeInfo);
+ #  else
+-    ::RtlQueryPerformanceCounter(&mLoadTimeInfo);
++    ::NtQueryPerformanceCounter(&mLoadTimeInfo , NULL);
+ #  endif  // defined(IMPL_MFBT)
+   }
+ 
+@@ -80,7 +80,7 @@ struct ModuleLoadInfo final {
+ #  if defined(IMPL_MFBT)
+     ::QueryPerformanceCounter(&endTimeStamp);
+ #  else
+-    ::RtlQueryPerformanceCounter(&endTimeStamp);
++    ::NtQueryPerformanceCounter(&endTimeStamp , NULL);
+ #  endif  // defined(IMPL_MFBT)
+ 
+     LONGLONG& timeInfo = mLoadTimeInfo.QuadPart;

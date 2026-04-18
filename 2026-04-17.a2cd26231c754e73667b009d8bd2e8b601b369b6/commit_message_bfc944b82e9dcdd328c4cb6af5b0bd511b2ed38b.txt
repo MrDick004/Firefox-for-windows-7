@@ -1,0 +1,1 @@
+Bug 2023574 - Use ColorF as the pattern builder instead of RectangleTemplate. r=gw    2026-03-25 07:33:46    bfc944b82e9dcdd328c4cb6af5b0bd511b2ed38b

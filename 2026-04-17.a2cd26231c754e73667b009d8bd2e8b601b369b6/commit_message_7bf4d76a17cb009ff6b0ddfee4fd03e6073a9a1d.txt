@@ -1,0 +1,1 @@
+Bug 1756474 - Add locking to gfxPlatformFontList and gfxFontFamily, to allow use from worker threads. r=lsalzman    2022-04-19 22:20:21    7bf4d76a17cb009ff6b0ddfee4fd03e6073a9a1d

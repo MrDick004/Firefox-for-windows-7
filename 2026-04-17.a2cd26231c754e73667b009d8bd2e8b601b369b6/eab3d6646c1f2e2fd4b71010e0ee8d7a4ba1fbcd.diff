@@ -1,0 +1,65 @@
+diff --git a/gfx/src/nsITheme.h b/gfx/src/nsITheme.h
+index 821b4a4b0602..394f5fe9d419 100644
+--- a/gfx/src/nsITheme.h
++++ b/gfx/src/nsITheme.h
+@@ -228,6 +228,8 @@ class nsITheme : public nsISupports {
+                                    nsIFrame* aFrame,
+                                    StyleAppearance aWidgetType) = 0;
+ 
++  virtual bool WidgetIsContainer(StyleAppearance aWidgetType) = 0;
++
+   /**
+    * Does the nsITheme implementation draw its own focus ring for this widget?
+    */
+diff --git a/layout/generic/nsIFrame.cpp b/layout/generic/nsIFrame.cpp
+index c79b9228bc7a..8d5b2297175b 100644
+--- a/layout/generic/nsIFrame.cpp
++++ b/layout/generic/nsIFrame.cpp
+@@ -4395,6 +4395,13 @@ void nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder* aBuilder,
+     pseudoStackingContext = true;
+   }
+ 
++  const nsStyleDisplay* ourDisp = StyleDisplay();
++  // Don't paint our children if the theme object is a leaf.
++  if (IsThemed(ourDisp) && !PresContext()->Theme()->WidgetIsContainer(
++                               ourDisp->EffectiveAppearance())) {
++    return;
++  }
++
+   // Since we're now sure that we're adding this frame to the display list
+   // (which means we're painting it, modulo occlusion), mark it as visible
+   // within the displayport.
+diff --git a/widget/Theme.cpp b/widget/Theme.cpp
+index dda0f97dd16a..bf8a74bcf969 100644
+--- a/widget/Theme.cpp
++++ b/widget/Theme.cpp
+@@ -1607,6 +1607,17 @@ bool Theme::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFrame* aFrame,
+   }
+ }
+ 
++bool Theme::WidgetIsContainer(StyleAppearance aAppearance) {
++  switch (aAppearance) {
++    case StyleAppearance::MozMenulistArrowButton:
++    case StyleAppearance::Radio:
++    case StyleAppearance::Checkbox:
++      return false;
++    default:
++      return true;
++  }
++}
++
+ bool Theme::ThemeDrawsFocusForWidget(nsIFrame*, StyleAppearance) {
+   return true;
+ }
+diff --git a/widget/Theme.h b/widget/Theme.h
+index 399cd4452c40..9085f325db65 100644
+--- a/widget/Theme.h
++++ b/widget/Theme.h
+@@ -84,6 +84,7 @@ class Theme : protected nsNativeTheme, public nsITheme {
+   ThemeGeometryType ThemeGeometryTypeForWidget(nsIFrame*,
+                                                StyleAppearance) override;
+   bool ThemeSupportsWidget(nsPresContext*, nsIFrame*, StyleAppearance) override;
++  bool WidgetIsContainer(StyleAppearance) override;
+   bool ThemeDrawsFocusForWidget(nsIFrame*, StyleAppearance) override;
+   bool ThemeNeedsComboboxDropmarker() override;
+ 

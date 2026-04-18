@@ -1,0 +1,44 @@
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index c1dc017bd0c5..190468a1688c 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1508,6 +1508,18 @@ pub enum Appearance {
+     /// For HTML's <input type=password>
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     PasswordInput,
++    /// A generic container that always repaints on state changes. This is a
++    /// hack to make XUL checkboxes and radio buttons work.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    CheckboxContainer,
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    RadioContainer,
++    /// The label part of a checkbox or radio button, used for painting a focus
++    /// outline.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    CheckboxLabel,
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    RadioLabel,
+     /// nsRangeFrame and its subparts
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Range,
+diff --git a/widget/nsNativeTheme.cpp b/widget/nsNativeTheme.cpp
+index 55393736ba31..0b2bcbb7b05f 100644
+--- a/widget/nsNativeTheme.cpp
++++ b/widget/nsNativeTheme.cpp
+@@ -51,9 +51,13 @@ NS_IMPL_ISUPPORTS(nsNativeTheme, nsITimerCallback, nsINamed)
+ 
+   const bool isXULElement = frameContent->IsXULElement();
+   if (isXULElement) {
+-    if (aAppearance == StyleAppearance::Checkbox ||
+-        aAppearance == StyleAppearance::Treeheadersortarrow ||
+-        aAppearance == StyleAppearance::Radio) {
++    if (aAppearance == StyleAppearance::CheckboxLabel ||
++        aAppearance == StyleAppearance::RadioLabel) {
++      aFrame = aFrame->GetParent()->GetParent();
++      frameContent = aFrame->GetContent();
++    } else if (aAppearance == StyleAppearance::Checkbox ||
++               aAppearance == StyleAppearance::Treeheadersortarrow ||
++               aAppearance == StyleAppearance::Radio) {
+       aFrame = aFrame->GetParent();
+       frameContent = aFrame->GetContent();
+     }

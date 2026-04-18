@@ -1,0 +1,299 @@
+diff --git a/security/sandbox/chromium/sandbox/win/src/broker_services.cc b/security/sandbox/chromium/sandbox/win/src/broker_services.cc
+index 58c24c12f24b1..16a7c3dbac024 100644
+--- a/security/sandbox/chromium/sandbox/win/src/broker_services.cc
++++ b/security/sandbox/chromium/sandbox/win/src/broker_services.cc
+@@ -546,6 +546,8 @@ ResultCode BrokerServicesBase::SpawnTarget(const wchar_t* exe_path,
+   // TODO(crbug.com/1428756) remove all calls to HasJob in follow-up CLs.
+   DCHECK(policy_base->HasJob());
+ 
++  // On Win10, jobs are associated via startup_info.
++  if (base::win::GetVersion() >= base::win::Version::WIN10)
+   if (policy_base->HasJob())
+     startup_info->AddJobToAssociate(policy_base->GetJobHandle());
+ 
+@@ -563,7 +566,7 @@ ResultCode BrokerServicesBase::SpawnTarget(const wchar_t* exe_path,
+  // Brokerservices does not own the target object. It is owned by the Policy.
+  base::win::ScopedProcessInformation process_info;
+  std::unique_ptr<TargetProcess> target = std::make_unique<TargetProcess>(
+-      std::move(*initial_token), std::move(*lockdown_token), thread_pool_);
++      std::move(*initial_token), std::move(*lockdown_token), policy_base->GetJobHandle(), thread_pool_);
+ 
+  result = target->Create(exe_path, command_line, std::move(startup_info),
+                          &process_info, env_map, last_error);
+diff --git a/security/sandbox/chromium/sandbox/win/src/broker_services.h b/security/sandbox/chromium/sandbox/win/src/broker_services.h
+index d12355f32d070..88c4e3ba1d48b 100644
+--- a/security/sandbox/chromium/sandbox/win/src/broker_services.h
++++ b/security/sandbox/chromium/sandbox/win/src/broker_services.h
+@@ -18,6 +18,7 @@
+ #include "base/win/scoped_handle.h"
+ #include "sandbox/win/src/alternate_desktop.h"
+ #include "sandbox/win/src/crosscall_server.h"
++#include "sandbox/win/src/job.h"
+ #include "sandbox/win/src/sandbox.h"
+ #include "sandbox/win/src/sandbox_policy_base.h"
+ #include "sandbox/win/src/sharedmem_ipc_server.h"
+diff --git a/security/sandbox/chromium/sandbox/win/src/job.cc b/security/sandbox/chromium/sandbox/win/src/job.cc
+index d5e230719a210..36c28b20205ac 100644
+--- a/security/sandbox/chromium/sandbox/win/src/job.cc
++++ b/security/sandbox/chromium/sandbox/win/src/job.cc
+@@ -14,17 +14,20 @@
+ 
+ namespace sandbox {
+ 
+-Job::Job() = default;
+-Job::~Job() = default;
++Job::Job() : job_handle_(nullptr) {}
++
++Job::~Job() {}
+ 
+ DWORD Job::Init(JobLevel security_level,
++                const wchar_t* job_name,
+                 DWORD ui_exceptions,
+                 size_t memory_limit) {
+-  if (job_handle_.is_valid())
++  if (job_handle_.IsValid())
+     return ERROR_ALREADY_INITIALIZED;
+ 
+-  job_handle_.Set(::CreateJobObject(nullptr, nullptr));
+-  if (!job_handle_.is_valid())
++  job_handle_.Set(::CreateJobObject(nullptr,  // No security attribute
++                                    job_name));
++  if (!job_handle_.IsValid())
+     return ::GetLastError();
+ 
+   JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = {};
+@@ -87,20 +90,42 @@ DWORD Job::Init(JobLevel security_level,
+ }
+ 
+ bool Job::IsValid() {
+-  return job_handle_.is_valid();
++  return job_handle_.IsValid();
+ }
+ 
+ HANDLE Job::GetHandle() {
+-  return job_handle_.get();
++  return job_handle_.Get();
++}
++
++DWORD Job::UserHandleGrantAccess(HANDLE handle) {
++  if (!job_handle_.IsValid())
++    return ERROR_NO_DATA;
++
++  if (!::UserHandleGrantAccess(handle, job_handle_.Get(),
++                               true)) {  // Access allowed.
++    return ::GetLastError();
++  }
++
++  return ERROR_SUCCESS;
++}
++
++DWORD Job::AssignProcessToJob(HANDLE process_handle) {
++  if (!job_handle_.IsValid())
++    return ERROR_NO_DATA;
++
++  if (!::AssignProcessToJobObject(job_handle_.Get(), process_handle))
++    return ::GetLastError();
++
++  return ERROR_SUCCESS;
+ }
+ 
+ DWORD Job::SetActiveProcessLimit(DWORD processes) {
+   JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = {};
+ 
+-  if (!job_handle_.is_valid())
++  if (!job_handle_.IsValid())
+     return ERROR_NO_DATA;
+ 
+-  if (!::QueryInformationJobObject(job_handle_.get(),
++  if (!::QueryInformationJobObject(job_handle_.Get(),
+                                    JobObjectExtendedLimitInformation, &jeli,
+                                    sizeof(jeli), nullptr)) {
+     return ::GetLastError();
+@@ -108,7 +133,7 @@ DWORD Job::SetActiveProcessLimit(DWORD processes) {
+   jeli.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+   jeli.BasicLimitInformation.ActiveProcessLimit = processes;
+ 
+-  if (!::SetInformationJobObject(job_handle_.get(),
++  if (!::SetInformationJobObject(job_handle_.Get(),
+                                  JobObjectExtendedLimitInformation, &jeli,
+                                  sizeof(jeli))) {
+     return ::GetLastError();
+diff --git a/security/sandbox/chromium/sandbox/win/src/job.h b/security/sandbox/chromium/sandbox/win/src/job.h
+index 31037e1b7aff7..e4739cf83f4b1 100644
+--- a/security/sandbox/chromium/sandbox/win/src/job.h
++++ b/security/sandbox/chromium/sandbox/win/src/job.h
+@@ -15,7 +15,8 @@ enum class JobLevel;
+ // Handles the creation of job objects based on a security profile.
+ // Sample usage:
+ //   Job job;
+-//   job.Init(JobLevel::kLockdown, 0, 0);
++//   job.Init(JobLevel::kLockdown, nullptr);  //no job name
++//   job.AssignProcessToJob(process_handle);
+ class Job {
+  public:
+   Job();
+@@ -27,12 +28,29 @@ class Job {
+ 
+   // Initializes and creates the job object. The security of the job is based
+   // on the security_level parameter.
++  // job_name can be nullptr if the job is unnamed.
+   // If the chosen profile has too many ui restrictions, you can disable some
+   // by specifying them in the ui_exceptions parameters.
+   // If the function succeeds, the return value is ERROR_SUCCESS. If the
+   // function fails, the return value is the win32 error code corresponding to
+   // the error.
+-  DWORD Init(JobLevel security_level, DWORD ui_exceptions, size_t memory_limit);
++  DWORD Init(JobLevel security_level,
++             const wchar_t* job_name,
++             DWORD ui_exceptions,
++             size_t memory_limit);
++
++  // Assigns the process referenced by process_handle to the job.
++  // If the function succeeds, the return value is ERROR_SUCCESS. If the
++  // function fails, the return value is the win32 error code corresponding to
++  // the error.
++  DWORD AssignProcessToJob(HANDLE process_handle);
++
++  // Grants access to "handle" to the job. All processes in the job can
++  // subsequently recognize and use the handle.
++  // If the function succeeds, the return value is ERROR_SUCCESS. If the
++  // function fails, the return value is the win32 error code corresponding to
++  // the error.
++  DWORD UserHandleGrantAccess(HANDLE handle);
+ 
+   // True if the job has been initialized and has a valid handle.
+   bool IsValid();
+diff --git a/security/sandbox/chromium/sandbox/win/src/restricted_token_utils.cc b/security/sandbox/chromium/sandbox/win/src/restricted_token_utils.cc
+index c02c0931b68d7..8bd608cb96b48 100644
+--- a/security/sandbox/chromium/sandbox/win/src/restricted_token_utils.cc
++++ b/security/sandbox/chromium/sandbox/win/src/restricted_token_utils.cc
+@@ -14,6 +14,7 @@
+ #include "base/win/security_descriptor.h"
+ #include "sandbox/win/src/acl.h"
+ #include "base/win/windows_version.h"
++#include "sandbox/win/src/job.h"
+ #include "sandbox/win/src/restricted_token.h"
+ #include "sandbox/win/src/sandbox_nt_util.h"
+ #include "sandbox/win/src/security_level.h"
+diff --git a/security/sandbox/chromium/sandbox/win/src/sandbox_policy_base.cc b/security/sandbox/chromium/sandbox/win/src/sandbox_policy_base.cc
+index c93d4212a126c..58c69fde95cc9 100644
+--- a/security/sandbox/chromium/sandbox/win/src/sandbox_policy_base.cc
++++ b/security/sandbox/chromium/sandbox/win/src/sandbox_policy_base.cc
+@@ -493,8 +493,8 @@ ResultCode PolicyBase::InitJob() {
+     return SBOX_ALL_OK;
+ 
+   // Create the Windows job object.
+-  DWORD result = job_.Init(config()->GetJobLevel(), config()->ui_exceptions(),
+-                           config()->memory_limit());
++  DWORD result = job_.Init(config()->GetJobLevel(), nullptr,
++                           config()->ui_exceptions(), config()->memory_limit());
+   if (ERROR_SUCCESS != result)
+     return SBOX_ERROR_CANNOT_INIT_JOB;
+ 
+diff --git a/security/sandbox/chromium/sandbox/win/src/startup_information_helper.h b/security/sandbox/chromium/sandbox/win/src/startup_information_helper.h
+index 20ebc76e0764e..2f0f9a552cc31 100644
+--- a/security/sandbox/chromium/sandbox/win/src/startup_information_helper.h
++++ b/security/sandbox/chromium/sandbox/win/src/startup_information_helper.h
+@@ -44,7 +44,8 @@ class StartupInformationHelper {
+   //        PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY
+   // based on |container|. |container| should be valid.
+   void SetAppContainer(scoped_refptr<AppContainer> container);
+-  // Creates PROC_THREAD_ATTRIBUTE_JOB_LIST with |job_handle|.
++  // Creates PROC_THREAD_ATTRIBUTE_JOB_LIST with |job_handle|. Not valid before
++  // Windows 10.
+   void AddJobToAssociate(HANDLE job_handle);
+ 
+   // Will one or more jobs be associated via the wrapped StartupInformation.
+diff --git a/security/sandbox/chromium/sandbox/win/src/target_process.cc b/security/sandbox/chromium/sandbox/win/src/target_process.cc
+index a0e608a98fb38..e457a5958a7cf 100644
+--- a/security/sandbox/chromium/sandbox/win/src/target_process.cc
++++ b/security/sandbox/chromium/sandbox/win/src/target_process.cc
+@@ -83,10 +83,14 @@ SANDBOX_INTERCEPT DWORD g_sentinel_value_end = 0x424F5859;
+ 
+ TargetProcess::TargetProcess(base::win::AccessToken initial_token,
+                              base::win::AccessToken lockdown_token,
++    HANDLE job,
+                              ThreadPool* thread_pool)
+-    // This object owns everything initialized here except thread_pool.
++    // This object owns everything initialized here except thread_pool and
++    // the job_ handle. The Job handle is closed by BrokerServices and results
++    // eventually in a call to our dtor.
+     : lockdown_token_(std::move(lockdown_token)),
+       initial_token_(std::move(initial_token)),
++      job_(job),
+       thread_pool_(thread_pool),
+       base_address_(nullptr) {}
+ 
+@@ -135,6 +139,12 @@ ResultCode TargetProcess::Create(
+   if (startup_info->has_extended_startup_info())
+     flags |= EXTENDED_STARTUPINFO_PRESENT;
+ 
++  if (job_ && base::win::GetVersion() < base::win::Version::WIN8) {
++    // Windows 8 implements nested jobs, but for older systems we need to
++    // break out of any job we're in to enforce our restrictions.
++    flags |= CREATE_BREAKAWAY_FROM_JOB;
++  }
++
+   std::wstring new_env;
+ 
+   wchar_t* old_environment = ::GetEnvironmentStringsW();
+@@ -150,6 +160,17 @@ ResultCode TargetProcess::Create(
+   }
+   base::win::ScopedProcessInformation process_info(temp_process_info);
+ 
++  if (job_ && !startup_info_helper->HasJobsToAssociate()) {
++    DCHECK(base::win::GetVersion() < base::win::Version::WIN10);
++    // Assign the suspended target to the windows job object. On Win 10
++    // this happens through PROC_THREAD_ATTRIBUTE_JOB_LIST.
++    if (!::AssignProcessToJobObject(job_, process_info.process_handle())) {
++      *win_error = ::GetLastError();
++      ::TerminateProcess(process_info.process_handle(), 0);
++      return SBOX_ERROR_ASSIGN_PROCESS_TO_JOB_OBJECT;
++    }
++  }
++
+   // Change the token of the main thread of the new process for the
+   // impersonation token with more rights. This allows the target to start;
+   // otherwise it will crash too early for us to help.
+@@ -357,7 +378,7 @@ std::unique_ptr<TargetProcess> TargetProcess::MakeTargetProcessForTesting(
+     HMODULE base_address) {
+   auto target = std::make_unique<TargetProcess>(
+       base::win::AccessToken::FromCurrentProcess().value(),
+-      base::win::AccessToken::FromCurrentProcess().value(), nullptr);
++      base::win::AccessToken::FromCurrentProcess().value(), nullptr, nullptr);
+   PROCESS_INFORMATION process_info = {};
+   process_info.hProcess = process;
+   target->sandbox_process_info_.Set(process_info);
+diff --git a/security/sandbox/chromium/sandbox/win/src/target_process.h b/security/sandbox/chromium/sandbox/win/src/target_process.h
+index db0882078137a..fcaec3334d134 100644
+--- a/security/sandbox/chromium/sandbox/win/src/target_process.h
++++ b/security/sandbox/chromium/sandbox/win/src/target_process.h
+@@ -36,6 +36,7 @@ class TargetProcess {
+   // The constructor takes ownership of `initial_token` and `lockdown_token`.
+   TargetProcess(base::win::AccessToken initial_token,
+                 base::win::AccessToken lockdown_token,
++                HANDLE job,
+                 ThreadPool* thread_pool);
+ 
+   TargetProcess(const TargetProcess&) = delete;
+@@ -70,6 +71,9 @@ class TargetProcess {
+   // Returns the handle to the target process.
+   HANDLE Process() const { return sandbox_process_info_.process_handle(); }
+ 
++  // Returns the handle to the job object that the target process belongs to.
++  HANDLE Job() const { return job_; }
++
+   // Returns the address of the target main exe. This is used by the
+   // interceptions framework.
+   HMODULE MainModule() const {
+@@ -108,6 +112,10 @@ class TargetProcess {
+   base::win::AccessToken initial_token_;
+   // Kernel handle to the shared memory used by the IPC server.
+   base::win::ScopedHandle shared_section_;
++  // Job object containing the target process. This is used during
++  // process creation prior to Windows 10 and to identify the process in
++  // broker_services.cc.
++  HANDLE job_;
+   // Reference to the IPC subsystem.
+   std::unique_ptr<SharedMemIPCServer> ipc_server_;
+   // Provides the threads used by the IPC. This class does not own this pointer.

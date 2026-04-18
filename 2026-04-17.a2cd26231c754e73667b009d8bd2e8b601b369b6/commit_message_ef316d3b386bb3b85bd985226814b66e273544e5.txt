@@ -1,0 +1,1 @@
+Bug 1946269 - Fix async screenshots accessor in layer compositor mode r=gfx-reviewers,lsalzman    2025-02-07 03:40:27    ef316d3b386bb3b85bd985226814b66e273544e5

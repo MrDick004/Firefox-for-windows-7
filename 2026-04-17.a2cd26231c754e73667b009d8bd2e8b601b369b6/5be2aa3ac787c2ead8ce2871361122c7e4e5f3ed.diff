@@ -1,0 +1,1745 @@
+diff --git a/config/system-headers.mozbuild b/config/system-headers.mozbuild
+index af44c89057fc..471599f17ae2 100644
+--- a/config/system-headers.mozbuild
++++ b/config/system-headers.mozbuild
+@@ -1016,6 +1016,7 @@ system_headers = [
+     "opus/opus.h",
+     "opus/opus_multistream.h",
+     "ogg/ogg.h",
++    "theora/theoradec.h",
+     "vpx/svc_context.h",
+     "vpx/vp8.h",
+     "vpx/vp8cx.h",
+diff --git a/dom/media/gtest/TestMediaCodecsSupport.cpp b/dom/media/gtest/TestMediaCodecsSupport.cpp
+index a71849963c0b..193e79c937a5 100644
+--- a/dom/media/gtest/TestMediaCodecsSupport.cpp
++++ b/dom/media/gtest/TestMediaCodecsSupport.cpp
+@@ -216,6 +216,7 @@ TEST(MediaCodecsSupport, GetMediaCodecFromMimeType)
+       {"video/av1"_ns, MediaCodec::AV1},
+       {"video/avc"_ns, MediaCodec::H264},
+       {"video/mp4"_ns, MediaCodec::H264},
++      {"video/theora"_ns, MediaCodec::Theora},
+       {"video/vp8"_ns, MediaCodec::VP8},
+       {"video/vp9"_ns, MediaCodec::VP9},
+       // Audio codecs
+diff --git a/dom/media/ogg/OggCodecState.cpp b/dom/media/ogg/OggCodecState.cpp
+index db3d99f9599e..126ebae99943 100644
+--- a/dom/media/ogg/OggCodecState.cpp
++++ b/dom/media/ogg/OggCodecState.cpp
+@@ -45,8 +45,12 @@ UniquePtr<OggCodecState> OggCodecState::Create(
+       "vulnerabilities if this is incorrect.";
+   long body_len = aPage_t->body_len.unverified_safe_because(codec_reason);
+ 
+-  if (body_len > 6 && rlbox::memcmp(*aSandbox, aPage_t->body + 1, "vorbis", 6u)
++  if (body_len > 6 && rlbox::memcmp(*aSandbox, aPage_t->body + 1, "theora", 6u)
+                               .unverified_safe_because(codec_reason) == 0) {
++    codecState = MakeUnique<TheoraState>(aSandbox, aPage, aSerial);
++  } else if (body_len > 6 &&
++             rlbox::memcmp(*aSandbox, aPage_t->body + 1, "vorbis", 6u)
++                     .unverified_safe_because(codec_reason) == 0) {
+     codecState = MakeUnique<VorbisState>(aSandbox, aPage, aSerial);
+   } else if (body_len > 8 &&
+              rlbox::memcmp(*aSandbox, aPage_t->body, "OpusHead", 8u)
+@@ -354,6 +358,307 @@ nsresult OggCodecState::PacketOutUntilGranulepos(bool& aFoundGranulepos) {
+   return NS_OK;
+ }
+ 
++TheoraState::TheoraState(rlbox_sandbox_ogg* aSandbox,
++                         tainted_opaque_ogg<ogg_page*> aBosPage,
++                         uint32_t aSerial)
++    : OggCodecState(aSandbox, aBosPage, aSerial, true),
++      mSetup(nullptr),
++      mCtx(nullptr) {
++  MOZ_COUNT_CTOR(TheoraState);
++  th_info_init(&mTheoraInfo);
++  th_comment_init(&mComment);
++}
++
++TheoraState::~TheoraState() {
++  MOZ_COUNT_DTOR(TheoraState);
++  th_setup_free(mSetup);
++  th_decode_free(mCtx);
++  th_comment_clear(&mComment);
++  th_info_clear(&mTheoraInfo);
++  Reset();
++}
++
++bool TheoraState::Init() {
++  if (!mActive) {
++    return false;
++  }
++
++  int64_t n = mTheoraInfo.aspect_numerator;
++  int64_t d = mTheoraInfo.aspect_denominator;
++
++  float aspectRatio =
++      (n == 0 || d == 0) ? 1.0f : static_cast<float>(n) / static_cast<float>(d);
++
++  // Ensure the frame and picture regions aren't larger than our prescribed
++  // maximum, or zero sized.
++  gfx::IntSize frame(mTheoraInfo.frame_width, mTheoraInfo.frame_height);
++  gfx::IntRect picture(mTheoraInfo.pic_x, mTheoraInfo.pic_y,
++                       mTheoraInfo.pic_width, mTheoraInfo.pic_height);
++  gfx::IntSize display(mTheoraInfo.pic_width, mTheoraInfo.pic_height);
++  ScaleDisplayByAspectRatio(display, aspectRatio);
++  if (!IsValidVideoRegion(frame, picture, display)) {
++    return mActive = false;
++  }
++
++  mCtx = th_decode_alloc(&mTheoraInfo, mSetup);
++  if (!mCtx) {
++    return mActive = false;
++  }
++
++  // Video track's frame sizes will not overflow. Activate the video track.
++  mInfo.mMimeType = "video/theora"_ns;
++  mInfo.mDisplay = display;
++  mInfo.mImage = frame;
++  mInfo.SetImageRect(picture);
++
++  return mActive = SetCodecSpecificConfig(mInfo.mCodecSpecificConfig, mHeaders);
++}
++
++nsresult TheoraState::Reset() {
++  mHeaders.Erase();
++  return OggCodecState::Reset();
++}
++
++bool TheoraState::DecodeHeader(OggPacketPtr aPacket) {
++  ogg_packet* packet = aPacket.get();  // Will be owned by mHeaders.
++  mHeaders.Append(std::move(aPacket));
++  mPacketCount++;
++  int ret = th_decode_headerin(&mTheoraInfo, &mComment, &mSetup, packet);
++
++  // We must determine when we've read the last header packet.
++  // th_decode_headerin() does not tell us when it's read the last header, so
++  // we must keep track of the headers externally.
++  //
++  // There are 3 header packets, the Identification, Comment, and Setup
++  // headers, which must be in that order. If they're out of order, the file
++  // is invalid. If we've successfully read a header, and it's the setup
++  // header, then we're done reading headers. The first byte of each packet
++  // determines it's type as follows:
++  //    0x80 -> Identification header
++  //    0x81 -> Comment header
++  //    0x82 -> Setup header
++  // See http://www.theora.org/doc/Theora.pdf Chapter 6, "Bitstream Headers",
++  // for more details of the Ogg/Theora containment scheme.
++  bool isSetupHeader = packet->bytes > 0 && packet->packet[0] == 0x82;
++  if (ret < 0 || mPacketCount > 3) {
++    // We've received an error, or the first three packets weren't valid
++    // header packets. Assume bad input.
++    // Our caller will deactivate the bitstream.
++    return false;
++  }
++  if (ret > 0 && isSetupHeader && mPacketCount == 3) {
++    // Successfully read the three header packets.
++    mDoneReadingHeaders = true;
++  }
++  return true;
++}
++
++TimeUnit TheoraState::Time(int64_t aGranulepos) {
++  if (!mActive) {
++    return TimeUnit::Invalid();
++  }
++  return TheoraState::Time(&mTheoraInfo, aGranulepos);
++}
++
++bool TheoraState::IsHeader(ogg_packet* aPacket) {
++  return th_packet_isheader(aPacket);
++}
++
++#define TH_VERSION_CHECK(_info, _maj, _min, _sub)                            \
++  (((_info)->version_major > (_maj) || (_info)->version_major == (_maj)) &&  \
++   (((_info)->version_minor > (_min) || (_info)->version_minor == (_min)) && \
++    (_info)->version_subminor >= (_sub)))
++
++TimeUnit TheoraState::Time(th_info* aInfo, int64_t aGranulepos) {
++  if (aGranulepos < 0 || aInfo->fps_numerator == 0) {
++    return TimeUnit::Invalid();
++  }
++  // Implementation of th_granule_frame inlined here to operate
++  // on the th_info structure instead of the theora_state.
++  int shift = aInfo->keyframe_granule_shift;
++  ogg_int64_t iframe = aGranulepos >> shift;
++  ogg_int64_t pframe = aGranulepos - (iframe << shift);
++  int64_t frameno = iframe + pframe - TH_VERSION_CHECK(aInfo, 3, 2, 1);
++  CheckedInt64 t =
++      ((CheckedInt64(frameno) + 1) * USECS_PER_S) * aInfo->fps_denominator;
++  if (!t.isValid()) {
++    return TimeUnit::Invalid();
++  }
++  t /= aInfo->fps_numerator;
++  // TODO -- use rationals here
++  return TimeUnit::FromMicroseconds(t.value());
++}
++
++TimeUnit TheoraState::StartTime(int64_t aGranulepos) {
++  if (aGranulepos < 0 || !mActive || mTheoraInfo.fps_numerator == 0) {
++    return TimeUnit::Invalid();
++  }
++  CheckedInt64 t =
++      (CheckedInt64(th_granule_frame(mCtx, aGranulepos)) * USECS_PER_S) *
++      mTheoraInfo.fps_denominator;
++  if (!t.isValid()) {
++    return TimeUnit::Invalid();
++  }
++  // TODO -- use rationals here
++  return TimeUnit::FromMicroseconds(t.value() / mTheoraInfo.fps_numerator);
++}
++
++TimeUnit TheoraState::PacketDuration(ogg_packet* aPacket) {
++  if (!mActive || mTheoraInfo.fps_numerator == 0) {
++    return TimeUnit::Invalid();
++  }
++  CheckedInt64 t = SaferMultDiv(mTheoraInfo.fps_denominator, USECS_PER_S,
++                                mTheoraInfo.fps_numerator);
++  return t.isValid() ? TimeUnit::FromMicroseconds(t.value())
++                     : TimeUnit::Invalid();
++}
++
++TimeUnit TheoraState::MaxKeyframeOffset() {
++  // Determine the maximum time in microseconds by which a key frame could
++  // offset for the theora bitstream. Theora granulepos encode time as:
++  // ((key_frame_number << granule_shift) + frame_offset).
++  // Therefore the maximum possible time by which any frame could be offset
++  // from a keyframe is the duration of (1 << granule_shift) - 1) frames.
++  int64_t frameDuration;
++
++  // Max number of frames keyframe could possibly be offset.
++  int64_t keyframeDiff = (1 << mTheoraInfo.keyframe_granule_shift) - 1;
++
++  // Length of frame in usecs.
++  frameDuration =
++      (mTheoraInfo.fps_denominator * USECS_PER_S) / mTheoraInfo.fps_numerator;
++
++  // Total time in usecs keyframe can be offset from any given frame.
++  return TimeUnit::FromMicroseconds(frameDuration * keyframeDiff);
++}
++
++bool TheoraState::IsKeyframe(ogg_packet* aPacket) {
++  // first bit of packet is 1 for header, 0 for data
++  // second bit of packet is 1 for inter frame, 0 for intra frame
++  return (aPacket->bytes >= 1 && (aPacket->packet[0] & 0x40) == 0x00);
++}
++
++nsresult TheoraState::PageIn(tainted_opaque_ogg<ogg_page*> aPage) {
++  if (!mActive) return NS_OK;
++  NS_ASSERTION((rlbox::sandbox_static_cast<uint32_t>(sandbox_invoke(
++                    *mSandbox, ogg_page_serialno, aPage)) == mSerial)
++                   .unverified_safe_because(RLBOX_OGG_PAGE_SERIAL_REASON),
++               "Page must be for this stream!");
++  if (sandbox_invoke(*mSandbox, ogg_stream_pagein, mState, aPage)
++          .unverified_safe_because(RLBOX_OGG_STATE_ASSERT_REASON) == -1) {
++    return NS_ERROR_FAILURE;
++  }
++  bool foundGp;
++  nsresult res = PacketOutUntilGranulepos(foundGp);
++  if (NS_FAILED(res)) return res;
++  if (foundGp && mDoneReadingHeaders) {
++    // We've found a packet with a granulepos, and we've loaded our metadata
++    // and initialized our decoder. Determine granulepos of buffered packets.
++    ReconstructTheoraGranulepos();
++    for (uint32_t i = 0; i < mUnstamped.Length(); ++i) {
++      OggPacketPtr packet = std::move(mUnstamped[i]);
++#ifdef DEBUG
++      NS_ASSERTION(!IsHeader(packet.get()),
++                   "Don't try to recover header packet gp");
++      NS_ASSERTION(packet->granulepos != -1, "Packet must have gp by now");
++#endif
++      mPackets.Append(std::move(packet));
++    }
++    mUnstamped.Clear();
++  }
++  return NS_OK;
++}
++
++// Returns 1 if the Theora info struct is decoding a media of Theora
++// version (maj,min,sub) or later, otherwise returns 0.
++int TheoraVersion(th_info* info, unsigned char maj, unsigned char min,
++                  unsigned char sub) {
++  ogg_uint32_t ver = (maj << 16) + (min << 8) + sub;
++  ogg_uint32_t th_ver = (info->version_major << 16) +
++                        (info->version_minor << 8) + info->version_subminor;
++  return (th_ver >= ver) ? 1 : 0;
++}
++
++void TheoraState::ReconstructTheoraGranulepos() {
++  if (mUnstamped.Length() == 0) {
++    return;
++  }
++  ogg_int64_t lastGranulepos = mUnstamped[mUnstamped.Length() - 1]->granulepos;
++  NS_ASSERTION(lastGranulepos != -1, "Must know last granulepos");
++
++  // Reconstruct the granulepos (and thus timestamps) of the decoded
++  // frames. Granulepos are stored as ((keyframe<<shift)+offset). We
++  // know the granulepos of the last frame in the list, so we can infer
++  // the granulepos of the intermediate frames using their frame numbers.
++  ogg_int64_t shift = mTheoraInfo.keyframe_granule_shift;
++  ogg_int64_t version_3_2_1 = TheoraVersion(&mTheoraInfo, 3, 2, 1);
++  ogg_int64_t lastFrame =
++      th_granule_frame(mCtx, lastGranulepos) + version_3_2_1;
++  ogg_int64_t firstFrame =
++      AssertedCast<ogg_int64_t>(lastFrame - mUnstamped.Length() + 1);
++
++  // Until we encounter a keyframe, we'll assume that the "keyframe"
++  // segment of the granulepos is the first frame, or if that causes
++  // the "offset" segment to overflow, we assume the required
++  // keyframe is maximumally offset. Until we encounter a keyframe
++  // the granulepos will probably be wrong, but we can't decode the
++  // frame anyway (since we don't have its keyframe) so it doesn't really
++  // matter.
++  ogg_int64_t keyframe = lastGranulepos >> shift;
++
++  // The lastFrame, firstFrame, keyframe variables, as well as the frame
++  // variable in the loop below, store the frame number for Theora
++  // version >= 3.2.1 streams, and store the frame index for Theora
++  // version < 3.2.1 streams.
++  for (uint32_t i = 0; i < mUnstamped.Length() - 1; ++i) {
++    ogg_int64_t frame = firstFrame + i;
++    ogg_int64_t granulepos;
++    auto& packet = mUnstamped[i];
++    bool isKeyframe = th_packet_iskeyframe(packet.get()) == 1;
++
++    if (isKeyframe) {
++      granulepos = frame << shift;
++      keyframe = frame;
++    } else if (frame >= keyframe &&
++               frame - keyframe < ((ogg_int64_t)1 << shift)) {
++      // (frame - keyframe) won't overflow the "offset" segment of the
++      // granulepos, so it's safe to calculate the granulepos.
++      granulepos = (keyframe << shift) + (frame - keyframe);
++    } else {
++      // (frame - keyframeno) will overflow the "offset" segment of the
++      // granulepos, so we take "keyframe" to be the max possible offset
++      // frame instead.
++      ogg_int64_t k =
++          std::max(frame - (((ogg_int64_t)1 << shift) - 1), version_3_2_1);
++      granulepos = (k << shift) + (frame - k);
++    }
++    // Theora 3.2.1+ granulepos store frame number [1..N], so granulepos
++    // should be > 0.
++    // Theora 3.2.0 granulepos store the frame index [0..(N-1)], so
++    // granulepos should be >= 0.
++    NS_ASSERTION(granulepos >= version_3_2_1,
++                 "Invalid granulepos for Theora version");
++
++    // Check that the frame's granule number is one more than the
++    // previous frame's.
++    NS_ASSERTION(
++        i == 0 || th_granule_frame(mCtx, granulepos) ==
++                      th_granule_frame(mCtx, mUnstamped[i - 1]->granulepos) + 1,
++        "Granulepos calculation is incorrect!");
++
++    packet->granulepos = granulepos;
++  }
++
++  // Check that the second to last frame's granule number is one less than
++  // the last frame's (the known granule number). If not our granulepos
++  // recovery missed a beat.
++  NS_ASSERTION(mUnstamped.Length() < 2 ||
++                   (th_granule_frame(
++                        mCtx, mUnstamped[mUnstamped.Length() - 2]->granulepos) +
++                    1) == th_granule_frame(mCtx, lastGranulepos),
++               "Granulepos recovery should catch up with packet->granulepos!");
++}
++
+ nsresult VorbisState::Reset() {
+   nsresult res = NS_OK;
+   if (mActive && vorbis_synthesis_restart(&mDsp) != 0) {
+diff --git a/dom/media/ogg/OggCodecState.h b/dom/media/ogg/OggCodecState.h
+index fbf14ea2ba07..4133fd05072e 100644
+--- a/dom/media/ogg/OggCodecState.h
++++ b/dom/media/ogg/OggCodecState.h
+@@ -16,6 +16,7 @@
+ #  include <nsClassHashtable.h>
+ #  include <nsDeque.h>
+ #  include <nsTArray.h>
++#  include <theora/theoradec.h>
+ #  include <vorbis/codec.h>
+ 
+ #  include "FlacFrameParser.h"
+@@ -103,6 +104,7 @@ class OggCodecState {
+   // Ogg types we know about
+   enum CodecType {
+     TYPE_VORBIS = 0,
++    TYPE_THEORA,
+     TYPE_OPUS,
+     TYPE_SKELETON,
+     TYPE_FLAC,
+@@ -230,6 +232,8 @@ class OggCodecState {
+   // Returns the maximum number of microseconds which a keyframe can be offset
+   // from any given interframe.b
+   virtual TimeUnit MaxKeyframeOffset() { return TimeUnit::Zero(); }
++  // Public access for mTheoraInfo.keyframe_granule_shift
++  virtual int32_t KeyFrameGranuleJobs() { return 0; }
+ 
+   // Number of packets read.
+   uint64_t mPacketCount;
+@@ -370,6 +374,54 @@ class VorbisState : public OggCodecState {
+   void ValidateVorbisPacketSamples(ogg_packet* aPacket, long aSamples);
+ };
+ 
++// Returns 1 if the Theora info struct is decoding a media of Theora
++// version (maj,min,sub) or later, otherwise returns 0.
++int TheoraVersion(th_info* info, unsigned char maj, unsigned char min,
++                  unsigned char sub);
++
++class TheoraState : public OggCodecState {
++ public:
++  explicit TheoraState(rlbox_sandbox_ogg* aSandbox,
++                       tainted_opaque_ogg<ogg_page*> aBosPage,
++                       uint32_t aSerial);
++  virtual ~TheoraState();
++
++  CodecType GetType() override { return TYPE_THEORA; }
++  bool DecodeHeader(OggPacketPtr aPacket) override;
++  TimeUnit Time(int64_t aGranulepos) override;
++  TimeUnit StartTime(int64_t aGranulepos) override;
++  TimeUnit PacketDuration(ogg_packet* aPacket) override;
++  bool Init() override;
++  nsresult Reset() override;
++  bool IsHeader(ogg_packet* aPacket) override;
++  bool IsKeyframe(ogg_packet* aPacket) override;
++  nsresult PageIn(tainted_opaque_ogg<ogg_page*> aPage) override;
++  const TrackInfo* GetInfo() const override { return &mInfo; }
++  TimeUnit MaxKeyframeOffset() override;
++  int32_t KeyFrameGranuleJobs() override {
++    return mTheoraInfo.keyframe_granule_shift;
++  }
++
++ private:
++  // Returns the end time that a granulepos represents.
++  static TimeUnit Time(th_info* aInfo, int64_t aGranulePos);
++
++  th_info mTheoraInfo = {};
++  th_comment mComment = {};
++  th_setup_info* mSetup;
++  th_dec_ctx* mCtx;
++
++  VideoInfo mInfo;
++  OggPacketQueue mHeaders;
++
++  // Reconstructs the granulepos of Theora packets stored in the
++  // mUnstamped array. mUnstamped must be filled with consecutive packets from
++  // the stream, with the last packet having a known granulepos. Using this
++  // known granulepos, and the known frame numbers, we recover the granulepos
++  // of all frames in the array. This enables us to determine their timestamps.
++  void ReconstructTheoraGranulepos();
++};
++
+ class OpusState : public OggCodecState {
+  public:
+   explicit OpusState(rlbox_sandbox_ogg* aSandbox,
+diff --git a/dom/media/ogg/OggDecoder.cpp b/dom/media/ogg/OggDecoder.cpp
+index db0c86407676..1bacafcf3e76 100644
+--- a/dom/media/ogg/OggDecoder.cpp
++++ b/dom/media/ogg/OggDecoder.cpp
+@@ -19,10 +19,16 @@ bool OggDecoder::IsSupportedType(const MediaContainerType& aContainerType) {
+   }
+ 
+   if (aContainerType.Type() != MEDIAMIMETYPE(AUDIO_OGG) &&
++      aContainerType.Type() != MEDIAMIMETYPE(VIDEO_OGG) &&
+       aContainerType.Type() != MEDIAMIMETYPE("application/ogg")) {
+     return false;
+   }
+ 
++  const bool isOggVideo = (aContainerType.Type() == MEDIAMIMETYPE(VIDEO_OGG));
++  if (isOggVideo && !StaticPrefs::media_theora_enabled()) {
++    return false;
++  }
++
+   const MediaCodecs& codecs = aContainerType.ExtendedType().Codecs();
+   if (codecs.IsEmpty()) {
+     // Ogg guarantees that the only codecs it contained are supported.
+@@ -35,6 +41,12 @@ bool OggDecoder::IsSupportedType(const MediaContainerType& aContainerType) {
+         codec.EqualsLiteral("vorbis") || codec.EqualsLiteral("flac")) {
+       continue;
+     }
++    // Note: Only accept Theora in a video container type, not in an audio
++    // container type.
++    if (aContainerType.Type() != MEDIAMIMETYPE(AUDIO_OGG) &&
++        codec.EqualsLiteral("theora")) {
++      return StaticPrefs::media_theora_enabled();
++    }
+     // Some unsupported codec.
+     return false;
+   }
+@@ -61,6 +73,11 @@ nsTArray<UniquePtr<TrackInfo>> OggDecoder::GetTracksInfo(
+       tracks.AppendElement(
+           CreateTrackInfoWithMIMETypeAndContainerTypeExtraParameters(
+               "audio/"_ns + NS_ConvertUTF16toUTF8(codec), aType));
++    } else {
++      MOZ_ASSERT(codec.EqualsLiteral("theora"));
++      tracks.AppendElement(
++          CreateTrackInfoWithMIMETypeAndContainerTypeExtraParameters(
++              "video/"_ns + NS_ConvertUTF16toUTF8(codec), aType));
+     }
+   }
+   return tracks;
+diff --git a/dom/media/ogg/OggDemuxer.cpp b/dom/media/ogg/OggDemuxer.cpp
+index effaf197c33a..db9477cf1c74 100644
+--- a/dom/media/ogg/OggDemuxer.cpp
++++ b/dom/media/ogg/OggDemuxer.cpp
+@@ -160,23 +160,26 @@ void OggDemuxer::InitTrack(MessageField* aMsgInfo, TrackInfo* aInfo,
+ 
+ OggDemuxer::OggDemuxer(MediaResource* aResource)
+     : mSandbox(CreateSandbox()),
++      mTheoraState(nullptr),
+       mVorbisState(nullptr),
+       mOpusState(nullptr),
+       mFlacState(nullptr),
+       mOpusEnabled(MediaDecoder::IsOpusEnabled()),
+       mSkeletonState(nullptr),
+       mAudioOggState(aResource, mSandbox.get()),
++      mVideoOggState(aResource, mSandbox.get()),
+       mIsChained(false),
+       mTimedMetadataEvent(nullptr),
+       mOnSeekableEvent(nullptr) {
+   MOZ_COUNT_CTOR(OggDemuxer);
+-  // aResource is referenced through inner mAudioOffState members.
++  // aResource is referenced through inner m{Audio,Video}OffState members.
+   DDLINKCHILD("resource", aResource);
+ }
+ 
+ OggDemuxer::~OggDemuxer() {
+   MOZ_COUNT_DTOR(OggDemuxer);
+   Reset(TrackInfo::kAudioTrack);
++  Reset(TrackInfo::kVideoTrack);
+ }
+ 
+ void OggDemuxer::SetChainingEvents(TimedMetadataEventProducer* aMetadataEvent,
+@@ -189,7 +192,7 @@ bool OggDemuxer::HasAudio() const {
+   return mVorbisState || mOpusState || mFlacState;
+ }
+ 
+-bool OggDemuxer::HasVideo() const { return false; }
++bool OggDemuxer::HasVideo() const { return mTheoraState; }
+ 
+ bool OggDemuxer::HaveStartTime() const { return mStartTime.isSome(); }
+ 
+@@ -219,12 +222,19 @@ RefPtr<OggDemuxer::InitPromise> OggDemuxer::Init() {
+   if (ret != 0) {
+     return InitPromise::CreateAndReject(NS_ERROR_OUT_OF_MEMORY, __func__);
+   }
++  ret = sandbox_invoke(*mSandbox, ogg_sync_init,
++                       OggSyncState(TrackInfo::kVideoTrack))
++            .unverified_safe_because(RLBOX_OGG_RETURN_CODE_SAFE);
++  if (ret != 0) {
++    return InitPromise::CreateAndReject(NS_ERROR_OUT_OF_MEMORY, __func__);
++  }
+   if (ReadMetadata() != NS_OK) {
+     return InitPromise::CreateAndReject(NS_ERROR_DOM_MEDIA_METADATA_ERR,
+                                         __func__);
+   }
+ 
+-  if (!GetNumberTracks(TrackInfo::kAudioTrack)) {
++  if (!GetNumberTracks(TrackInfo::kAudioTrack) &&
++      !GetNumberTracks(TrackInfo::kVideoTrack)) {
+     return InitPromise::CreateAndReject(NS_ERROR_DOM_MEDIA_METADATA_ERR,
+                                         __func__);
+   }
+@@ -243,6 +253,8 @@ OggCodecState* OggDemuxer::GetTrackCodecState(
+       } else {
+         return mFlacState;
+       }
++    case TrackInfo::kVideoTrack:
++      return mTheoraState;
+     default:
+       return nullptr;
+   }
+@@ -251,6 +263,8 @@ OggCodecState* OggDemuxer::GetTrackCodecState(
+ TrackInfo::TrackType OggDemuxer::GetCodecStateType(
+     OggCodecState* aState) const {
+   switch (aState->GetType()) {
++    case OggCodecState::TYPE_THEORA:
++      return TrackInfo::kVideoTrack;
+     case OggCodecState::TYPE_OPUS:
+     case OggCodecState::TYPE_VORBIS:
+     case OggCodecState::TYPE_FLAC:
+@@ -264,6 +278,8 @@ uint32_t OggDemuxer::GetNumberTracks(TrackInfo::TrackType aType) const {
+   switch (aType) {
+     case TrackInfo::kAudioTrack:
+       return HasAudio() ? 1 : 0;
++    case TrackInfo::kVideoTrack:
++      return HasVideo() ? 1 : 0;
+     default:
+       return 0;
+   }
+@@ -274,6 +290,8 @@ UniquePtr<TrackInfo> OggDemuxer::GetTrackInfo(TrackInfo::TrackType aType,
+   switch (aType) {
+     case TrackInfo::kAudioTrack:
+       return mInfo.mAudio.Clone();
++    case TrackInfo::kVideoTrack:
++      return mInfo.mVideo.Clone();
+     default:
+       return nullptr;
+   }
+@@ -332,6 +350,9 @@ bool OggDemuxer::ReadHeaders(TrackInfo::TrackType aType,
+ 
+ void OggDemuxer::BuildSerialList(nsTArray<uint32_t>& aTracks) {
+   // Obtaining seek index information for currently active bitstreams.
++  if (HasVideo()) {
++    aTracks.AppendElement(mTheoraState->mSerial);
++  }
+   if (HasAudio()) {
+     if (mVorbisState) {
+       aTracks.AppendElement(mVorbisState->mSerial);
+@@ -349,6 +370,8 @@ void OggDemuxer::SetupTarget(OggCodecState** aSavedState,
+ 
+   if (aNewState->GetInfo()->GetAsAudioInfo()) {
+     mInfo.mAudio = *aNewState->GetInfo()->GetAsAudioInfo();
++  } else {
++    mInfo.mVideo = *aNewState->GetInfo()->GetAsVideoInfo();
+   }
+   *aSavedState = aNewState;
+ }
+@@ -357,8 +380,8 @@ void OggDemuxer::SetupTargetSkeleton() {
+   // Setup skeleton related information after mVorbisState & mTheroState
+   // being set (if they exist).
+   if (mSkeletonState) {
+-    if (!HasAudio()) {
+-      // We have a skeleton track, but no audio, may as well disable
++    if (!HasAudio() && !HasVideo()) {
++      // We have a skeleton track, but no audio or video, may as well disable
+       // the skeleton, we can't do anything useful with this media.
+       OGG_DEBUG("Deactivating skeleton stream %" PRIu32,
+                 mSkeletonState->mSerial);
+@@ -386,7 +409,7 @@ void OggDemuxer::SetupMediaTracksInfo(const nsTArray<uint32_t>& aSerials) {
+   // 1. Retrieve a codecState from mCodecStore by this serial number.
+   // 2. Retrieve a message field from mMsgFieldStore by this serial number.
+   // 3. For now, skip if the serial number refers to a non-primary bitstream.
+-  // 4. Setup track and other audio related information per different
++  // 4. Setup track and other audio/video related information per different
+   // types.
+   for (size_t i = 0; i < aSerials.Length(); i++) {
+     uint32_t serial = aSerials[i];
+@@ -399,6 +422,9 @@ void OggDemuxer::SetupMediaTracksInfo(const nsTArray<uint32_t>& aSerials) {
+ 
+     OggCodecState* primeState = nullptr;
+     switch (codecState->GetType()) {
++      case OggCodecState::TYPE_THEORA:
++        primeState = mTheoraState;
++        break;
+       case OggCodecState::TYPE_VORBIS:
+         primeState = mVorbisState;
+         break;
+@@ -412,10 +438,15 @@ void OggDemuxer::SetupMediaTracksInfo(const nsTArray<uint32_t>& aSerials) {
+         break;
+     }
+     if (primeState && primeState == codecState) {
++      bool isAudio = primeState->GetInfo()->GetAsAudioInfo();
+       if (msgInfo) {
+-        InitTrack(msgInfo, static_cast<TrackInfo*>(&mInfo.mAudio), true);
++        InitTrack(
++            msgInfo,
++            isAudio ? static_cast<TrackInfo*>(&mInfo.mAudio) : &mInfo.mVideo,
++            true);
+       }
+-      FillTags(static_cast<TrackInfo*>(&mInfo.mAudio), primeState->GetTags());
++      FillTags(isAudio ? static_cast<TrackInfo*>(&mInfo.mAudio) : &mInfo.mVideo,
++               primeState->GetTags());
+     }
+   }
+ }
+@@ -441,61 +472,73 @@ nsresult OggDemuxer::ReadMetadata() {
+   // and THEN we can run SetupTarget*
+   // @fixme fixme
+ 
++  TrackInfo::TrackType tracks[2] = {TrackInfo::kAudioTrack,
++                                    TrackInfo::kVideoTrack};
++
+   nsTArray<OggCodecState*> bitstreams;
+   nsTArray<uint32_t> serials;
+ 
+-  tainted_ogg<ogg_page*> page = mSandbox->malloc_in_sandbox<ogg_page>();
+-  if (!page) {
+-    return NS_ERROR_OUT_OF_MEMORY;
+-  }
+-  auto clean_page = MakeScopeExit([&] { mSandbox->free_in_sandbox(page); });
+-
+-  bool readAllBOS = false;
+-  while (!readAllBOS) {
+-    if (!ReadOggPage(TrackInfo::kAudioTrack, page.to_opaque())) {
+-      // Some kind of error...
+-      OGG_DEBUG("OggDemuxer::ReadOggPage failed? leaving ReadMetadata...");
+-      return NS_ERROR_FAILURE;
++  for (auto& track : tracks) {
++    tainted_ogg<ogg_page*> page = mSandbox->malloc_in_sandbox<ogg_page>();
++    if (!page) {
++      return NS_ERROR_OUT_OF_MEMORY;
+     }
++    auto clean_page = MakeScopeExit([&] { mSandbox->free_in_sandbox(page); });
+ 
+-    uint32_t serial = static_cast<uint32_t>(
+-        sandbox_invoke(*mSandbox, ogg_page_serialno, page)
+-            .unverified_safe_because(RLBOX_OGG_PAGE_SERIAL_REASON));
++    bool readAllBOS = false;
++    while (!readAllBOS) {
++      if (!ReadOggPage(track, page.to_opaque())) {
++        // Some kind of error...
++        OGG_DEBUG("OggDemuxer::ReadOggPage failed? leaving ReadMetadata...");
++        return NS_ERROR_FAILURE;
++      }
+ 
+-    if (!sandbox_invoke(*mSandbox, ogg_page_bos, page)
+-             .unverified_safe_because(
+-                 "If this value is incorrect, it would mean not all "
+-                 "bitstreams are read. This does not affect the memory "
+-                 "safety of the renderer.")) {
+-      // We've encountered a non Beginning Of Stream page. No more BOS pages
+-      // can follow in this Ogg segment, so there will be no other bitstreams
+-      // in the Ogg (unless it's invalid).
+-      readAllBOS = true;
+-    } else if (!mCodecStore.Contains(serial)) {
+-      // We've not encountered a stream with this serial number before. Create
+-      // an OggCodecState to demux it, and map that to the OggCodecState
+-      // in mCodecStates.
+-      OggCodecState* const codecState = mCodecStore.Add(
+-          serial,
+-          OggCodecState::Create(mSandbox.get(), page.to_opaque(), serial));
+-      bitstreams.AppendElement(codecState);
+-      serials.AppendElement(serial);
+-    }
+-    if (NS_FAILED(DemuxOggPage(TrackInfo::kAudioTrack, page.to_opaque()))) {
+-      return NS_ERROR_FAILURE;
++      uint32_t serial = static_cast<uint32_t>(
++          sandbox_invoke(*mSandbox, ogg_page_serialno, page)
++              .unverified_safe_because(RLBOX_OGG_PAGE_SERIAL_REASON));
++
++      if (!sandbox_invoke(*mSandbox, ogg_page_bos, page)
++               .unverified_safe_because(
++                   "If this value is incorrect, it would mean not all "
++                   "bitstreams are read. This does not affect the memory "
++                   "safety of the renderer.")) {
++        // We've encountered a non Beginning Of Stream page. No more BOS pages
++        // can follow in this Ogg segment, so there will be no other bitstreams
++        // in the Ogg (unless it's invalid).
++        readAllBOS = true;
++      } else if (!mCodecStore.Contains(serial)) {
++        // We've not encountered a stream with this serial number before. Create
++        // an OggCodecState to demux it, and map that to the OggCodecState
++        // in mCodecStates.
++        OggCodecState* const codecState = mCodecStore.Add(
++            serial,
++            OggCodecState::Create(mSandbox.get(), page.to_opaque(), serial));
++        bitstreams.AppendElement(codecState);
++        serials.AppendElement(serial);
++      }
++      if (NS_FAILED(DemuxOggPage(track, page.to_opaque()))) {
++        return NS_ERROR_FAILURE;
++      }
+     }
+   }
+ 
+   // We've read all BOS pages, so we know the streams contained in the media.
+-  // 1. Find the first encountered Vorbis/Opus bitstream, and configure
++  // 1. Find the first encountered Theora/Vorbis/Opus bitstream, and configure
+   //    it as the target A/V bitstream.
+   // 2. Deactivate the rest of bitstreams for now, until we have MediaInfo
+   //    support multiple track infos.
+   for (uint32_t i = 0; i < bitstreams.Length(); ++i) {
+     OggCodecState* s = bitstreams[i];
+     if (s) {
+-      if (s->GetType() == OggCodecState::TYPE_VORBIS &&
+-          ReadHeaders(TrackInfo::kAudioTrack, s)) {
++      if (s->GetType() == OggCodecState::TYPE_THEORA &&
++          ReadHeaders(TrackInfo::kVideoTrack, s)) {
++        if (!mTheoraState) {
++          SetupTarget(&mTheoraState, s);
++        } else {
++          s->Deactivate();
++        }
++      } else if (s->GetType() == OggCodecState::TYPE_VORBIS &&
++                 ReadHeaders(TrackInfo::kAudioTrack, s)) {
+         if (!mVorbisState) {
+           SetupTarget(&mVorbisState, s);
+         } else {
+@@ -534,7 +577,7 @@ nsresult OggDemuxer::ReadMetadata() {
+   SetupTargetSkeleton();
+   SetupMediaTracksInfo(serials);
+ 
+-  if (HasAudio()) {
++  if (HasAudio() || HasVideo()) {
+     TimeUnit startTime = TimeUnit::Invalid();
+     FindStartTime(startTime);
+     if (startTime.IsValid()) {
+@@ -573,8 +616,11 @@ nsresult OggDemuxer::ReadMetadata() {
+     if (HasAudio()) {
+       mInfo.mAudio.mDuration = mInfo.mMetadataDuration.ref();
+     }
++    if (HasVideo()) {
++      mInfo.mVideo.mDuration = mInfo.mMetadataDuration.ref();
++    }
+   } else {
+-    OGG_DEBUG("no audio tracks");
++    OGG_DEBUG("no audio or video tracks");
+     return NS_ERROR_FAILURE;
+   }
+ 
+@@ -601,7 +647,7 @@ bool OggDemuxer::ReadOggChain(const media::TimeUnit& aLastEndTime) {
+   FlacState* newFlacState = nullptr;
+   UniquePtr<MetadataTags> tags;
+ 
+-  if (HasSkeleton() || !HasAudio()) {
++  if (HasVideo() || HasSkeleton() || !HasAudio()) {
+     return false;
+   }
+ 
+@@ -727,7 +773,9 @@ bool OggDemuxer::ReadOggChain(const media::TimeUnit& aLastEndTime) {
+ }
+ 
+ OggDemuxer::OggStateContext& OggDemuxer::OggState(TrackInfo::TrackType aType) {
+-  MOZ_ASSERT(aType != TrackInfo::kVideoTrack);
++  if (aType == TrackInfo::kVideoTrack) {
++    return mVideoOggState;
++  }
+   return mAudioOggState;
+ }
+ 
+@@ -863,11 +911,11 @@ TimeIntervals OggDemuxer::GetBuffered(TrackInfo::TrackType aType) {
+     return TimeIntervals::Invalid();
+   }
+   TimeIntervals buffered;
+-  // HasAudio is not used here as they take a lock and cause
++  // HasAudio and HasVideo are not used here as they take a lock and cause
+   // a deadlock. Accessing mInfo doesn't require a lock - it doesn't change
+   // after metadata is read.
+   if (!mInfo.HasValidMedia()) {
+-    // No need to search through the file if there are no audio tracks
++    // No need to search through the file if there are no audio or video tracks
+     return buffered;
+   }
+ 
+@@ -960,9 +1008,14 @@ TimeIntervals OggDemuxer::GetBuffered(TrackInfo::TrackType aType) {
+                      .unverified_safe_because(time_interval_reason)) {
+         startTime = mFlacState->Time(granulepos);
+         MOZ_ASSERT(startTime.IsPositive(), "Must have positive start time");
++      } else if (aType == TrackInfo::kVideoTrack && mTheoraState &&
++                 (serial == mTheoraState->mSerial)
++                     .unverified_safe_because(time_interval_reason)) {
++        startTime = mTheoraState->Time(granulepos);
++        MOZ_ASSERT(startTime.IsPositive(), "Must have positive start time");
+       } else if (mCodecStore.Contains(
+                      serial.unverified_safe_because(time_interval_reason))) {
+-        // Stream is not the vorbis stream we're playing,
++        // Stream is not the theora or vorbis stream we're playing,
+         // but is one that we have header data for.
+ 
+         bool failedPageLenVerify = false;
+@@ -1004,8 +1057,17 @@ TimeIntervals OggDemuxer::GetBuffered(TrackInfo::TrackType aType) {
+ void OggDemuxer::FindStartTime(TimeUnit& aOutStartTime) {
+   // Extract the start times of the bitstreams in order to calculate
+   // the duration.
++  TimeUnit videoStartTime = TimeUnit::FromInfinity();
+   TimeUnit audioStartTime = TimeUnit::FromInfinity();
+ 
++  if (HasVideo()) {
++    FindStartTime(TrackInfo::kVideoTrack, videoStartTime);
++    if (!videoStartTime.IsPosInf() && videoStartTime.IsValid()) {
++      OGG_DEBUG("OggDemuxer::FindStartTime() video=%s",
++                videoStartTime.ToString().get());
++      mVideoOggState.mStartTime = Some(videoStartTime);
++    }
++  }
+   if (HasAudio()) {
+     FindStartTime(TrackInfo::kAudioTrack, audioStartTime);
+     if (!audioStartTime.IsPosInf() && audioStartTime.IsValid()) {
+@@ -1015,8 +1077,17 @@ void OggDemuxer::FindStartTime(TimeUnit& aOutStartTime) {
+     }
+   }
+ 
+-  if (!audioStartTime.IsPosInf()) {
+-    aOutStartTime = audioStartTime;
++  TimeUnit minStartTime;
++  if (videoStartTime.IsValid() && audioStartTime.IsValid()) {
++    minStartTime = std::min(videoStartTime, audioStartTime);
++  } else if (videoStartTime.IsValid()) {
++    minStartTime = videoStartTime;
++  } else if (audioStartTime.IsValid()) {
++    minStartTime = audioStartTime;
++  }
++
++  if (!minStartTime.IsPosInf()) {
++    aOutStartTime = minStartTime;
+   }
+ }
+ 
+@@ -1056,7 +1127,7 @@ nsresult OggDemuxer::SeekInternal(TrackInfo::TrackType aType,
+     res = Reset(aType);
+     NS_ENSURE_SUCCESS(res, res);
+   } else {
+-    // TODO: This may seek back unnecessarily far in the media, but we don't
++    // TODO: This may seek back unnecessarily far in the video, but we don't
+     // have a way of asking Skeleton to seek to a different target for each
+     // stream yet. Using adjustedTarget here is at least correct, if slow.
+     IndexedSeekResult sres = SeekToKeyframeUsingIndex(aType, adjustedTarget);
+@@ -1433,9 +1504,10 @@ RefPtr<MediaRawData> OggTrackDemuxer::NextSample() {
+     }
+   }
+ 
+-  OGG_DEBUG("OGG packet demuxed: [%s,%s] (duration: %s)",
++  OGG_DEBUG("OGG packet demuxed: [%s,%s] (duration: %s, type: %s)",
+             data->mTime.ToString().get(), data->GetEndTime().ToString().get(),
+-            data->mDuration.ToString().get());
++            data->mDuration.ToString().get(),
++            mType == TrackInfo::kAudioTrack ? "audio" : "video");
+ 
+   return data;
+ }
+@@ -1808,14 +1880,39 @@ nsresult OggDemuxer::SeekInBufferedRange(TrackInfo::TrackType aType,
+                                          const SeekRange& aRange) {
+   OGG_DEBUG("Seeking in buffered data to %s using bisection search",
+             aTarget.ToString().get());
+-  if (aAdjustedTarget >= aTarget) {
++  if (aType == TrackInfo::kVideoTrack || aAdjustedTarget >= aTarget) {
+     // We know the exact byte range in which the target must lie. It must
+     // be buffered in the media cache. Seek there.
+-    return SeekBisection(aType, aTarget, aRange, TimeUnit::Zero());
++    nsresult res = SeekBisection(aType, aTarget, aRange, TimeUnit::Zero());
++    if (NS_FAILED(res) || aType != TrackInfo::kVideoTrack) {
++      return res;
++    }
++
++    // We have an active Theora bitstream. Peek the next Theora frame, and
++    // extract its keyframe's time.
++    DemuxUntilPacketAvailable(aType, mTheoraState);
++    ogg_packet* packet = mTheoraState->PacketPeek();
++    if (packet && !mTheoraState->IsKeyframe(packet)) {
++      // First post-seek frame isn't a keyframe, seek back to previous keyframe,
++      // otherwise we'll get visual artifacts.
++      MOZ_ASSERT(packet->granulepos != -1, "Must have a granulepos");
++      int shift = mTheoraState->KeyFrameGranuleJobs();
++      int64_t keyframeGranulepos = (packet->granulepos >> shift) << shift;
++      TimeUnit keyframeTime = mTheoraState->StartTime(keyframeGranulepos);
++      SEEK_LOG(LogLevel::Debug,
++               ("Keyframe for %lld is at %lld, seeking back to it", frameTime,
++                keyframeTime));
++      aAdjustedTarget = std::min(aAdjustedTarget, keyframeTime);
++    }
+   }
+-  SeekRange k = SelectSeekRange(aType, aRanges, aAdjustedTarget, aStartTime,
+-                                aEndTime, false);
+-  return SeekBisection(aType, aAdjustedTarget, k, OGG_SEEK_FUZZ_USECS);
++
++  nsresult res = NS_OK;
++  if (aAdjustedTarget < aTarget) {
++    SeekRange k = SelectSeekRange(aType, aRanges, aAdjustedTarget, aStartTime,
++                                  aEndTime, false);
++    res = SeekBisection(aType, aAdjustedTarget, k, OGG_SEEK_FUZZ_USECS);
++  }
++  return res;
+ }
+ 
+ nsresult OggDemuxer::SeekInUnbuffered(TrackInfo::TrackType aType,
+@@ -1826,8 +1923,23 @@ nsresult OggDemuxer::SeekInUnbuffered(TrackInfo::TrackType aType,
+   OGG_DEBUG("Seeking in unbuffered data to %s using bisection search",
+             aTarget.ToString().get());
+ 
++  // If we've got an active Theora bitstream, determine the maximum possible
++  // time in usecs which a keyframe could be before a given interframe. We
++  // subtract this from our seek target, seek to the new target, and then
++  // will decode forward to the original seek target. We should encounter a
++  // keyframe in that interval. This prevents us from needing to run two
++  // bisections; one for the seek target frame, and another to find its
++  // keyframe. It's usually faster to just download this extra data, rather
++  // tham perform two bisections to find the seek target's keyframe. We
++  // don't do this offsetting when seeking in a buffered range,
++  // as the extra decoding causes a noticeable speed hit when all the data
++  // is buffered (compared to just doing a bisection to exactly find the
++  // keyframe).
+   TimeUnit keyframeOffset = TimeUnit::Zero();
+-  // Add in the Opus pre-roll if necessary.
++  if (aType == TrackInfo::kVideoTrack && mTheoraState) {
++    keyframeOffset = mTheoraState->MaxKeyframeOffset();
++  }
++  // Add in the Opus pre-roll if necessary, as well.
+   if (aType == TrackInfo::kAudioTrack && mOpusState) {
+     keyframeOffset = std::max(keyframeOffset, OGG_SEEK_OPUS_PREROLL);
+   }
+@@ -1961,7 +2073,7 @@ nsresult OggDemuxer::SeekBisection(TrackInfo::TrackType aType,
+       hops++;
+ 
+       // Locate the next page after our seek guess, and then figure out the
+-      // granule time of the audio bitstreams there. We can then
++      // granule time of the audio and video bitstreams there. We can then
+       // make a bisection decision based on our location in the media.
+       PageSyncResult pageSyncResult =
+           PageSync(mSandbox.get(), Resource(aType), OggSyncState(aType), false,
+@@ -1990,9 +2102,10 @@ nsresult OggDemuxer::SeekBisection(TrackInfo::TrackType aType,
+         return NS_ERROR_FAILURE;
+       }
+ 
+-      // Read pages until we can determine the granule time of the audio
+-      // bitstream.
++      // Read pages until we can determine the granule time of the audio and
++      // video bitstream.
+       ogg_int64_t audioTime = -1;
++      ogg_int64_t videoTime = -1;
+       do {
+         // Add the page to its codec state, determine its granule time.
+         uint32_t serial = static_cast<uint32_t>(
+@@ -2026,6 +2139,11 @@ nsresult OggDemuxer::SeekBisection(TrackInfo::TrackType aType,
+             }
+           }
+ 
++          if (aType == TrackInfo::kVideoTrack && granulepos > 0 &&
++              serial == mTheoraState->mSerial && videoTime == -1) {
++            videoTime = mTheoraState->Time(granulepos).ToMicroseconds();
++          }
++
+           if (pageOffset + pageLength >= endOffset) {
+             // Hit end of readable data.
+             break;
+@@ -2035,9 +2153,11 @@ nsresult OggDemuxer::SeekBisection(TrackInfo::TrackType aType,
+           break;
+         }
+ 
+-      } while (aType == TrackInfo::kAudioTrack && audioTime == -1);
++      } while ((aType == TrackInfo::kAudioTrack && audioTime == -1) ||
++               (aType == TrackInfo::kVideoTrack && videoTime == -1));
+ 
+-      if (aType == TrackInfo::kAudioTrack && audioTime == -1) {
++      if ((aType == TrackInfo::kAudioTrack && audioTime == -1) ||
++          (aType == TrackInfo::kVideoTrack && videoTime == -1)) {
+         // We don't have timestamps for all active tracks...
+         if (pageOffset == startOffset + startLength &&
+             pageOffset + pageLength >= endOffset) {
+@@ -2058,7 +2178,7 @@ nsresult OggDemuxer::SeekBisection(TrackInfo::TrackType aType,
+ 
+       // We've found appropriate time stamps here. Proceed to bisect
+       // the search space.
+-      granuleTime = audioTime;
++      granuleTime = aType == TrackInfo::kAudioTrack ? audioTime : videoTime;
+       MOZ_ASSERT(granuleTime > 0, "Must get a granuletime");
+       break;
+     }  // End of "until we determine time at guess offset" loop.
+diff --git a/dom/media/ogg/OggDemuxer.h b/dom/media/ogg/OggDemuxer.h
+index 7f9fb50af788..a84bd4e56e87 100644
+--- a/dom/media/ogg/OggDemuxer.h
++++ b/dom/media/ogg/OggDemuxer.h
+@@ -111,11 +111,12 @@ class OggDemuxer : public MediaDataDemuxer,
+                             const media::TimeUnit& aStartTime,
+                             const media::TimeUnit& aEndTime, bool aExact);
+ 
+-  // Seeks to aTarget usecs in the buffered range aRange using bisection search.
+-  // aAdjustedTarget is an adjusted version of the target used to account for
+-  // Opus pre-roll, if necessary. aStartTime must be the presentation time at
+-  // the start of media, and aEndTime the time at end of media. aRanges must be
+-  // the time/byte ranges buffered in the media cache as per GetSeekRanges().
++  // Seeks to aTarget usecs in the buffered range aRange using bisection search,
++  // or to the keyframe prior to aTarget if we have video. aAdjustedTarget is
++  // an adjusted version of the target used to account for Opus pre-roll, if
++  // necessary. aStartTime must be the presentation time at the start of media,
++  // and aEndTime the time at end of media. aRanges must be the time/byte ranges
++  // buffered in the media cache as per GetSeekRanges().
+   nsresult SeekInBufferedRange(TrackInfo::TrackType aType,
+                                const media::TimeUnit& aTarget,
+                                media::TimeUnit& aAdjustedTarget,
+@@ -124,8 +125,8 @@ class OggDemuxer : public MediaDataDemuxer,
+                                const nsTArray<SeekRange>& aRanges,
+                                const SeekRange& aRange);
+ 
+-  // Seeks to before aTarget usecs in media using bisection search.
+-  // This will seek to the packet required to render the
++  // Seeks to before aTarget usecs in media using bisection search. If the media
++  // has video, this will seek to before the keyframe required to render the
+   // media at aTarget. Will use aRanges in order to narrow the bisection
+   // search space. aStartTime must be the presentation time at the start of
+   // media, and aEndTime the time at end of media. aRanges must be the time/byte
+@@ -137,8 +138,8 @@ class OggDemuxer : public MediaDataDemuxer,
+                             const nsTArray<SeekRange>& aRanges);
+ 
+   // Performs a seek bisection to move the media stream's read cursor to the
+-  // last ogg page boundary which has end time before aTarget usecs
+-  // on the Vorbis bitstreams. Limits its search to data inside aRange;
++  // last ogg page boundary which has end time before aTarget usecs on both the
++  // Theora and Vorbis bitstreams. Limits its search to data inside aRange;
+   // i.e. it will only read inside of the aRange's start and end offsets.
+   // aFuzz is the number of usecs of leniency we'll allow; we'll terminate the
+   // seek when we land in the range (aTime - aFuzz, aTime) usecs.
+@@ -258,6 +259,9 @@ class OggDemuxer : public MediaDataDemuxer,
+   // Map of codec-specific bitstream states.
+   OggCodecStore mCodecStore;
+ 
++  // Decode state of the Theora bitstream we're decoding, if we have video.
++  OggCodecState* mTheoraState;
++
+   // Decode state of the Vorbis bitstream we're decoding, if we have audio.
+   OggCodecState* mVorbisState;
+ 
+@@ -295,6 +299,7 @@ class OggDemuxer : public MediaDataDemuxer,
+   MediaResourceIndex* Resource(TrackInfo::TrackType aType);
+   MediaResourceIndex* CommonResource();
+   OggStateContext mAudioOggState;
++  OggStateContext mVideoOggState;
+ 
+   Maybe<media::TimeUnit> mStartTime;
+ 
+@@ -309,6 +314,10 @@ class OggDemuxer : public MediaDataDemuxer,
+   media::TimeUnit StartTime() const;
+   media::TimeUnit StartTime(TrackInfo::TrackType aType);
+ 
++  // The picture region inside Theora frame to be displayed, if we have
++  // a Theora video track.
++  gfx::IntRect mPicture;
++
+   // True if we are decoding a chained ogg.
+   bool mIsChained;
+ 
+diff --git a/dom/media/platforms/MediaCodecsSupport.cpp b/dom/media/platforms/MediaCodecsSupport.cpp
+index f19b59b4d314..1386e87a6c35 100644
+--- a/dom/media/platforms/MediaCodecsSupport.cpp
++++ b/dom/media/platforms/MediaCodecsSupport.cpp
+@@ -11,6 +11,7 @@
+ #include "PDMFactory.h"
+ #include "PEMFactory.h"
+ #include "PlatformDecoderModule.h"
++#include "TheoraDecoder.h"
+ #include "VPXDecoder.h"
+ #include "VideoUtils.h"
+ #include "mozilla/AppShutdown.h"
+@@ -230,6 +231,9 @@ MediaCodec MCSInfo::GetMediaCodecFromMimeType(const nsACString& aMimeType) {
+   if (VPXDecoder::IsVP9(aMimeType)) {
+     return MediaCodec::VP9;
+   }
++  if (TheoraDecoder::IsTheora(aMimeType)) {
++    return MediaCodec::Theora;
++  }
+   if (MP4Decoder::IsHEVC(aMimeType)) {
+     return MediaCodec::HEVC;
+   }
+@@ -293,6 +297,7 @@ std::array<CodecDefinition, 13> MCSInfo::GetAllCodecDefinitions() {
+        MEDIA_CODEC_DEF_ENTRY(VP8, "video/vp8"),
+        MEDIA_CODEC_DEF_ENTRY_LACKOFEXT(AV1, "video/av1"),
+        MEDIA_CODEC_DEF_ENTRY(HEVC, "video/hevc"),
++       MEDIA_CODEC_DEF_ENTRY(Theora, "video/theora"),
+        MEDIA_CODEC_DEF_ENTRY(AAC, "audio/mp4a-latm"),
+        MEDIA_CODEC_DEF_ENTRY(MP3, "audio/mpeg"),
+        MEDIA_CODEC_DEF_ENTRY(Opus, "audio/opus"),
+diff --git a/dom/media/platforms/MediaCodecsSupport.h b/dom/media/platforms/MediaCodecsSupport.h
+index f5ca01e2bbf6..5176b4ecb2e4 100644
+--- a/dom/media/platforms/MediaCodecsSupport.h
++++ b/dom/media/platforms/MediaCodecsSupport.h
+@@ -24,6 +24,7 @@ namespace mozilla::media {
+   X(VP9)           \
+   X(AV1)           \
+   X(HEVC)          \
++  X(Theora)        \
+   X(AAC)           \
+   X(FLAC)          \
+   X(MP3)           \
+diff --git a/dom/media/platforms/PDMFactory.cpp b/dom/media/platforms/PDMFactory.cpp
+index 247d952fea77..227dec3a81d3 100644
+--- a/dom/media/platforms/PDMFactory.cpp
++++ b/dom/media/platforms/PDMFactory.cpp
+@@ -19,6 +19,7 @@
+ #include "MP4Decoder.h"
+ #include "MediaChangeMonitor.h"
+ #include "MediaInfo.h"
++#include "TheoraDecoder.h"
+ #include "VPXDecoder.h"
+ #include "VideoUtils.h"
+ #include "mozilla/ClearOnShutdown.h"
+@@ -844,6 +845,9 @@ DecodeSupportSet PDMFactory::SupportsMimeType(
+     if (AOMDecoder::IsAV1(aMimeType)) {
+       return MCSInfo::GetDecodeSupportSet(MediaCodec::AV1, aSupported);
+     }
++    if (TheoraDecoder::IsTheora(aMimeType)) {
++      return MCSInfo::GetDecodeSupportSet(MediaCodec::Theora, aSupported);
++    }
+     if (MP4Decoder::IsHEVC(aMimeType)) {
+       return MCSInfo::GetDecodeSupportSet(MediaCodec::HEVC, aSupported);
+     }
+@@ -876,6 +880,7 @@ DecodeSupportSet PDMFactory::SupportsMimeType(
+ bool PDMFactory::AllDecodersAreRemote() {
+   return StaticPrefs::media_rdd_process_enabled() &&
+          StaticPrefs::media_rdd_opus_enabled() &&
++         StaticPrefs::media_rdd_theora_enabled() &&
+          StaticPrefs::media_rdd_vorbis_enabled() &&
+          StaticPrefs::media_rdd_vpx_enabled() &&
+ #if defined(MOZ_WMF)
+diff --git a/dom/media/platforms/agnostic/AgnosticDecoderModule.cpp b/dom/media/platforms/agnostic/AgnosticDecoderModule.cpp
+index d8ea853a1ca6..753dee02381f 100644
+--- a/dom/media/platforms/agnostic/AgnosticDecoderModule.cpp
++++ b/dom/media/platforms/agnostic/AgnosticDecoderModule.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include "AgnosticDecoderModule.h"
+ 
++#include "TheoraDecoder.h"
+ #include "AOMDecoder.h"
+ #include "DAV1DDecoder.h"
+ #include "VPXDecoder.h"
+@@ -23,6 +24,7 @@ enum class DecoderType {
+ enum class DecoderType {
+   AV1,
+   Opus,
++  Theora,
+   Vorbis,
+   VPX,
+   Wave,
+@@ -34,6 +36,8 @@ static bool IsAvailableInDefault(DecoderType type) {
+   switch (type) {
+     case DecoderType::AV1:
+       return StaticPrefs::media_av1_enabled();
++    case DecoderType::Theora:
++      return StaticPrefs::media_theora_enabled();
+     case DecoderType::Opus:
+     case DecoderType::Vorbis:
+     case DecoderType::VPX:
+@@ -52,6 +56,9 @@ static bool IsAvailableInRdd(DecoderType type) {
+       return StaticPrefs::media_av1_enabled();
+     case DecoderType::Opus:
+       return StaticPrefs::media_rdd_opus_enabled();
++    case DecoderType::Theora:
++      return StaticPrefs::media_rdd_theora_enabled() &&
++             StaticPrefs::media_theora_enabled();
+     case DecoderType::Vorbis:
+ #if defined(__MINGW32__)
+       // If this is a MinGW build we need to force AgnosticDecoderModule to
+@@ -82,7 +89,8 @@ static bool IsAvailableInUtility(DecoderType type) {
+     case DecoderType::Vorbis:
+     case DecoderType::Wave:
+       return true;
+-    // Others are video codecs, don't take care of them
++    case DecoderType::Theora:  // Video codecs, dont take care of them
++    case DecoderType::VPX:
+     default:
+       return false;
+   }
+@@ -122,7 +130,9 @@ media::DecodeSupportSet AgnosticDecoderModule::Supports(
+       // decoding on the content process doesn't accidentally happen in case
+       // something goes wrong with launching the RDD process.
+       (AOMDecoder::IsAV1(mimeType) && IsAvailable(DecoderType::AV1)) ||
+-      (VPXDecoder::IsVPX(mimeType) && IsAvailable(DecoderType::VPX));
++      (VPXDecoder::IsVPX(mimeType) && IsAvailable(DecoderType::VPX)) ||
++      (TheoraDecoder::IsTheora(mimeType) && IsAvailable(DecoderType::Theora) &&
++       StaticPrefs::media_theora_enabled());
+   MOZ_LOG(
+       sPDMLog, LogLevel::Debug,
+       ("Agnostic decoder %s requested type '%s'",
+@@ -157,6 +167,10 @@ already_AddRefed<MediaDataDecoder> AgnosticDecoderModule::CreateVideoDecoder(
+       m = new AOMDecoder(aParams);
+     }
+   }
++  else if (TheoraDecoder::IsTheora(aParams.mConfig.mMimeType) &&
++           StaticPrefs::media_theora_enabled()) {
++    m = new TheoraDecoder(aParams);
++  }
+ 
+   return m.forget();
+ }
+diff --git a/dom/media/platforms/agnostic/TheoraDecoder.cpp b/dom/media/platforms/agnostic/TheoraDecoder.cpp
+new file mode 100644
+index 000000000000..30dde146979d
+--- /dev/null
++++ b/dom/media/platforms/agnostic/TheoraDecoder.cpp
+@@ -0,0 +1,271 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim:set ts=2 sw=2 sts=2 et cindent: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "TheoraDecoder.h"
++
++#include <algorithm>
++#include <ogg/ogg.h>
++
++#include "ImageContainer.h"
++#include "TimeUnits.h"
++#include "XiphExtradata.h"
++#include "gfx2DGlue.h"
++#include "mozilla/PodOperations.h"
++#include "mozilla/TaskQueue.h"
++#include "nsError.h"
++#include "PerformanceRecorder.h"
++#include "VideoUtils.h"
++
++#undef LOG
++#define LOG(arg, ...)                                                 \
++  DDMOZ_LOG(gMediaDecoderLog, mozilla::LogLevel::Debug, "::%s: " arg, \
++            __func__, ##__VA_ARGS__)
++
++namespace mozilla {
++
++using namespace gfx;
++using namespace layers;
++
++extern LazyLogModule gMediaDecoderLog;
++
++ogg_packet InitTheoraPacket(const unsigned char* aData, size_t aLength,
++                            bool aBOS, bool aEOS, int64_t aGranulepos,
++                            int64_t aPacketNo) {
++  ogg_packet packet;
++  packet.packet = const_cast<unsigned char*>(aData);
++  packet.bytes = aLength;
++  packet.b_o_s = aBOS;
++  packet.e_o_s = aEOS;
++  packet.granulepos = aGranulepos;
++  packet.packetno = aPacketNo;
++  return packet;
++}
++
++TheoraDecoder::TheoraDecoder(const CreateDecoderParams& aParams)
++    : mImageAllocator(aParams.mKnowsCompositor),
++      mImageContainer(aParams.mImageContainer),
++      mTaskQueue(TaskQueue::Create(
++          GetMediaThreadPool(MediaThreadType::PLATFORM_DECODER),
++          "TheoraDecoder")),
++      mTheoraInfo{},
++      mTheoraComment{},
++      mTheoraSetupInfo(nullptr),
++      mTheoraDecoderContext(nullptr),
++      mPacketCount(0),
++      mInfo(aParams.VideoConfig()),
++      mTrackingId(aParams.mTrackingId) {
++  MOZ_COUNT_CTOR(TheoraDecoder);
++}
++
++TheoraDecoder::~TheoraDecoder() {
++  MOZ_COUNT_DTOR(TheoraDecoder);
++  th_setup_free(mTheoraSetupInfo);
++  th_comment_clear(&mTheoraComment);
++  th_info_clear(&mTheoraInfo);
++}
++
++RefPtr<ShutdownPromise> TheoraDecoder::Shutdown() {
++  RefPtr<TheoraDecoder> self = this;
++  return InvokeAsync(mTaskQueue, __func__, [self, this]() {
++    if (mTheoraDecoderContext) {
++      th_decode_free(mTheoraDecoderContext);
++      mTheoraDecoderContext = nullptr;
++    }
++    return mTaskQueue->BeginShutdown();
++  });
++}
++
++RefPtr<MediaDataDecoder::InitPromise> TheoraDecoder::Init() {
++  th_comment_init(&mTheoraComment);
++  th_info_init(&mTheoraInfo);
++
++  nsTArray<unsigned char*> headers;
++  nsTArray<size_t> headerLens;
++  if (!XiphExtradataToHeaders(headers, headerLens,
++                              mInfo.mCodecSpecificConfig->Elements(),
++                              mInfo.mCodecSpecificConfig->Length())) {
++    return InitPromise::CreateAndReject(
++        MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
++                    RESULT_DETAIL("Could not get theora header.")),
++        __func__);
++  }
++  for (size_t i = 0; i < headers.Length(); i++) {
++    if (NS_FAILED(DoDecodeHeader(headers[i], headerLens[i]))) {
++      return InitPromise::CreateAndReject(
++          MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
++                      RESULT_DETAIL("Could not decode theora header.")),
++          __func__);
++    }
++  }
++  if (mPacketCount != 3) {
++    return InitPromise::CreateAndReject(
++        MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
++                    RESULT_DETAIL("Packet count is wrong.")),
++        __func__);
++  }
++
++  mTheoraDecoderContext = th_decode_alloc(&mTheoraInfo, mTheoraSetupInfo);
++  if (mTheoraDecoderContext) {
++    return InitPromise::CreateAndResolve(TrackInfo::kVideoTrack, __func__);
++  } else {
++    return InitPromise::CreateAndReject(
++        MediaResult(NS_ERROR_OUT_OF_MEMORY,
++                    RESULT_DETAIL("Could not allocate theora decoder.")),
++        __func__);
++  }
++}
++
++RefPtr<MediaDataDecoder::FlushPromise> TheoraDecoder::Flush() {
++  return InvokeAsync(mTaskQueue, __func__, []() {
++    return FlushPromise::CreateAndResolve(true, __func__);
++  });
++}
++
++nsresult TheoraDecoder::DoDecodeHeader(const unsigned char* aData,
++                                       size_t aLength) {
++  bool bos = mPacketCount == 0;
++  ogg_packet pkt =
++      InitTheoraPacket(aData, aLength, bos, false, 0, mPacketCount++);
++
++  int r = th_decode_headerin(&mTheoraInfo, &mTheoraComment, &mTheoraSetupInfo,
++                             &pkt);
++  return r > 0 ? NS_OK : NS_ERROR_FAILURE;
++}
++
++RefPtr<MediaDataDecoder::DecodePromise> TheoraDecoder::ProcessDecode(
++    MediaRawData* aSample) {
++  MOZ_ASSERT(mTaskQueue->IsCurrentThreadIn());
++
++  MediaInfoFlag flag = MediaInfoFlag::None;
++  flag |= (aSample->mKeyframe ? MediaInfoFlag::KeyFrame
++                              : MediaInfoFlag::NonKeyFrame);
++  flag |= MediaInfoFlag::SoftwareDecoding;
++  flag |= MediaInfoFlag::VIDEO_THEORA;
++  Maybe<PerformanceRecorder<DecodeStage>> rec =
++      mTrackingId.map([&](const auto& aId) {
++        return PerformanceRecorder<DecodeStage>("TheoraDecoder"_ns, aId, flag);
++      });
++
++  const unsigned char* aData = aSample->Data();
++  size_t aLength = aSample->Size();
++
++  bool bos = mPacketCount == 0;
++  ogg_packet pkt =
++      InitTheoraPacket(aData, aLength, bos, false,
++                       aSample->mTimecode.ToMicroseconds(), mPacketCount++);
++
++  int ret = th_decode_packetin(mTheoraDecoderContext, &pkt, nullptr);
++  if (ret == 0 || ret == TH_DUPFRAME) {
++    th_ycbcr_buffer ycbcr;
++    th_decode_ycbcr_out(mTheoraDecoderContext, ycbcr);
++
++    int hdec = !(mTheoraInfo.pixel_fmt & 1);
++    int vdec = !(mTheoraInfo.pixel_fmt & 2);
++
++    VideoData::YCbCrBuffer b;
++    b.mPlanes[0].mData = ycbcr[0].data;
++    b.mPlanes[0].mStride = ycbcr[0].stride;
++    b.mPlanes[0].mHeight = mTheoraInfo.frame_height;
++    b.mPlanes[0].mWidth = mTheoraInfo.frame_width;
++    b.mPlanes[0].mSkip = 0;
++
++    b.mPlanes[1].mData = ycbcr[1].data;
++    b.mPlanes[1].mStride = ycbcr[1].stride;
++    b.mPlanes[1].mHeight = mTheoraInfo.frame_height >> vdec;
++    b.mPlanes[1].mWidth = mTheoraInfo.frame_width >> hdec;
++    b.mPlanes[1].mSkip = 0;
++
++    b.mPlanes[2].mData = ycbcr[2].data;
++    b.mPlanes[2].mStride = ycbcr[2].stride;
++    b.mPlanes[2].mHeight = mTheoraInfo.frame_height >> vdec;
++    b.mPlanes[2].mWidth = mTheoraInfo.frame_width >> hdec;
++    b.mPlanes[2].mSkip = 0;
++
++    if (vdec) {
++      b.mChromaSubsampling = gfx::ChromaSubsampling::HALF_WIDTH_AND_HEIGHT;
++    } else if (hdec) {
++      b.mChromaSubsampling = gfx::ChromaSubsampling::HALF_WIDTH;
++    }
++
++    b.mYUVColorSpace =
++        DefaultColorSpace({mTheoraInfo.frame_width, mTheoraInfo.frame_height});
++
++    IntRect pictureArea(mTheoraInfo.pic_x, mTheoraInfo.pic_y,
++                        mTheoraInfo.pic_width, mTheoraInfo.pic_height);
++
++    VideoInfo info;
++    info.mDisplay = mInfo.mDisplay;
++    Result<already_AddRefed<VideoData>, MediaResult> r =
++        VideoData::CreateAndCopyData(
++            info, mImageContainer, aSample->mOffset, aSample->mTime,
++            aSample->mDuration, b, aSample->mKeyframe, aSample->mTimecode,
++            mInfo.ScaledImageRect(mTheoraInfo.frame_width,
++                                  mTheoraInfo.frame_height),
++            mImageAllocator);
++    if (r.isErr()) {
++      LOG("Image allocation error source %ux%u display %ux%u picture %ux%u",
++          mTheoraInfo.frame_width, mTheoraInfo.frame_height,
++          mInfo.mDisplay.width, mInfo.mDisplay.height, mInfo.mImage.width,
++          mInfo.mImage.height);
++      return DecodePromise::CreateAndReject(r.unwrapErr(), __func__);
++    }
++
++    RefPtr<VideoData> v = r.unwrap();
++    MOZ_ASSERT(v);
++
++    rec.apply([&](auto& aRec) {
++      aRec.Record([&](DecodeStage& aStage) {
++        aStage.SetResolution(static_cast<int>(mTheoraInfo.frame_width),
++                             static_cast<int>(mTheoraInfo.frame_height));
++        auto format = [&]() -> Maybe<DecodeStage::ImageFormat> {
++          switch (mTheoraInfo.pixel_fmt) {
++            case TH_PF_420:
++              return Some(DecodeStage::YUV420P);
++            case TH_PF_422:
++              return Some(DecodeStage::YUV422P);
++            case TH_PF_444:
++              return Some(DecodeStage::YUV444P);
++            default:
++              return Nothing();
++          }
++        }();
++        format.apply([&](auto& aFmt) { aStage.SetImageFormat(aFmt); });
++        aStage.SetYUVColorSpace(b.mYUVColorSpace);
++        aStage.SetColorRange(b.mColorRange);
++        aStage.SetColorDepth(b.mColorDepth);
++        aStage.SetStartTimeAndEndTime(v->mTime.ToMicroseconds(),
++                                      v->GetEndTime().ToMicroseconds());
++      });
++    });
++
++    return DecodePromise::CreateAndResolve(DecodedData{v}, __func__);
++  }
++  LOG("Theora Decode error: %d", ret);
++  return DecodePromise::CreateAndReject(
++      MediaResult(NS_ERROR_DOM_MEDIA_DECODE_ERR,
++                  RESULT_DETAIL("Theora decode error:%d", ret)),
++      __func__);
++}
++
++RefPtr<MediaDataDecoder::DecodePromise> TheoraDecoder::Decode(
++    MediaRawData* aSample) {
++  return InvokeAsync<MediaRawData*>(mTaskQueue, this, __func__,
++                                    &TheoraDecoder::ProcessDecode, aSample);
++}
++
++RefPtr<MediaDataDecoder::DecodePromise> TheoraDecoder::Drain() {
++  return InvokeAsync(mTaskQueue, __func__, [] {
++    return DecodePromise::CreateAndResolve(DecodedData(), __func__);
++  });
++}
++
++/* static */
++bool TheoraDecoder::IsTheora(const nsACString& aMimeType) {
++  return aMimeType.EqualsLiteral("video/theora");
++}
++
++}  // namespace mozilla
++#undef LOG
+diff --git a/dom/media/platforms/agnostic/TheoraDecoder.h b/dom/media/platforms/agnostic/TheoraDecoder.h
+new file mode 100644
+index 000000000000..f209bb61ec4d
+--- /dev/null
++++ b/dom/media/platforms/agnostic/TheoraDecoder.h
+@@ -0,0 +1,63 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* vim:set ts=2 sw=2 sts=2 et cindent: */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++#if !defined(TheoraDecoder_h_)
++#  define TheoraDecoder_h_
++
++#  include <stdint.h>
++
++#  include "PlatformDecoderModule.h"
++#  include <theora/theoradec.h>
++
++namespace mozilla {
++
++DDLoggedTypeDeclNameAndBase(TheoraDecoder, MediaDataDecoder);
++
++class TheoraDecoder final : public MediaDataDecoder,
++                            public DecoderDoctorLifeLogger<TheoraDecoder> {
++ public:
++  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(TheoraDecoder, final);
++
++  explicit TheoraDecoder(const CreateDecoderParams& aParams);
++
++  RefPtr<InitPromise> Init() override;
++  RefPtr<DecodePromise> Decode(MediaRawData* aSample) override;
++  RefPtr<DecodePromise> Drain() override;
++  RefPtr<FlushPromise> Flush() override;
++  RefPtr<ShutdownPromise> Shutdown() override;
++
++  // Return true if mimetype is a Theora codec
++  static bool IsTheora(const nsACString& aMimeType);
++
++  nsCString GetDescriptionName() const override {
++    return "theora video decoder"_ns;
++  }
++
++  nsCString GetCodecName() const override { return "theora"_ns; }
++
++ private:
++  ~TheoraDecoder();
++  nsresult DoDecodeHeader(const unsigned char* aData, size_t aLength);
++
++  RefPtr<DecodePromise> ProcessDecode(MediaRawData* aSample);
++
++  const RefPtr<layers::KnowsCompositor> mImageAllocator;
++  const RefPtr<layers::ImageContainer> mImageContainer;
++  const RefPtr<TaskQueue> mTaskQueue;
++
++  // Theora header & decoder state
++  th_info mTheoraInfo;
++  th_comment mTheoraComment;
++  th_setup_info* mTheoraSetupInfo;
++  th_dec_ctx* mTheoraDecoderContext;
++  int mPacketCount;
++
++  const VideoInfo mInfo;
++  const Maybe<TrackingId> mTrackingId;
++};
++
++}  // namespace mozilla
++
++#endif
+diff --git a/dom/media/platforms/agnostic/VPXDecoder.cpp b/dom/media/platforms/agnostic/VPXDecoder.cpp
+index 002d8957ca7b..637c6a645272 100644
+--- a/dom/media/platforms/agnostic/VPXDecoder.cpp
++++ b/dom/media/platforms/agnostic/VPXDecoder.cpp
+@@ -135,6 +135,7 @@ RefPtr<MediaDataDecoder::DecodePromise> VPXDecoder::ProcessDecode(
+     default:
+       break;
+   }
++  flag |= MediaInfoFlag::VIDEO_THEORA;
+   auto rec = mTrackingId.map([&](const auto& aId) {
+     return PerformanceRecorder<DecodeStage>("VPXDecoder"_ns, aId, flag);
+   });
+diff --git a/dom/media/platforms/android/AndroidDecoderModule.cpp b/dom/media/platforms/android/AndroidDecoderModule.cpp
+index c27918a7c8a3..21d0ede270ef 100644
+--- a/dom/media/platforms/android/AndroidDecoderModule.cpp
++++ b/dom/media/platforms/android/AndroidDecoderModule.cpp
+@@ -11,6 +11,7 @@
+ #include "AOMDecoder.h"
+ #include "MediaInfo.h"
+ #include "RemoteDataDecoder.h"
++#include "TheoraDecoder.h"
+ #include "VPXDecoder.h"
+ #include "mozilla/ClearOnShutdown.h"
+ #include "mozilla/Components.h"
+@@ -105,9 +106,12 @@ DecodeSupportSet AndroidDecoderModule::SupportsMimeType(
+       }
+       break;
+ 
+-    // Prefer the gecko decoder for opus/vorbis; stagefright crashes
++    // Prefer the gecko decoder for theora/opus/vorbis; stagefright crashes
+     // on content demuxed from mp4.
+-    // Not all android devices support FLAC even when they say they do.
++    // Not all android devices support FLAC/theora even when they say they do.
++    case MediaCodec::Theora:
++      SLOG("Rejecting video of type %s", aMimeType.Data());
++      return media::DecodeSupportSet{};
+     // Always use our own software decoder (in ffvpx) for audio except for AAC
+     case MediaCodec::MP3:
+       [[fallthrough]];
+diff --git a/dom/media/platforms/moz.build b/dom/media/platforms/moz.build
+index 61536cc6e225..1933f8d73a7f 100644
+--- a/dom/media/platforms/moz.build
++++ b/dom/media/platforms/moz.build
+@@ -8,6 +8,7 @@ EXPORTS += [
+     "agnostic/AgnosticDecoderModule.h",
+     "agnostic/BlankDecoderModule.h",
+     "agnostic/DummyMediaDataDecoder.h",
++    "agnostic/TheoraDecoder.h",
+     "agnostic/VPXDecoder.h",
+     "AllocationPolicy.h",
+     "EncoderConfig.h",
+@@ -30,6 +31,7 @@ UNIFIED_SOURCES += [
+     "agnostic/BlankDecoderModule.cpp",
+     "agnostic/DummyMediaDataDecoder.cpp",
+     "agnostic/NullDecoderModule.cpp",
++    "agnostic/TheoraDecoder.cpp",
+     "agnostic/VPXDecoder.cpp",
+     "AllocationPolicy.cpp",
+     "EncoderConfig.cpp",
+diff --git a/dom/media/test/manifest.js b/dom/media/test/manifest.js
+index 5adccde0d654..686e5b07ed2a 100644
+--- a/dom/media/test/manifest.js
++++ b/dom/media/test/manifest.js
+@@ -586,7 +586,7 @@ var gInvalidPlayTests = [
+ 
+ // Files to check different cases of ogg skeleton information.
+ // multiple-bos-more-header-fields.ogg
+-// - Skeleton v3, w/ Content-Type,Role,Name,Language,Title for vorbis
++// - Skeleton v3, w/ Content-Type,Role,Name,Language,Title for both theora/vorbis
+ // audio-gaps-short.ogg
+ // - No skeleton, but vorbis
+ var gMultitrackInfoOggPlayList = [
+diff --git a/dom/media/test/reftest/gen_combos.py b/dom/media/test/reftest/gen_combos.py
+index 400652d87a45..f7e7d50fe139 100644
+--- a/dom/media/test/reftest/gen_combos.py
++++ b/dom/media/test/reftest/gen_combos.py
+@@ -60,7 +60,9 @@ OGG = []
+ WEBM_CODECS = ["av1", "vp9"]
+ 
+ if "--all" in ARGS:
+-    OGG = cross_combine([{"ext": "ogg"}], keyed_combiner("vcodec", ["vp8", "vp9"]))
++    OGG = cross_combine(
++        [{"ext": "ogg"}], keyed_combiner("vcodec", ["theora", "vp8", "vp9"])
++    )
+     WEBM_CODECS += ["vp8"]
+ 
+ MP4 = cross_combine([{"ext": "mp4"}], keyed_combiner("vcodec", ["av1", "h264", "vp9"]))
+diff --git a/dom/media/utils/PerformanceRecorder.cpp b/dom/media/utils/PerformanceRecorder.cpp
+index 0a45e4d6ae25..54eb34219607 100644
+--- a/dom/media/utils/PerformanceRecorder.cpp
++++ b/dom/media/utils/PerformanceRecorder.cpp
+@@ -107,6 +107,8 @@ static void AppendMediaInfoFlagToName(nsCString& aName, MediaInfoFlag aFlag) {
+     aName.Append("vp8,");
+   } else if (aFlag & MediaInfoFlag::VIDEO_VP9) {
+     aName.Append("vp9,");
++  } else if (aFlag & MediaInfoFlag::VIDEO_THEORA) {
++    aName.Append("theora,");
+   } else if (aFlag & MediaInfoFlag::VIDEO_HEVC) {
+     aName.Append("hevc,");
+   }
+diff --git a/dom/media/utils/PerformanceRecorder.h b/dom/media/utils/PerformanceRecorder.h
+index 6edde65f8075..f7b5a2322ab6 100644
+--- a/dom/media/utils/PerformanceRecorder.h
++++ b/dom/media/utils/PerformanceRecorder.h
+@@ -71,6 +71,7 @@ enum class MediaInfoFlag : uint16_t {
+   VIDEO_H264 = (1 << 5),
+   VIDEO_VP8 = (1 << 6),
+   VIDEO_VP9 = (1 << 7),
++  VIDEO_THEORA = (1 << 8),
+   VIDEO_HEVC = (1 << 9),
+ };
+ MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(MediaInfoFlag)
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 17a8465bb982..5391b35a9c76 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -10377,6 +10377,23 @@
+   mirror: always
+ #endif
+ 
++- name: media.rdd-theora.enabled
++  type: RelaxedAtomicBool
++#if defined(XP_WIN)
++  value: true
++#elif defined(XP_MACOSX)
++  value: true
++#elif defined(XP_LINUX) && !defined(ANDROID)
++  value: true
++#elif defined(XP_FREEBSD)
++  value: true
++#elif defined(XP_OPENBSD)
++  value: true
++#else
++  value: false
++#endif
++  mirror: always
++
+ - name: media.rdd-vorbis.enabled
+   type: RelaxedAtomicBool
+ #if defined(XP_WIN)
+@@ -11631,6 +11648,12 @@
+     mirror: always
+ #endif
+ 
++# Bug 1860492 - Deprecate and remove theora
++-  name: media.theora.enabled
++   type: RelaxedAtomicBool
++   value: true
++   mirror: always
++
+ # When this is true, the protection mask that Firefox replies to Widevine API
+ # QueryOutputProtectionStatus is `kProtectionHDCP` when no potential capturing.
+ - name: media.widevine.hdcp-protection-mask
+diff --git a/xpcom/build/XPCOMInit.cpp b/xpcom/build/XPCOMInit.cpp
+index eb6504f473ac..6275ca9c53d9 100644
+--- a/xpcom/build/XPCOMInit.cpp
++++ b/xpcom/build/XPCOMInit.cpp
+@@ -212,7 +212,7 @@ class OggReporter final : public nsIMemoryReporter,
+                  bool aAnonymize) override {
+     MOZ_COLLECT_REPORT(
+         "explicit/media/libogg", KIND_HEAP, UNITS_BYTES, MemoryAllocated(),
+-        "Memory allocated through libogg for Ogg, and related media "
++        "Memory allocated through libogg for Ogg, Theora, and related media "
+         "files.");
+ 
+     return NS_OK;

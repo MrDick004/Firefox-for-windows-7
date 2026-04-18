@@ -1,0 +1,17 @@
+diff --git a/gfx/webrender_bindings/DCLayerTree.cpp b/gfx/webrender_bindings/DCLayerTree.cpp
+index ed5c27f04152..bc8eee613ba1 100644
+--- a/gfx/webrender_bindings/DCLayerTree.cpp
++++ b/gfx/webrender_bindings/DCLayerTree.cpp
+@@ -817,8 +817,12 @@ bool RenderCompositorANGLE::UseCompositor() const {
+ }
+ 
+ bool DCLayerTree::UseLayerCompositor() const {
++#if 0
+   return mCompositorKind.isSome() &&
+          mCompositorKind.ref() == WebRenderOsCompositorKind::LayerCompositor;
++#else
++  return false;
++#endif
+ }
+ 
+ void DCLayerTree::DisableNativeCompositor() {

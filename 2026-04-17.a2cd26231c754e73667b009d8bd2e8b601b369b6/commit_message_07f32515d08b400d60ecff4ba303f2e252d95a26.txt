@@ -1,0 +1,1 @@
+Bug 1954977 - Clean up menu styling. r=dao,desktop-theme-reviewers    2025-03-31 18:38:43    07f32515d08b400d60ecff4ba303f2e252d95a26
