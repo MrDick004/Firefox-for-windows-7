@@ -1,0 +1,637 @@
+diff --git a/gfx/wr/webrender/src/box_shadow.rs b/gfx/wr/webrender/src/box_shadow.rs
+index 07ec0cecad41..d670827a543e 100644
+--- a/gfx/wr/webrender/src/box_shadow.rs
++++ b/gfx/wr/webrender/src/box_shadow.rs
+@@ -1,14 +1,13 @@
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+-use api::{BorderRadius, BoxShadowClipMode, ClipMode, ColorF, ColorU, PropertyBinding};
++use api::{BorderRadius, BoxShadowClipMode, ClipMode, ColorF, ColorU, PrimitiveKeyKind, PropertyBinding};
+ use api::units::*;
+ use crate::border::{BorderRadiusAu};
+ use crate::clip::{ClipItemKey, ClipItemKeyKind, ClipItemEntry, ClipNodeId};
+ use crate::intern::{Handle as InternHandle, InternDebug, Internable};
+ use crate::prim_store::{InternablePrimitive, PrimKey, PrimTemplate, PrimTemplateCommonData};
+-use crate::prim_store::{PrimitiveInstanceKind, PrimitiveStore, RectKey};
+-use crate::prim_store::rectangle::RectanglePrim;
++use crate::prim_store::{PrimitiveInstanceKind, PrimitiveStore, RectangleKey};
+ use crate::scene_building::{SceneBuilder, IsVisible};
+ use crate::spatial_tree::SpatialNodeIndex;
+ use crate::gpu_types::BoxShadowStretchMode;
+@@ -38,8 +37,8 @@ pub struct BoxShadow {
+     pub color: ColorU,
+     pub blur_radius: Au,
+     pub clip_mode: BoxShadowClipMode,
+-    pub inner_shadow_rect: RectKey,
+-    pub outer_shadow_rect: RectKey,
++    pub inner_shadow_rect: RectangleKey,
++    pub outer_shadow_rect: RectangleKey,
+     pub shadow_radius: BorderRadiusAu,
+ }
+ 
+@@ -262,7 +261,7 @@ impl<'a> SceneBuilder<'a> {
+                 clip_node_id,
+                 &LayoutPrimitiveInfo::with_clip_rect(final_prim_rect, prim_info.clip_rect),
+                 clips,
+-                RectanglePrim {
++                PrimitiveKeyKind::Rectangle {
+                     color: PropertyBinding::Value(color.into()),
+                 },
+             );
+@@ -288,7 +287,7 @@ impl<'a> SceneBuilder<'a> {
+ 
+             // Draw the box-shadow as a solid rect, using a box-shadow
+             // clip mask item.
+-            let prim = RectanglePrim {
++            let prim = PrimitiveKeyKind::Rectangle {
+                 color: PropertyBinding::Value(color.into()),
+             };
+ 
+diff --git a/gfx/wr/webrender/src/clip.rs b/gfx/wr/webrender/src/clip.rs
+index 550a07a00a8a..71e688be1fe1 100644
+--- a/gfx/wr/webrender/src/clip.rs
++++ b/gfx/wr/webrender/src/clip.rs
+@@ -105,7 +105,7 @@ use crate::gpu_types::{BoxShadowStretchMode};
+ use crate::intern;
+ use crate::internal_types::{FastHashMap, FastHashSet, LayoutPrimitiveInfo};
+ use crate::prim_store::{VisibleMaskImageTile};
+-use crate::prim_store::{PointKey, SizeKey, RectKey, PolygonKey};
++use crate::prim_store::{PointKey, SizeKey, RectangleKey, PolygonKey};
+ use crate::render_task_cache::to_cache_size;
+ use crate::render_task::RenderTask;
+ use crate::render_task_graph::RenderTaskGraphBuilder;
+@@ -1695,10 +1695,10 @@ impl Default for ClipStore {
+ #[cfg_attr(feature = "capture", derive(Serialize))]
+ #[cfg_attr(feature = "replay", derive(Deserialize))]
+ pub enum ClipItemKeyKind {
+-    Rectangle(RectKey, ClipMode),
+-    RoundedRectangle(RectKey, BorderRadiusAu, ClipMode),
+-    ImageMask(RectKey, ImageKey, Option<PolygonDataHandle>),
+-    BoxShadow(PointKey, SizeKey, BorderRadiusAu, RectKey, Au, BoxShadowClipMode),
++    Rectangle(RectangleKey, ClipMode),
++    RoundedRectangle(RectangleKey, BorderRadiusAu, ClipMode),
++    ImageMask(RectangleKey, ImageKey, Option<PolygonDataHandle>),
++    BoxShadow(PointKey, SizeKey, BorderRadiusAu, RectangleKey, Au, BoxShadowClipMode),
+ }
+ 
+ impl ClipItemKeyKind {
+diff --git a/gfx/wr/webrender/src/intern.rs b/gfx/wr/webrender/src/intern.rs
+index 504cb0c6e257..481458d4dfbf 100644
+--- a/gfx/wr/webrender/src/intern.rs
++++ b/gfx/wr/webrender/src/intern.rs
+@@ -402,7 +402,7 @@ macro_rules! enumerate_interners {
+     ($macro_name: ident) => {
+         $macro_name! {
+             clip: ClipIntern,
+-            prim: RectanglePrim,
++            prim: PrimitiveKeyKind,
+             normal_border: NormalBorderPrim,
+             image_border: ImageBorder,
+             image: Image,
+diff --git a/gfx/wr/webrender/src/prepare.rs b/gfx/wr/webrender/src/prepare.rs
+index 090d7856f122..e92014c6121a 100644
+--- a/gfx/wr/webrender/src/prepare.rs
++++ b/gfx/wr/webrender/src/prepare.rs
+@@ -618,7 +618,10 @@ fn prepare_interned_prim_for_render(
+                     &mut scratch.segments,
+                     &mut scratch.segment_instances,
+                     |request| {
+-                        request.push_one(frame_context.scene_properties.resolve_color(&prim_data.kind.color).premultiplied());
++                        prim_data.kind.write_prim_gpu_blocks(
++                            request,
++                            frame_context.scene_properties,
++                        );
+                     }
+                 );
+             } else {
+diff --git a/gfx/wr/webrender/src/prim_store/mod.rs b/gfx/wr/webrender/src/prim_store/mod.rs
+index f713b18e9604..8be53bf95c1c 100644
+--- a/gfx/wr/webrender/src/prim_store/mod.rs
++++ b/gfx/wr/webrender/src/prim_store/mod.rs
+@@ -2,28 +2,32 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+-use api::{BorderRadius, ClipMode, ColorF, ColorU};
++use api::{BorderRadius, ClipMode, ColorF, ColorU, RasterSpace};
+ use api::{ImageRendering, RepeatMode, PrimitiveFlags};
+-use api::{PropertyBinding};
+-use api::{FillRule, POLYGON_CLIP_VERTEX_MAX};
++use api::{PropertyBinding, Shadow};
++use api::{PrimitiveKeyKind, FillRule, POLYGON_CLIP_VERTEX_MAX};
+ use api::units::*;
+ use euclid::{SideOffsets2D, Size2D};
+ use malloc_size_of::MallocSizeOf;
+ use crate::composite::CompositorSurfaceKind;
+ use crate::clip::ClipLeafId;
++use crate::pattern::{Pattern, PatternBuilder, PatternBuilderContext, PatternBuilderState};
+ use crate::quad::QuadTileClassifier;
+ use crate::renderer::{GpuBufferAddress, GpuBufferHandle, GpuBufferWriterF};
+ use crate::segment::EdgeMask;
+ use crate::border::BorderSegmentCacheKey;
+ use crate::debug_item::{DebugItem, DebugMessage};
+ use crate::debug_colors;
++use crate::scene_building::{CreateShadow, IsVisible};
++use crate::frame_builder::FrameBuildingState;
+ use glyph_rasterizer::GlyphKey;
+ use crate::gpu_types::{BrushFlags, BrushSegmentGpuData, QuadSegment};
+ use crate::intern;
+ use crate::picture::PicturePrimitive;
+ use crate::render_task_graph::RenderTaskId;
+ use crate::resource_cache::ImageProperties;
+-use std::{hash, u32, usize};
++use crate::scene::SceneProperties;
++use std::{hash, ops, u32, usize};
+ use crate::util::Recycler;
+ use crate::internal_types::{FastHashSet, LayoutPrimitiveInfo};
+ use crate::visibility::PrimitiveVisibility;
+@@ -34,7 +38,6 @@ pub mod gradient;
+ pub mod image;
+ pub mod line_dec;
+ pub mod picture;
+-pub mod rectangle;
+ pub mod text_run;
+ pub mod interned;
+ 
+@@ -46,7 +49,6 @@ use gradient::{LinearGradientPrimitive, LinearGradientDataHandle, RadialGradient
+ use image::{ImageDataHandle, ImageInstance, YuvImageDataHandle};
+ use line_dec::LineDecorationDataHandle;
+ use picture::PictureDataHandle;
+-use rectangle::RectangleDataHandle;
+ use text_run::{TextRunDataHandle, TextRunPrimitive};
+ use crate::box_shadow::BoxShadowDataHandle;
+ 
+@@ -114,14 +116,14 @@ impl PictureIndex {
+ #[cfg_attr(feature = "capture", derive(Serialize))]
+ #[cfg_attr(feature = "replay", derive(Deserialize))]
+ #[derive(Copy, Debug, Clone, MallocSizeOf, PartialEq)]
+-pub struct RectKey {
++pub struct RectangleKey {
+     pub x0: f32,
+     pub y0: f32,
+     pub x1: f32,
+     pub y1: f32,
+ }
+ 
+-impl RectKey {
++impl RectangleKey {
+     pub fn intersects(&self, other: &Self) -> bool {
+         self.x0 < other.x1
+             && other.x0 < self.x1
+@@ -130,9 +132,9 @@ impl RectKey {
+     }
+ }
+ 
+-impl Eq for RectKey {}
++impl Eq for RectangleKey {}
+ 
+-impl hash::Hash for RectKey {
++impl hash::Hash for RectangleKey {
+     fn hash<H: hash::Hasher>(&self, state: &mut H) {
+         self.x0.to_bits().hash(state);
+         self.y0.to_bits().hash(state);
+@@ -141,8 +143,8 @@ impl hash::Hash for RectKey {
+     }
+ }
+ 
+-impl From<RectKey> for LayoutRect {
+-    fn from(key: RectKey) -> LayoutRect {
++impl From<RectangleKey> for LayoutRect {
++    fn from(key: RectangleKey) -> LayoutRect {
+         LayoutRect {
+             min: LayoutPoint::new(key.x0, key.y0),
+             max: LayoutPoint::new(key.x1, key.y1),
+@@ -150,8 +152,8 @@ impl From<RectKey> for LayoutRect {
+     }
+ }
+ 
+-impl From<RectKey> for WorldRect {
+-    fn from(key: RectKey) -> WorldRect {
++impl From<RectangleKey> for WorldRect {
++    fn from(key: RectangleKey) -> WorldRect {
+         WorldRect {
+             min: WorldPoint::new(key.x0, key.y0),
+             max: WorldPoint::new(key.x1, key.y1),
+@@ -159,9 +161,9 @@ impl From<RectKey> for WorldRect {
+     }
+ }
+ 
+-impl From<LayoutRect> for RectKey {
+-    fn from(rect: LayoutRect) -> RectKey {
+-        RectKey {
++impl From<LayoutRect> for RectangleKey {
++    fn from(rect: LayoutRect) -> RectangleKey {
++        RectangleKey {
+             x0: rect.min.x,
+             y0: rect.min.y,
+             x1: rect.max.x,
+@@ -170,9 +172,9 @@ impl From<LayoutRect> for RectKey {
+     }
+ }
+ 
+-impl From<PictureRect> for RectKey {
+-    fn from(rect: PictureRect) -> RectKey {
+-        RectKey {
++impl From<PictureRect> for RectangleKey {
++    fn from(rect: PictureRect) -> RectangleKey {
++        RectangleKey {
+             x0: rect.min.x,
+             y0: rect.min.y,
+             x1: rect.max.x,
+@@ -181,9 +183,9 @@ impl From<PictureRect> for RectKey {
+     }
+ }
+ 
+-impl From<WorldRect> for RectKey {
+-    fn from(rect: WorldRect) -> RectKey {
+-        RectKey {
++impl From<WorldRect> for RectangleKey {
++    fn from(rect: WorldRect) -> RectangleKey {
++        RectangleKey {
+             x0: rect.min.x,
+             y0: rect.min.y,
+             x1: rect.max.x,
+@@ -452,6 +454,69 @@ pub struct PrimKey<T: MallocSizeOf> {
+     pub kind: T,
+ }
+ 
++#[cfg_attr(feature = "capture", derive(Serialize))]
++#[cfg_attr(feature = "replay", derive(Deserialize))]
++#[derive(Debug, Clone, Eq, MallocSizeOf, PartialEq, Hash)]
++pub struct PrimitiveKey {
++    pub common: PrimKeyCommonData,
++    pub kind: PrimitiveKeyKind,
++}
++
++impl PrimitiveKey {
++    pub fn new(
++        info: &LayoutPrimitiveInfo,
++        kind: PrimitiveKeyKind,
++    ) -> Self {
++        PrimitiveKey {
++            common: info.into(),
++            kind,
++        }
++    }
++}
++
++impl intern::InternDebug for PrimitiveKey {}
++
++/// The shared information for a given primitive. This is interned and retained
++/// both across frames and display lists, by comparing the matching PrimitiveKey.
++#[cfg_attr(feature = "capture", derive(Serialize))]
++#[cfg_attr(feature = "replay", derive(Deserialize))]
++#[derive(MallocSizeOf)]
++pub enum PrimitiveTemplateKind {
++    Rectangle {
++        color: PropertyBinding<ColorF>,
++    },
++}
++
++impl PrimitiveTemplateKind {
++    /// Write any GPU blocks for the primitive template to the given request object.
++    pub fn write_prim_gpu_blocks(
++        &self,
++        writer: &mut GpuBufferWriterF,
++        scene_properties: &SceneProperties,
++    ) {
++        match *self {
++            PrimitiveTemplateKind::Rectangle { ref color, .. } => {
++                writer.push_one(scene_properties.resolve_color(color).premultiplied())
++            }
++        }
++    }
++}
++
++/// Construct the primitive template data from a primitive key. This
++/// is invoked when a primitive key is created and the interner
++/// doesn't currently contain a primitive with this key.
++impl From<PrimitiveKeyKind> for PrimitiveTemplateKind {
++    fn from(kind: PrimitiveKeyKind) -> Self {
++        match kind {
++            PrimitiveKeyKind::Rectangle { color, .. } => {
++                PrimitiveTemplateKind::Rectangle {
++                    color: color.into(),
++                }
++            }
++        }
++    }
++}
++
+ #[cfg_attr(feature = "capture", derive(Serialize))]
+ #[cfg_attr(feature = "replay", derive(Deserialize))]
+ #[derive(MallocSizeOf)]
+@@ -493,6 +558,116 @@ pub struct PrimTemplate<T> {
+     pub kind: T,
+ }
+ 
++#[cfg_attr(feature = "capture", derive(Serialize))]
++#[cfg_attr(feature = "replay", derive(Deserialize))]
++#[derive(MallocSizeOf)]
++pub struct PrimitiveTemplate {
++    pub common: PrimTemplateCommonData,
++    pub kind: PrimitiveTemplateKind,
++}
++
++impl PatternBuilder for PrimitiveTemplate {
++    fn build(
++        &self,
++        _sub_rect: Option<DeviceRect>,
++        _offset: LayoutVector2D,
++        ctx: &PatternBuilderContext,
++        _state: &mut PatternBuilderState,
++    ) -> crate::pattern::Pattern {
++        match self.kind {
++            PrimitiveTemplateKind::Rectangle { ref color, .. } => {
++                let color = ctx.scene_properties.resolve_color(color);
++                Pattern::color(color)
++            }
++        }
++    }
++}
++
++impl ops::Deref for PrimitiveTemplate {
++    type Target = PrimTemplateCommonData;
++    fn deref(&self) -> &Self::Target {
++        &self.common
++    }
++}
++
++impl ops::DerefMut for PrimitiveTemplate {
++    fn deref_mut(&mut self) -> &mut Self::Target {
++        &mut self.common
++    }
++}
++
++impl From<PrimitiveKey> for PrimitiveTemplate {
++    fn from(item: PrimitiveKey) -> Self {
++        PrimitiveTemplate {
++            common: PrimTemplateCommonData::with_key_common(item.common),
++            kind: item.kind.into(),
++        }
++    }
++}
++
++impl PrimitiveTemplate {
++    /// Update the GPU cache for a given primitive template. This may be called multiple
++    /// times per frame, by each primitive reference that refers to this interned
++    /// template. The initial request call to the GPU cache ensures that work is only
++    /// done if the cache entry is invalid (due to first use or eviction).
++    pub fn update(
++        &mut self,
++        frame_state: &mut FrameBuildingState,
++        scene_properties: &SceneProperties,
++    ) {
++        let mut writer = frame_state.frame_gpu_data.f32.write_blocks(1);
++        self.kind.write_prim_gpu_blocks(&mut writer, scene_properties);
++        self.common.gpu_buffer_address = writer.finish();
++
++        self.opacity = match self.kind {
++            PrimitiveTemplateKind::Rectangle { ref color, .. } => {
++                PrimitiveOpacity::from_alpha(scene_properties.resolve_color(color).a)
++            }
++        };
++    }
++}
++
++type PrimitiveDataHandle = intern::Handle<PrimitiveKeyKind>;
++
++impl intern::Internable for PrimitiveKeyKind {
++    type Key = PrimitiveKey;
++    type StoreData = PrimitiveTemplate;
++    type InternData = ();
++    const PROFILE_COUNTER: usize = crate::profiler::INTERNED_PRIMITIVES;
++}
++
++impl InternablePrimitive for PrimitiveKeyKind {
++    fn into_key(
++        self,
++        info: &LayoutPrimitiveInfo,
++    ) -> PrimitiveKey {
++        PrimitiveKey::new(info, self)
++    }
++
++    fn make_instance_kind(
++        key: PrimitiveKey,
++        data_handle: PrimitiveDataHandle,
++        prim_store: &mut PrimitiveStore,
++    ) -> PrimitiveInstanceKind {
++        match key.kind {
++            PrimitiveKeyKind::Rectangle { color, .. } => {
++                let color_binding_index = match color {
++                    PropertyBinding::Binding(..) => {
++                        prim_store.color_bindings.push(color)
++                    }
++                    PropertyBinding::Value(..) => ColorBindingIndex::INVALID,
++                };
++                PrimitiveInstanceKind::Rectangle {
++                    data_handle,
++                    segment_instance_index: SegmentInstanceIndex::INVALID,
++                    color_binding_index,
++                    use_legacy_path: false,
++                }
++            }
++        }
++    }
++}
++
+ #[derive(Debug, MallocSizeOf)]
+ #[cfg_attr(feature = "capture", derive(Serialize))]
+ #[cfg_attr(feature = "replay", derive(Deserialize))]
+@@ -748,6 +923,46 @@ pub struct NinePatchDescriptor {
+     pub widths: SideOffsetsKey,
+ }
+ 
++impl IsVisible for PrimitiveKeyKind {
++    // Return true if the primary primitive is visible.
++    // Used to trivially reject non-visible primitives.
++    // TODO(gw): Currently, primitives other than those
++    //           listed here are handled before the
++    //           add_primitive() call. In the future
++    //           we should move the logic for all other
++    //           primitive types to use this.
++    fn is_visible(&self) -> bool {
++        match *self {
++            PrimitiveKeyKind::Rectangle { ref color, .. } => {
++                match *color {
++                    PropertyBinding::Value(value) => value.a > 0,
++                    PropertyBinding::Binding(..) => true,
++                }
++            }
++        }
++    }
++}
++
++impl CreateShadow for PrimitiveKeyKind {
++    // Create a clone of this PrimitiveContainer, applying whatever
++    // changes are necessary to the primitive to support rendering
++    // it as part of the supplied shadow.
++    fn create_shadow(
++        &self,
++        shadow: &Shadow,
++        _: bool,
++        _: RasterSpace,
++    ) -> PrimitiveKeyKind {
++        match *self {
++            PrimitiveKeyKind::Rectangle { .. } => {
++                PrimitiveKeyKind::Rectangle {
++                    color: PropertyBinding::Value(shadow.color.into()),
++                }
++            }
++        }
++    }
++}
++
+ #[derive(Debug)]
+ #[cfg_attr(feature = "capture", derive(Serialize))]
+ pub enum PrimitiveInstanceKind {
+@@ -790,7 +1005,7 @@ pub enum PrimitiveInstanceKind {
+     },
+     Rectangle {
+         /// Handle to the common interned data for this primitive.
+-        data_handle: RectangleDataHandle,
++        data_handle: PrimitiveDataHandle,
+         segment_instance_index: SegmentInstanceIndex,
+         color_binding_index: ColorBindingIndex,
+         use_legacy_path: bool,
+diff --git a/gfx/wr/webrender/src/render_backend.rs b/gfx/wr/webrender/src/render_backend.rs
+index b256187294e1..c7d6abeeef31 100644
+--- a/gfx/wr/webrender/src/render_backend.rs
++++ b/gfx/wr/webrender/src/render_backend.rs
+@@ -12,13 +12,12 @@ use api::{DebugFlags, Parameter, BoolParameter, PrimitiveFlags, MinimapData};
+ use api::{DocumentId, ExternalScrollId, HitTestResult};
+ use api::{IdNamespace, PipelineId, RenderNotifier, SampledScrollOffset};
+ use api::{NotificationRequest, Checkpoint, QualitySettings};
+-use api::{FramePublishId, RenderReasons};
++use api::{FramePublishId, PrimitiveKeyKind, RenderReasons};
+ use api::units::*;
+ use api::channel::{single_msg_channel, Sender, Receiver};
+ use crate::bump_allocator::ChunkPool;
+ use crate::AsyncPropertySampler;
+ use crate::box_shadow::BoxShadow;
+-use crate::prim_store::rectangle::RectanglePrim;
+ #[cfg(any(feature = "capture", feature = "replay"))]
+ use crate::render_api::CaptureBits;
+ #[cfg(feature = "replay")]
+diff --git a/gfx/wr/webrender/src/scene_builder_thread.rs b/gfx/wr/webrender/src/scene_builder_thread.rs
+index 01d1821bd0da..34e938b0864a 100644
+--- a/gfx/wr/webrender/src/scene_builder_thread.rs
++++ b/gfx/wr/webrender/src/scene_builder_thread.rs
+@@ -5,12 +5,11 @@
+ use api::{AsyncBlobImageRasterizer, BlobImageResult, DebugFlags, Parameter};
+ use api::{DocumentId, PipelineId, ExternalEvent, BlobImageRequest};
+ use api::{NotificationRequest, Checkpoint, IdNamespace, QualitySettings};
+-use api::{GlyphDimensionRequest, GlyphIndexRequest};
++use api::{PrimitiveKeyKind, GlyphDimensionRequest, GlyphIndexRequest};
+ use api::channel::{unbounded_channel, single_msg_channel, Receiver, Sender};
+ use api::units::*;
+ use crate::render_api::{ApiMsg, FrameMsg, SceneMsg, ResourceUpdate, TransactionMsg, MemoryReport};
+ use crate::box_shadow::BoxShadow;
+-use crate::prim_store::rectangle::RectanglePrim;
+ #[cfg(feature = "capture")]
+ use crate::capture::CaptureConfig;
+ use crate::frame_builder::FrameBuilderConfig;
+diff --git a/gfx/wr/webrender/src/scene_building.rs b/gfx/wr/webrender/src/scene_building.rs
+index 12e6dd95f97d..9996f0e46406 100644
+--- a/gfx/wr/webrender/src/scene_building.rs
++++ b/gfx/wr/webrender/src/scene_building.rs
+@@ -43,7 +43,7 @@ use api::{IframeDisplayItem, ImageKey, ImageRendering, ItemRange, ColorDepth, Qu
+ use api::{LineOrientation, LineStyle, NinePatchBorderSource, PipelineId, MixBlendMode, StackingContextFlags};
+ use api::{PropertyBinding, ReferenceFrameKind, ScrollFrameDescriptor};
+ use api::{APZScrollGeneration, HasScrollLinkedEffect, Shadow, SpatialId, StickyFrameDescriptor, ImageMask, ItemTag};
+-use api::{ClipMode, TransformStyle, YuvColorSpace, ColorRange, YuvData, TempFilterData};
++use api::{ClipMode, PrimitiveKeyKind, TransformStyle, YuvColorSpace, ColorRange, YuvData, TempFilterData};
+ use api::{ReferenceTransformBinding, Rotation, FillRule, SpatialTreeItem, ReferenceFrameDescriptor};
+ use api::{FilterOpGraphPictureBufferId, SVGFE_GRAPH_MAX};
+ use api::channel::{unbounded_channel, Receiver, Sender};
+@@ -69,7 +69,6 @@ use crate::prim_store::{PrimitiveInstance, PrimitiveStoreStats};
+ use crate::prim_store::{PrimitiveInstanceKind, NinePatchDescriptor, PrimitiveStore};
+ use crate::prim_store::{InternablePrimitive, PictureIndex};
+ use crate::prim_store::PolygonKey;
+-use crate::prim_store::rectangle::RectanglePrim;
+ use crate::prim_store::backdrop::{BackdropCapture, BackdropRender};
+ use crate::prim_store::borders::{ImageBorder, NormalBorderPrim};
+ use crate::prim_store::gradient::{
+@@ -1570,7 +1569,7 @@ impl<'a> SceneBuilder<'a> {
+                     clip_node_id,
+                     &layout,
+                     Vec::new(),
+-                    RectanglePrim {
++                    PrimitiveKeyKind::Rectangle {
+                         color: info.color.into(),
+                     },
+                 );
+@@ -1769,7 +1768,7 @@ impl<'a> SceneBuilder<'a> {
+                                 .. layout
+                             },
+                             Vec::new(),
+-                            RectanglePrim { color: PropertyBinding::Value(color) },
++                            PrimitiveKeyKind::Rectangle { color: PropertyBinding::Value(color) },
+                         );
+                     }
+                 );
+@@ -4704,7 +4703,7 @@ pub enum ShadowItem {
+     Image(PendingPrimitive<Image>),
+     LineDecoration(PendingPrimitive<LineDecoration>),
+     NormalBorder(PendingPrimitive<NormalBorderPrim>),
+-    Primitive(PendingPrimitive<RectanglePrim>),
++    Primitive(PendingPrimitive<PrimitiveKeyKind>),
+     TextRun(PendingPrimitive<TextRun>),
+ }
+ 
+@@ -4726,8 +4725,8 @@ impl From<PendingPrimitive<NormalBorderPrim>> for ShadowItem {
+     }
+ }
+ 
+-impl From<PendingPrimitive<RectanglePrim>> for ShadowItem {
+-    fn from(container: PendingPrimitive<RectanglePrim>) -> Self {
++impl From<PendingPrimitive<PrimitiveKeyKind>> for ShadowItem {
++    fn from(container: PendingPrimitive<PrimitiveKeyKind>) -> Self {
+         ShadowItem::Primitive(container)
+     }
+ }
+diff --git a/gfx/wr/webrender/src/tile_cache/mod.rs b/gfx/wr/webrender/src/tile_cache/mod.rs
+index 451ea588e8b3..fe6c9107eb9b 100644
+--- a/gfx/wr/webrender/src/tile_cache/mod.rs
++++ b/gfx/wr/webrender/src/tile_cache/mod.rs
+@@ -31,7 +31,7 @@ use crate::picture::{SurfaceTextureDescriptor, PictureCompositeMode, SurfaceInde
+ use crate::picture::{get_relative_scale_offset, PicturePrimitive};
+ use crate::picture::MAX_COMPOSITOR_SURFACES_SIZE;
+ use crate::prim_store::{PrimitiveInstance, PrimitiveInstanceKind, PrimitiveScratchBuffer, PictureIndex};
+-use crate::prim_store::{ColorBindingStorage, ColorBindingIndex};
++use crate::prim_store::{ColorBindingStorage, ColorBindingIndex, PrimitiveTemplateKind};
+ use crate::print_tree::{PrintTreePrinter, PrintTree};
+ use crate::{profiler, render_backend::DataStores};
+ use crate::profiler::TransactionProfile;
+@@ -2296,7 +2296,7 @@ impl TileCacheInstance {
+                 // Rectangles can only form a backdrop candidate if they are known opaque.
+                 // TODO(gw): We could resolve the opacity binding here, but the common
+                 //           case for background rects is that they don't have animated opacity.
+-                let color = data_stores.prim[data_handle].kind.color;
++                let PrimitiveTemplateKind::Rectangle { color, .. } = data_stores.prim[data_handle].kind;
+                 let color = frame_context.scene_properties.resolve_color(&color);
+                 if color.a >= 1.0 {
+                     backdrop_candidate = Some(BackdropInfo {
+diff --git a/gfx/wr/webrender_api/src/lib.rs b/gfx/wr/webrender_api/src/lib.rs
+index 28276d495265..4dd3b9d262eb 100644
+--- a/gfx/wr/webrender_api/src/lib.rs
++++ b/gfx/wr/webrender_api/src/lib.rs
+@@ -775,6 +775,17 @@ impl core::fmt::Debug for DebugFlags {
+     }
+ }
+ 
++/// Information specific to a primitive type that
++/// uniquely identifies a primitive template by key.
++#[derive(Debug, Clone, Eq, MallocSizeOf, PartialEq, Hash, Serialize, Deserialize)]
++pub enum PrimitiveKeyKind {
++    ///
++    Rectangle {
++        ///
++        color: PropertyBinding<ColorU>,
++    },
++}
++
+ ///
+ #[derive(Clone, Copy, Debug)]
+ pub enum ScrollLocation {

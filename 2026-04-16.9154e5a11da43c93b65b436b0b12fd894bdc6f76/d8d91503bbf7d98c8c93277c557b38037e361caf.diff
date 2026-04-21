@@ -1,0 +1,1113 @@
+diff --git a/browser/base/content/test/fullscreen/browser_fullscreen_menus.js b/browser/base/content/test/fullscreen/browser_fullscreen_menus.js
+index 6b0349a964a7..90dd06192d7c 100644
+--- a/browser/base/content/test/fullscreen/browser_fullscreen_menus.js
++++ b/browser/base/content/test/fullscreen/browser_fullscreen_menus.js
+@@ -15,7 +15,7 @@ add_task(async function test_shortcut_key_label_in_fullscreen_menu_item() {
+   const shortCutKeyLabel = isMac ? "\u2303\u2318F" : "F11";
+   const enterMenuItemId = isMac ? "enterFullScreenItem" : "fullScreenItem";
+   const exitMenuItemId = isMac ? "exitFullScreenItem" : "fullScreenItem";
+-  const accelKeyLabelSelector = ".menu-accel";
++  const accelKeyLabelSelector = ".menu-accel-container > label";
+ 
+   const tab = await BrowserTestUtils.openNewForegroundTab(
+     gBrowser,
+diff --git a/browser/components/preferences/dialogs/handlers.css b/browser/components/preferences/dialogs/handlers.css
+index 25d5a3eda9d0..b6631649c38e 100644
+--- a/browser/components/preferences/dialogs/handlers.css
++++ b/browser/components/preferences/dialogs/handlers.css
+@@ -7,6 +7,7 @@
+  * Note: we display the icon box for every item whether or not it has an icon
+  * so the labels of all the items align vertically.
+  */
+-.actionsMenu > menupopup > menuitem > .menu-icon {
++.actionsMenu > menupopup > menuitem > .menu-iconic-left {
+   display: flex;
++  min-width: 16px;
+ }
+diff --git a/browser/themes/linux/browser.css b/browser/themes/linux/browser.css
+index 195cf888a618..5c9891e5ed4b 100644
+--- a/browser/themes/linux/browser.css
++++ b/browser/themes/linux/browser.css
+@@ -71,7 +71,7 @@
+     max-width: 32em;
+   }
+ 
+-  &:not(.subviewbutton) > .menu-icon {
++  &:not(.subviewbutton) > .menu-iconic-left {
+     margin-block: 0;
+   }
+ 
+@@ -80,6 +80,18 @@
+     background: SelectedItem !important;
+     color: SelectedItemText !important;
+   }
++
++  &[cutting] {
++    > .toolbarbutton-icon,
++    > .menu-iconic-left > .menu-iconic-icon {
++      opacity: 0.5;
++    }
++
++    > .toolbarbutton-text,
++    > .menu-iconic-left > .menu-iconic-text {
++      opacity: 0.7;
++    }
++  }
+ }
+ 
+ /* Address bar */
+diff --git a/browser/themes/shared/browser-shared.css b/browser/themes/shared/browser-shared.css
+index ec2a8816ccb7..fe999abbf6e6 100644
+--- a/browser/themes/shared/browser-shared.css
++++ b/browser/themes/shared/browser-shared.css
+@@ -529,18 +529,6 @@ toolbarpaletteitem > #personal-bookmarks > #PlacesToolbar,
+   flex-direction: column;
+ }
+ 
+-.bookmark-item[cutting] {
+-  > .toolbarbutton-icon,
+-  > .menu-icon {
+-    opacity: 0.5;
+-  }
+-
+-  > .toolbarbutton-text,
+-  > .menu-text {
+-    opacity: 0.7;
+-  }
+-}
+-
+ /* Menupopup drop indicators */
+ 
+ menupopup::part(drop-indicator-container) {
+diff --git a/browser/themes/shared/contextmenu.css b/browser/themes/shared/contextmenu.css
+index dfa65c91bca8..e35dde4fe9f4 100644
+--- a/browser/themes/shared/contextmenu.css
++++ b/browser/themes/shared/contextmenu.css
+@@ -13,15 +13,22 @@
+   margin: 0;
+   padding: 0;
+ 
+-  > .menu-text {
++  > .menu-iconic-text,
++  > .menu-accel-container {
+     display: none;
+   }
+ 
+-  > .menu-icon {
+-    width: auto;
+-    height: auto;
+-    padding: 7px;
++  > .menu-iconic-left {
++    appearance: none;
+     margin: 0;
++    padding: 0;
++
++    > .menu-iconic-icon {
++      width: auto;
++      height: auto;
++      padding: 7px;
++      margin: 0;
++    }
+   }
+ }
+ 
+diff --git a/browser/themes/shared/customizableui/customizeMode.css b/browser/themes/shared/customizableui/customizeMode.css
+index 0812587d725a..6d318b05df9c 100644
+--- a/browser/themes/shared/customizableui/customizeMode.css
++++ b/browser/themes/shared/customizableui/customizeMode.css
+@@ -338,6 +338,12 @@ toolbarpaletteitem {
+   --arrowpanel-padding: 8px;
+ }
+ 
++.customization-uidensity-menuitem > .menu-iconic-left > .menu-iconic-icon {
++  width: 32px;
++  height: 32px;
++  margin: 5px;
++}
++
+ .customization-uidensity-menuitem {
+   appearance: none;
+   color: inherit;
+@@ -346,30 +352,6 @@ toolbarpaletteitem {
+   padding-block: 0;
+   padding-inline: 0 5px;
+   margin: 2px 0;
+-
+-  > .menu-icon {
+-    width: 32px;
+-    height: 32px;
+-    margin: 5px;
+-
+-    &:-moz-locale-dir(rtl) {
+-      transform: scaleX(-1);
+-    }
+-  }
+-
+-  > .menu-text {
+-    text-align: start;
+-  }
+-
+-  &:hover,
+-  &:focus-visible {
+-    background-color: var(--button-background-color-hover);
+-  }
+-
+-  &:hover:active,
+-  &[active="true"] {
+-    background-color: var(--button-background-color-active);
+-  }
+ }
+ 
+ #customization-uidensity-menuitem-normal {
+@@ -384,6 +366,22 @@ toolbarpaletteitem {
+   --menuitem-icon: url("chrome://browser/skin/customizableui/density-touch.svg");
+ }
+ 
++.customization-uidensity-menuitem:is(:hover, :focus-visible) {
++  background-color: var(--button-background-color-hover);
++}
++
++.customization-uidensity-menuitem:is(:hover:active, [active="true"]) {
++  background-color: var(--button-background-color-active);
++}
++
++.customization-uidensity-menuitem > .menu-iconic-text {
++  text-align: start;
++}
++
++.customization-uidensity-menuitem > .menu-iconic-left > .menu-iconic-icon:-moz-locale-dir(rtl) {
++  transform: scaleX(-1);
++}
++
+ #customization-uidensity-button > .box-inherit > .box-inherit > .button-icon:-moz-locale-dir(rtl) {
+   transform: scaleX(-1);
+ }
+diff --git a/browser/themes/shared/customizableui/panelUI-shared.css b/browser/themes/shared/customizableui/panelUI-shared.css
+index 2c53e7f7127e..4c5d8382ea74 100644
+--- a/browser/themes/shared/customizableui/panelUI-shared.css
++++ b/browser/themes/shared/customizableui/panelUI-shared.css
+@@ -340,30 +340,40 @@ panelview {
+   }
+ 
+   .menu-text,
+-  .menu-icon,
++  .menu-iconic-text,
++  .menu-iconic-icon,
++  .menu-iconic-left,
++  .menu-iconic-accel,
++  .menu-accel-container,
+   .menu-accel,
+-  menu::after {
+-    /* Reset spacing set by menu.css */
++  .menu-right {
++    /* Reset every spacing and appearance set by the platforms' menu.css
++     * and set the ones we need in the following rules. */
+     margin: 0;
+     padding: 0;
++    appearance: none;
+   }
+ 
+-  menuitem:not(.menuitem-iconic, [image]) > .menu-icon,
+-  menu:not(.menu-iconic) > .menu-icon {
+-    display: none;
+-  }
+-
+-  .menu-icon {
++  :is(.menu-iconic, .menuitem-iconic) > .menu-iconic-left {
+     margin-inline-end: 8px;
+   }
+ 
+-  menu::after,
+-  .menu-accel {
++  .menu-accel,
++  .menu-iconic-accel {
+     margin-inline-start: 16px;
+   }
+ 
+-  menu::after {
++  menu > .menu-right {
++    list-style-image: url(chrome://global/skin/icons/arrow-right.svg);
++    -moz-context-properties: fill, fill-opacity;
++    fill: currentColor;
+     fill-opacity: 0.6;
++    width: unset;
++    height: unset;
++
++    &:-moz-locale-dir(rtl) {
++      list-style-image: url(chrome://global/skin/icons/arrow-left.svg);
++    }
+   }
+ 
+   menuseparator {
+diff --git a/browser/themes/shared/places/editBookmark.css b/browser/themes/shared/places/editBookmark.css
+index 9149704abc1d..4c00982e620f 100644
+--- a/browser/themes/shared/places/editBookmark.css
++++ b/browser/themes/shared/places/editBookmark.css
+@@ -26,16 +26,22 @@
+   height: 16px;
+ }
+ 
++@media (-moz-platform: macos) {
++  /* FIXME(emilio): Is this rule needed at all? */
++  .folder-icon > .menu-iconic-left > .menu-iconic-icon {
++    width: 16px;
++    height: 16px;
++  }
++}
++
++.folder-icon > .menu-iconic-left {
++  -moz-context-properties: fill;
++  fill: currentColor;
++  display: flex;
++}
++
+ .folder-icon {
+   list-style-image: url("chrome://global/skin/icons/folder.svg") !important;
+-
+-  /* This is needed because windows and Linux hide icons inside menulists
+-   * unconditionally (why?) */
+-  > .menu-icon {
+-    -moz-context-properties: fill;
+-    fill: currentColor;
+-    display: flex;
+-  }
+ }
+ 
+ #editBMPanel_tagsSelector > richlistitem > image {
+diff --git a/browser/themes/shared/preferences/preferences.css b/browser/themes/shared/preferences/preferences.css
+index 34db50549fc1..641c9365332f 100644
+--- a/browser/themes/shared/preferences/preferences.css
++++ b/browser/themes/shared/preferences/preferences.css
+@@ -1086,24 +1086,28 @@ dialog > .sync-engines-list + hbox {
+   display: none !important;
+ }
+ 
+-menulist[indicator="true"] > menupopup menuitem:not([image]) > .menu-icon {
++menulist[indicator="true"] > menupopup menuitem:not([image]) > .menu-iconic-left {
+   display: flex;
+   min-width: auto; /* Override the min-width defined in menu.css */
+   margin-inline-end: 6px;
++}
++
++menulist[indicator="true"] > menupopup menuitem:not([image]) > .menu-iconic-left > .menu-iconic-icon {
+   width: 8px;
+   height: 10px;
++  margin: 0;
+ }
+ 
+-menulist[indicator="true"] > menupopup menuitem[indicator="true"]:not([image]) > .menu-icon {
++menulist[indicator="true"] > menupopup menuitem[indicator="true"]:not([image]) > .menu-iconic-left > .menu-iconic-icon {
+   list-style-image: url(chrome://browser/skin/preferences/search-arrow-indicator.svg);
++}
+ 
+-  &:-moz-locale-dir(rtl) {
+-    transform: scaleX(-1);
+-  }
++menulist[indicator="true"] > menupopup menuitem[indicator="true"]:not([image]) > .menu-iconic-left > .menu-iconic-icon:-moz-locale-dir(rtl) {
++  transform: scaleX(-1);
+ }
+ 
+-.menu-highlightable-text {
+-  margin: 0; /* Align with the margin of xul:label.menu-text */
++.menu-iconic-highlightable-text {
++  margin: 0; /* Align with the margin of xul:label.menu-iconic-text */
+ }
+ 
+ #no-results-message > label {
+diff --git a/browser/themes/shared/preferences/search.css b/browser/themes/shared/preferences/search.css
+index 3284fe0cc916..a4dbedec1231 100644
+--- a/browser/themes/shared/preferences/search.css
++++ b/browser/themes/shared/preferences/search.css
+@@ -13,6 +13,11 @@
+   max-width: var(--search-engine-name-max-width);
+ }
+ 
++/* work around a display: none in Linux's menu.css, see bug 1112310 */
++.searchengine-menuitem > .menu-iconic-left {
++  display: flex;
++}
++
+ #engineList {
+   --box-group-max-height: 500px;
+ }
+diff --git a/browser/themes/shared/toolbarbutton-icons.css b/browser/themes/shared/toolbarbutton-icons.css
+index 6ce91c3d5b68..c383e0b06d5e 100644
+--- a/browser/themes/shared/toolbarbutton-icons.css
++++ b/browser/themes/shared/toolbarbutton-icons.css
+@@ -299,7 +299,7 @@
+ 
+ /* Apply crisp rendering for favicons at exactly 2x resolution */
+ @media (resolution: 2x) {
+-  :is(.bookmark-item, .menuitem-with-favicon) > .menu-icon,
++  :is(.bookmark-item, .menuitem-with-favicon) > .menu-iconic-left > .menu-iconic-icon,
+   .bookmark-item > .toolbarbutton-icon {
+     image-rendering: -moz-crisp-edges;
+   }
+diff --git a/browser/themes/shared/urlbar-searchbar.css b/browser/themes/shared/urlbar-searchbar.css
+index 25471fcc8ff0..4cc727cccd72 100644
+--- a/browser/themes/shared/urlbar-searchbar.css
++++ b/browser/themes/shared/urlbar-searchbar.css
+@@ -1105,27 +1105,27 @@
+ }
+ 
+ .searchbar-engine-one-off-add-engine:not([image]),
+-.context-menu-add-engine:not([image]) {
++moz-input-box > menupopup .context-menu-add-engine:not([image]) {
+   list-style-image: image-set(url("chrome://browser/skin/search-engine-placeholder.png"), url("chrome://browser/skin/search-engine-placeholder@2x.png") 2x);
+ }
+ 
+-.searchbar-engine-one-off-add-engine > .button-box,
+-.context-menu-add-engine {
++.searchbar-engine-one-off-add-engine > .button-box::after,
++moz-input-box > menupopup .context-menu-add-engine > .menu-iconic-left::after {
++  content: "";
+   position: relative;
++  display: flex;
++  background: url(chrome://browser/skin/search-indicator-badge-add.svg) no-repeat center;
++  height: 11px;
++  width: 11px;
++  margin-inline: -4px -7px;
++  margin-top: -13px;
++}
+ 
+-  &::before {
+-    content: "";
+-    position: absolute;
+-    display: block;
+-    background: url(chrome://browser/skin/search-indicator-badge-add.svg) no-repeat center;
+-    height: 11px;
+-    width: 11px;
+-    margin-inline-start: 9px;
+-    margin-top: -8px;
+-    /* Needed so it paints after the icon when it is a stacking context (with
+-     * opacity, below) */
+-    z-index: 1;
+-  }
++moz-input-box > menupopup .context-menu-add-engine > .menu-iconic-left::after {
++  /* These differ from the urlbar and searchbar because the context menu
++     may not have enough space */
++  margin-inline: -7px -4px;
++  margin-top: -8px;
+ }
+ 
+ /* Fade a little the icon so that the + badge is more evident and the button
+@@ -1133,6 +1133,9 @@
+ .searchbar-engine-one-off-add-engine[image]:not(:hover) > .button-box > .button-icon {
+   opacity: 0.7;
+ }
++.searchbar-engine-one-off-add-engine[image]:hover > .button-box > .button-icon {
++  opacity: 1;
++}
+ 
+ .searchmode-switcher {
+   appearance: none;
+diff --git a/browser/themes/windows/browser.css b/browser/themes/windows/browser.css
+index a49db59de472..45f37f2fe5d0 100644
+--- a/browser/themes/windows/browser.css
++++ b/browser/themes/windows/browser.css
+@@ -245,10 +245,22 @@
+     max-width: 32em;
+   }
+ 
+-  &:not(.subviewbutton) > .menu-icon {
++  &:not(.subviewbutton) > .menu-iconic-left {
+     margin-block: 0;
+   }
+ 
++  &[cutting] {
++    > .toolbarbutton-icon,
++    > .menu-iconic-left > .menu-iconic-icon {
++      opacity: 0.5;
++    }
++
++    > .toolbarbutton-text,
++    > .menu-iconic-left > .menu-iconic-text {
++      opacity: 0.7;
++    }
++  }
++
+   &:is(toolbarbutton)[dragover="true"][open="true"] {
+     appearance: none;
+     background: SelectedItem !important;
+diff --git a/toolkit/content/tests/chrome/test_menulist_position.xhtml b/toolkit/content/tests/chrome/test_menulist_position.xhtml
+index 03db23cf9ea5..b055c1cdb46f 100644
+--- a/toolkit/content/tests/chrome/test_menulist_position.xhtml
++++ b/toolkit/content/tests/chrome/test_menulist_position.xhtml
+@@ -52,7 +52,7 @@ function popupShown()
+   let index = menulist.selectedIndex;
+   if (menulist.selectedItem && navigator.platform.includes("Mac")) {
+     let menulistlabelrect = menulist.shadowRoot.getElementById("label").getBoundingClientRect();
+-    let mitemlabelrect = menulist.selectedItem.querySelector(".menu-text").getBoundingClientRect();
++    let mitemlabelrect = menulist.selectedItem.querySelector(".menu-iconic-text").getBoundingClientRect();
+ 
+     ok(isWithinHalfPixel(menulistlabelrect.top, mitemlabelrect.top),
+        `Labels vertically aligned for ${index} : ${menulistlabelrect.top} vs. ${mitemlabelrect.top}`);
+diff --git a/toolkit/content/tests/widgets/popup_shared.js b/toolkit/content/tests/widgets/popup_shared.js
+index dc6792f90a11..ba42b22ffb71 100644
+--- a/toolkit/content/tests/widgets/popup_shared.js
++++ b/toolkit/content/tests/widgets/popup_shared.js
+@@ -410,8 +410,8 @@ function convertPosition(anchor, align) {
+  * which can shift the bottom/right up to 0.5px from its "ideal" location,
+  * and could cause it to round differently. (See bug 622507.)
+  */
+-function isWithinAPixel(a, b, message) {
+-  ok(Math.abs(a - b) < 1, `${message}: ${a}, ${b}`);
++function isWithinHalfPixel(a, b, message) {
++  ok(Math.abs(a - b) <= 0.5, `${message}: ${a}, ${b}`);
+ }
+ 
+ function compareEdge(anchor, popup, edge, offsetX, offsetY, testname) {
+@@ -507,71 +507,79 @@ function compareEdge(anchor, popup, edge, offsetX, offsetY, testname) {
+         break;
+     }
+ 
+-    isWithinAPixel(popuprect.left, cornerX, testname + " x position");
+-    isWithinAPixel(popuprect.top, cornerY, testname + " y position");
++    is(
++      Math.round(popuprect.left),
++      Math.round(cornerX),
++      testname + " x position"
++    );
++    is(
++      Math.round(popuprect.top),
++      Math.round(cornerY),
++      testname + " y position"
++    );
+     return;
+   }
+ 
+   if (edge == "overlap") {
+-    isWithinAPixel(
+-      anchorrect.left + offsetY,
+-      popuprect.left,
++    is(
++      Math.round(anchorrect.left) + offsetY,
++      Math.round(popuprect.left),
+       testname + " position1"
+     );
+-    isWithinAPixel(
+-      anchorrect.top + offsetY,
+-      popuprect.top,
++    is(
++      Math.round(anchorrect.top) + offsetY,
++      Math.round(popuprect.top),
+       testname + " position2"
+     );
+     return;
+   }
+ 
+   if (edge.indexOf("before") == 0) {
+-    isWithinAPixel(
++    isWithinHalfPixel(
+       anchorrect.top + offsetY,
+       popuprect.bottom,
+       testname + " position1"
+     );
+   } else if (edge.indexOf("after") == 0) {
+-    isWithinAPixel(
+-      anchorrect.bottom + offsetY,
+-      popuprect.top,
++    is(
++      Math.round(anchorrect.bottom) + offsetY,
++      Math.round(popuprect.top),
+       testname + " position1"
+     );
+   } else if (edge.indexOf("start") == 0) {
+-    isWithinAPixel(
++    isWithinHalfPixel(
+       anchorrect.left + offsetX,
+       popuprect.right,
+       testname + " position1"
+     );
+   } else if (edge.indexOf("end") == 0) {
+-    isWithinAPixel(
+-      anchorrect.right + offsetX,
+-      popuprect.left,
++    is(
++      Math.round(anchorrect.right) + offsetX,
++      Math.round(popuprect.left),
+       testname + " position1"
+     );
+   }
+ 
+   if (0 < edge.indexOf("before")) {
+-    isWithinAPixel(
+-      anchorrect.top + offsetY,
+-      popuprect.top,
++    is(
++      Math.round(anchorrect.top) + offsetY,
++      Math.round(popuprect.top),
+       testname + " position2"
+     );
+   } else if (0 < edge.indexOf("after")) {
+-    isWithinAPixel(
++    isWithinHalfPixel(
+       anchorrect.bottom + offsetY,
+       popuprect.bottom,
+       testname + " position2"
+     );
+   } else if (0 < edge.indexOf("start")) {
+-    isWithinAPixel(
+-      anchorrect.left + offsetX,
+-      popuprect.left,
++    is(
++      Math.round(anchorrect.left) + offsetX,
++      Math.round(popuprect.left),
+       testname + " position2"
+     );
+   } else if (0 < edge.indexOf("end")) {
+-    isWithinAPixel(
++    isWithinHalfPixel(
+       anchorrect.right + offsetX,
+       popuprect.right,
+       testname + " position2"
+diff --git a/toolkit/content/widgets/menu.js b/toolkit/content/widgets/menu.js
+index a243deed08c1..56eaa5908342 100644
+--- a/toolkit/content/widgets/menu.js
++++ b/toolkit/content/widgets/menu.js
+@@ -133,7 +133,9 @@
+   class MozMenuCaption extends MozMenuBaseMixin(MozXULElement) {
+     static get inheritedAttributes() {
+       return {
+-        ".menu-text": "value=label,crop",
++        ".menu-iconic-left": "selected,disabled,checked",
++        ".menu-iconic-text": "value=label,crop,highlightable",
++        ".menu-iconic-highlightable-text": "text=label,crop,highlightable",
+       };
+     }
+ 
+@@ -142,7 +144,10 @@
+       this.textContent = "";
+       this.appendChild(
+         MozXULElement.parseXULToFragment(`
+-      <label class="menu-text" crop="end" aria-hidden="true"/>
++      <hbox class="menu-iconic-left" align="center" pack="center" aria-hidden="true">
++      </hbox>
++      <label class="menu-iconic-text" flex="1" crop="end" aria-hidden="true"></label>
++      <label class="menu-iconic-highlightable-text" crop="end" aria-hidden="true"></label>
+     `)
+       );
+       this.initializeAttributeInheritance();
+@@ -190,31 +195,75 @@
+ 
+     static get inheritedAttributes() {
+       return {
+-        ".menu-text": "value=label,crop,accesskey",
+-        // NOTE(emilio): This menu-highlightable-key thing is a hack for
+-        // find-in-page in preferences, it really sucks. We can't use
+-        // text=label everywhere because we rely on the accesskey...
+-        ".menu-highlightable-text": "text=label,crop,accesskey",
+-        ".menu-icon":
++        ".menu-iconic-text": "value=label,crop,accesskey,highlightable",
++        ".menu-text": "value=label,crop,accesskey,highlightable",
++        ".menu-iconic-highlightable-text":
++          "text=label,crop,accesskey,highlightable",
++        ".menu-iconic-left": "selected,_moz-menuactive,disabled,checked",
++        ".menu-iconic-icon":
+           "src=image,validate,triggeringprincipal=iconloadingprincipal",
++        ".menu-iconic-accel": "value=acceltext",
+         ".menu-accel": "value=acceltext",
+       };
+     }
+ 
+-    static get fragment() {
++    static get iconicNoAccelFragment() {
++      // Add aria-hidden="true" on all DOM, since XULMenuAccessible handles accessibility here.
++      let frag = document.importNode(
++        MozXULElement.parseXULToFragment(`
++      <hbox class="menu-iconic-left" align="center" pack="center" aria-hidden="true">
++        <image class="menu-iconic-icon"/>
++      </hbox>
++      <label class="menu-iconic-text" flex="1" crop="end" aria-hidden="true"/>
++      <label class="menu-iconic-highlightable-text" crop="end" aria-hidden="true"/>
++    `),
++        true
++      );
++      Object.defineProperty(this, "iconicNoAccelFragment", { value: frag });
++      return frag;
++    }
++
++    static get iconicFragment() {
++      let frag = document.importNode(
++        MozXULElement.parseXULToFragment(`
++      <hbox class="menu-iconic-left" align="center" pack="center" aria-hidden="true">
++        <image class="menu-iconic-icon"/>
++      </hbox>
++      <label class="menu-iconic-text" flex="1" crop="end" aria-hidden="true"/>
++      <label class="menu-iconic-highlightable-text" crop="end" aria-hidden="true"/>
++      <hbox class="menu-accel-container" aria-hidden="true">
++        <label class="menu-iconic-accel"/>
++      </hbox>
++    `),
++        true
++      );
++      Object.defineProperty(this, "iconicFragment", { value: frag });
++      return frag;
++    }
++
++    static get plainFragment() {
+       let frag = document.importNode(
+         MozXULElement.parseXULToFragment(`
+-      <image class="menu-icon" aria-hidden="true"/>
+       <label class="menu-text" crop="end" aria-hidden="true"/>
+-      <label class="menu-highlightable-text" crop="end" aria-hidden="true"/>
+-      <label class="menu-accel" aria-hidden="true"/>
++      <hbox class="menu-accel-container" aria-hidden="true">
++        <label class="menu-accel"/>
++      </hbox>
+     `),
+         true
+       );
+-      Object.defineProperty(this, "fragment", { value: frag });
++      Object.defineProperty(this, "plainFragment", { value: frag });
+       return frag;
+     }
+ 
++    get isIconic() {
++      let type = this.getAttribute("type");
++      return (
++        type == "checkbox" ||
++        type == "radio" ||
++        this.classList.contains("menuitem-iconic")
++      );
++    }
++
+     get isMenulistChild() {
+       return this.matches("menulist > menupopup > menuitem");
+     }
+@@ -267,7 +316,13 @@
+       }
+       this.renderedOnce = true;
+       this.textContent = "";
+-      this.append(this.constructor.fragment.cloneNode(true));
++      if (this.isMenulistChild) {
++        this.append(this.constructor.iconicNoAccelFragment.cloneNode(true));
++      } else if (this.isIconic) {
++        this.append(this.constructor.iconicFragment.cloneNode(true));
++      } else {
++        this.append(this.constructor.plainFragment.cloneNode(true));
++      }
+ 
+       this._computeAccelTextFromKeyIfNeeded();
+       this.initializeAttributeInheritance();
+@@ -300,9 +355,15 @@
+   ) {
+     static get inheritedAttributes() {
+       return {
++        ".menubar-text": "value=label,accesskey,crop",
++        ".menu-iconic-text": "value=label,accesskey,crop,highlightable",
+         ".menu-text": "value=label,accesskey,crop",
+-        ".menu-icon":
++        ".menu-iconic-highlightable-text":
++          "text=label,crop,accesskey,highlightable",
++        ".menu-iconic-icon":
+           "src=image,triggeringprincipal=iconloadingprincipal,validate",
++        ".menu-iconic-accel": "value=acceltext",
++        ".menu-right": "_moz-menuactive,disabled",
+         ".menu-accel": "value=acceltext",
+       };
+     }
+@@ -325,17 +386,54 @@
+       return this.matches("menupopup:not([hasbeenopened]) menu");
+     }
+ 
++    get isIconic() {
++      return this.classList.contains("menu-iconic");
++    }
++
+     get fragment() {
+-      let frag = document.importNode(
+-        MozXULElement.parseXULToFragment(`
+-      <image class="menu-icon"/>
+-      <label class="menu-text" flex="1" crop="end" aria-hidden="true"/>
+-      <label class="menu-accel" aria-hidden="true"/>
+-    `),
+-        true
+-      );
+-      Object.defineProperty(this, "fragment", { value: frag });
+-      return frag;
++      let fragment = null;
++      if (this.isMenubarChild) {
++        if (!MozMenu.menubarFrag) {
++          // Add aria-hidden="true" on all DOM, since XULMenuAccessible handles accessibility here.
++          MozMenu.menubarFrag = MozXULElement.parseXULToFragment(`
++          <label class="menubar-text" crop="end" aria-hidden="true"/>
++        `);
++        }
++        fragment = document.importNode(MozMenu.menubarFrag, true);
++      } else if (this.isIconic) {
++        if (!MozMenu.normalIconicFrag) {
++          MozMenu.normalIconicFrag = MozXULElement.parseXULToFragment(`
++          <hbox class="menu-iconic-left" align="center" pack="center" aria-hidden="true">
++            <image class="menu-iconic-icon"/>
++          </hbox>
++          <label class="menu-iconic-text" flex="1" crop="end" aria-hidden="true"/>
++          <label class="menu-iconic-highlightable-text" crop="end" aria-hidden="true"/>
++          <hbox class="menu-accel-container" anonid="accel" aria-hidden="true">
++            <label class="menu-iconic-accel"/>
++          </hbox>
++          <hbox align="center" class="menu-right" aria-hidden="true">
++            <image/>
++          </hbox>
++       `);
++        }
++
++        fragment = document.importNode(MozMenu.normalIconicFrag, true);
++      } else {
++        if (!MozMenu.normalFrag) {
++          MozMenu.normalFrag = MozXULElement.parseXULToFragment(`
++          <label class="menu-text" crop="end" aria-hidden="true"/>
++          <hbox class="menu-accel-container" anonid="accel" aria-hidden="true">
++            <label class="menu-accel"/>
++          </hbox>
++          <hbox align="center" class="menu-right" aria-hidden="true">
++            <image/>
++          </hbox>
++       `);
++        }
++
++        fragment = document.importNode(MozMenu.normalFrag, true);
++      }
++      return fragment;
+     }
+ 
+     render() {
+diff --git a/toolkit/content/xul.css b/toolkit/content/xul.css
+index f73008843252..191748cd53b0 100644
+--- a/toolkit/content/xul.css
++++ b/toolkit/content/xul.css
+@@ -217,6 +217,14 @@ html|label.toolbarbutton-badge:empty {
+ .toolbarbutton-badge-stack,
+ .treecol-text,
+ .treecol-sortdirection,
++.menubar-text,
++.menu-text,
++.menu-highlightable-text,
++.menu-iconic-text,
++.menu-iconic-highlightable-text,
++.menu-iconic-left,
++.menu-right,
++.menu-accel-container,
+ .button-box {
+   /* Preserves legacy behavior */
+   pointer-events: none;
+@@ -644,6 +651,11 @@ button, image {
+   display: inline-flex;
+ }
+ 
++.menu-iconic-highlightable-text:not([highlightable="true"]),
++.menu-iconic-text[highlightable="true"] {
++  display: none;
++}
++
+ [orient="vertical"] {
+   flex-direction: column !important;
+ }
+diff --git a/toolkit/themes/shared/global-shared.css b/toolkit/themes/shared/global-shared.css
+index 8b2145894208..386c7a2fb013 100644
+--- a/toolkit/themes/shared/global-shared.css
++++ b/toolkit/themes/shared/global-shared.css
+@@ -481,6 +481,6 @@ button.text-link .button-text {
+ }
+ 
+ /* Indent options in optgroups */
+-#ContentSelectDropdown menuitem[indented] > .menu-text {
++#ContentSelectDropdown menuitem[indented] > .menu-iconic-text {
+   padding-inline-start: var(--space-xxlarge);
+ }
+diff --git a/toolkit/themes/shared/menu.css b/toolkit/themes/shared/menu.css
+index ecf66f30b2dd..fc17423e0d2a 100644
+--- a/toolkit/themes/shared/menu.css
++++ b/toolkit/themes/shared/menu.css
+@@ -7,7 +7,7 @@
+ menupopup,
+ panel {
+   --menu-icon-opacity: 1;
+-  --menu-arrow-size: 1em;
++  --menu-arrow-width: 1em;
+   --menuitem-border-radius: 3px;
+   --menuitem-margin: 0px;
+   --menuitem-padding: 0.5em 1em;
+@@ -20,7 +20,7 @@ panel {
+   }
+ 
+   @media (-moz-platform: windows) {
+-    --menu-arrow-size: max(1em, 16px);
++    --menu-arrow-width: max(1em, 16px);
+ 
+     @media (prefers-color-scheme: light) {
+       --menu-icon-opacity: 0.7;
+@@ -119,6 +119,14 @@ menuseparator {
+   }
+ }
+ 
++/* Accel text */
++
++@media not (prefers-contrast) {
++  menuitem:not([disabled]) > .menu-accel-container > :is(.menu-accel, .menu-iconic-accel) {
++    color: var(--text-color-disabled);
++  }
++}
++
+ /* Scroll buttons */
+ 
+ /* Hide arrow buttons when there's nothing to scroll in that direction */
+@@ -204,10 +212,10 @@ menubar > menu {
+       }
+     }
+   }
++}
+ 
+-  > .menu-text {
+-    margin: 0;
+-  }
++.menubar-text {
++  margin: 0;
+ }
+ 
+ menu,
+@@ -248,42 +252,36 @@ menucaption {
+   font-weight: var(--font-weight-bold);
+ }
+ 
+-.menu-icon,
+-.menu-text,
+-.menu-highlightable-text,
+-.menu-accel {
+-  pointer-events: none;
+-}
+-
+ /* ..... menu arrow box ..... */
+ 
+-menupopup > menu::after {
+-  content: "";
+-  display: block;
+-  width: var(--menu-arrow-size);
+-  height: var(--menu-arrow-size);
+-  background-image: url("chrome://global/skin/icons/arrow-right.svg");
+-  background-size: var(--menu-arrow-size);
+-
++.menu-right {
++  list-style-image: url("chrome://global/skin/icons/arrow-right.svg");
+   -moz-context-properties: fill, fill-opacity;
+   fill: currentColor;
+   fill-opacity: var(--menu-icon-opacity);
+ 
+-  margin-inline: 1em 0;
++  &:-moz-locale-dir(rtl) {
++    list-style-image: url("chrome://global/skin/icons/arrow-left.svg");
++  }
++
++  > image {
++    width: var(--menu-arrow-width);
++  }
++
+   @media (-moz-platform: linux) {
++    margin-block: 0;
+     margin-inline: 0.5em 0;
+   }
++
+   @media (-moz-platform: macos) {
+     margin-inline: 22px -3px;
+   }
+ }
+ 
+-menupopup > menu:-moz-locale-dir(rtl)::after {
+-  background-image: url("chrome://global/skin/icons/arrow-left.svg");
+-}
+-
+ .menu-text,
+-.menu-accel {
++.menu-iconic-text,
++.menu-accel,
++.menu-iconic-accel {
+   margin: 0;
+   @media (-moz-platform: windows) {
+     padding: 1px 0;
+@@ -292,9 +291,8 @@ menupopup > menu:-moz-locale-dir(rtl)::after {
+   }
+ }
+ 
+-/* Accel text */
+-
+-.menu-accel {
++.menu-accel,
++.menu-iconic-accel {
+   margin-inline: 0.74em 0.35em;
+   @media (-moz-platform: macos) {
+     margin-inline: 25px 0;
+@@ -303,49 +301,39 @@ menupopup > menu:-moz-locale-dir(rtl)::after {
+     /* Matches the margin-inline-end on iconic-left */
+     margin-inline: 0.5em 0;
+   }
++}
+ 
+-  @media not (prefers-contrast) {
+-    menuitem:not([disabled]) > & {
+-      color: var(--text-color-disabled);
+-    }
+-  }
+-
+-  :is(menu, menuitem):not([acceltext]) > & {
++@media (-moz-platform: macos) {
++  /* On macOS, empty acceltext shouldn't take up any space */
++  :is(menu, menuitem):not([acceltext]) > .menu-accel-container {
+     display: none;
+   }
+ }
+ 
+-menuitem:not([highlightable]) > .menu-highlightable-text,
+-menuitem[highlightable] > .menu-text {
+-  display: none;
++.menu-iconic-icon {
++  width: 16px;
++  height: 16px;
+ }
+ 
+-.menu-highlightable-text,
+-.menu-text {
+-  flex: 1;
++@media (-moz-platform: linux) {
++  .menu-text {
++    /* This is 16px (of icons / checkbox) + the size of end-margin on .menu-iconic-left */
++    margin-inline-start: calc(16px + 0.5em);
++  }
+ }
+ 
+-.menu-icon {
+-  width: 16px;
+-  height: 16px;
+-
++.menu-iconic-left {
+   @media (-moz-platform: linux) {
+-    /* Matches inline menuitem padding */
+     margin-inline-end: 0.5em;
+   }
+   @media (-moz-platform: windows) {
+-    margin-top: 2px;
++    padding-top: 2px;
+     margin-inline-end: 8px;
+   }
+   @media (-moz-platform: macos) {
+     margin-block: -2px;
+     margin-inline-end: 6px;
+   }
+-  /* Empty icons shouldn't take up any space */
+-  menuitem:not(.menuitem-iconic, [image]) > &,
+-  menu:not(.menu-iconic) > & {
+-    display: none;
+-  }
+ }
+ 
+ /* checkbox / radio rendering */
+@@ -354,12 +346,12 @@ menuitem[highlightable] > .menu-text {
+ 
+ /* On linux, we use regular checkboxes and radio buttons */
+ @media (-moz-platform: linux) {
+-  menuitem:is([type="checkbox"], [checked]) .menu-icon {
++  menuitem:is([type="checkbox"], [checked]) .menu-iconic-icon {
+     appearance: auto;
+     -moz-default-appearance: checkbox;
+   }
+ 
+-  menuitem[type="radio"] .menu-icon {
++  menuitem[type="radio"] .menu-iconic-icon {
+     appearance: auto;
+     -moz-default-appearance: radio;
+   }
+@@ -367,15 +359,20 @@ menuitem[highlightable] > .menu-text {
+ 
+ /* On windows we use a checkmark */
+ @media (-moz-platform: windows) {
++  menuitem:is([type="checkbox"], [type="radio"]):not([checked="true"]) > .menu-iconic-left > .menu-iconic-icon {
++    display: none;
++  }
++
+   /* We need to do something to override the default style for selected
+      checkboxes and radio buttons because the native drawing we use on other
+      Windows versions looks pretty bad with the Win10 styles, so for now we'll
+      insert a generic checkmark icon for both types. */
+-  menuitem[checked] > .menu-icon {
++  menuitem[checked] > .menu-iconic-left {
+     -moz-context-properties: fill, fill-opacity;
+     fill: currentColor;
+     fill-opacity: var(--menu-icon-opacity);
+     list-style-image: url("chrome://global/skin/icons/menu-check.svg");
++    width: 16px;
+   }
+ }
+ 
+diff --git a/toolkit/themes/windows/global/global.css b/toolkit/themes/windows/global/global.css
+index 21a92c51ccb0..7fadeb31ecf5 100644
+--- a/toolkit/themes/windows/global/global.css
++++ b/toolkit/themes/windows/global/global.css
+@@ -91,41 +91,41 @@ xul|separator.groove[orient="vertical"] {
+ 
+ /* Content select */
+ 
++#ContentSelectDropdown > menupopup > menucaption,
++#ContentSelectDropdown > menupopup > menuitem {
++  padding: 0 6px;
++  border-width: 0;
++}
++
+ #ContentSelectDropdown > menupopup {
+   font: -moz-list;
++}
+ 
+-  > menucaption,
+-  > menuitem {
+-    padding: 0 6px;
+-    border-width: 0;
+-
+-    > .menu-text {
+-      /* Padding should follow the 4/12 ratio, where 12px is the default font-size
+-         with 4px being the preferred padding size. */
+-      padding-block: 0.3333em;
+-    }
+-  }
+-
+-  > menucaption > .menu-text {
+-    font-weight: var(--font-weight-bold);
+-  }
++#ContentSelectDropdown > menupopup > menucaption > .menu-iconic-text,
++#ContentSelectDropdown > menupopup > menuitem > .menu-iconic-text {
++  /* Padding should follow the 4/12 ratio, where 12px is the default font-size
++     with 4px being the preferred padding size. */
++  padding-block: 0.3333em;
++}
++#ContentSelectDropdown > menupopup > menucaption > .menu-iconic-text {
++  font-weight: var(--font-weight-bold);
++}
+ 
+-  > menuitem[_moz-menuactive="true"][disabled] {
+-    color: GrayText;
+-    background-color: unset;
+-  }
++#ContentSelectDropdown > menupopup > menuitem[_moz-menuactive="true"][disabled] {
++  color: GrayText;
++  background-color: unset;
++}
+ 
+-  > menuitem[indented] > .menu-text {
+-    padding-inline-start: 20px;
+-  }
+-
+-  > menucaption[disabled] {
+-    color: GrayText;
+-  }
++#ContentSelectDropdown > menupopup > menuitem[indented] > .menu-iconic-text {
++  padding-inline-start: 20px;
++}
++
++#ContentSelectDropdown > menupopup > menucaption[disabled] {
++  color: GrayText;
+ }
+ 
+-#ContentSelectDropdown > .isOpenedViaTouch > menucaption > .menu-text,
+-#ContentSelectDropdown > .isOpenedViaTouch > menuitem > .menu-text {
++#ContentSelectDropdown > .isOpenedViaTouch > menucaption > .menu-iconic-text,
++#ContentSelectDropdown > .isOpenedViaTouch > menuitem > .menu-iconic-text {
+   /* Touch padding should follow the 11/12 ratio, where 12px is the default
+      font-size with 11px being the preferred padding size. */
+   padding-block: 0.9167em;

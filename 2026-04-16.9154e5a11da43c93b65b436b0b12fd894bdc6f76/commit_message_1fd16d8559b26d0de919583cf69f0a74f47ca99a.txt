@@ -1,0 +1,1 @@
+Bug 1942335 - Stop forcing GDI Classic rendering for a list of common Windows fonts. r=jrmuizel    2025-01-18 02:59:49    1fd16d8559b26d0de919583cf69f0a74f47ca99a

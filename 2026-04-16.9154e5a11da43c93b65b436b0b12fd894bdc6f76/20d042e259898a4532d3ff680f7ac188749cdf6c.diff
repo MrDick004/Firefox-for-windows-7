@@ -1,0 +1,1039 @@
+diff --git a/browser/base/content/browser-places.js b/browser/base/content/browser-places.js
+index 76689829962f..ad482357f3cc 100644
+--- a/browser/base/content/browser-places.js
++++ b/browser/base/content/browser-places.js
+@@ -1801,7 +1801,11 @@ var BookmarkingUI = {
+         // The page action panel element may not have been created yet.
+         continue;
+       }
+-      element.toggleAttribute("starred", starred);
++      if (starred) {
++        element.setAttribute("starred", "true");
++      } else {
++        element.removeAttribute("starred");
++      }
+     }
+ 
+     if (!this.starBox) {
+diff --git a/browser/base/content/test/pageActions/browser_PageActions_overflow.js b/browser/base/content/test/pageActions/browser_PageActions_overflow.js
+index 9c43325bc153..4cc0519c8bc1 100644
+--- a/browser/base/content/test/pageActions/browser_PageActions_overflow.js
++++ b/browser/base/content/test/pageActions/browser_PageActions_overflow.js
+@@ -130,6 +130,7 @@ add_task(async function bookmark() {
+     () => bookmarkButton.label === "Edit This Bookmark…"
+   );
+   Assert.ok(bookmarkButton.hasAttribute("starred"));
++  Assert.equal(bookmarkButton.getAttribute("starred"), "true");
+ 
+   // Click it again.
+   hiddenPromise = promisePageActionPanelHidden(win);
+diff --git a/browser/base/content/webrtcIndicator.xhtml b/browser/base/content/webrtcIndicator.xhtml
+index 0e3b13155057..b5abebfdf3ce 100644
+--- a/browser/base/content/webrtcIndicator.xhtml
++++ b/browser/base/content/webrtcIndicator.xhtml
+@@ -26,21 +26,18 @@
+ 
+   <xul:menu
+     id="webRTC-sharingCamera-menu"
+-    class="menu-iconic"
+     data-l10n-id="webrtc-camera-system-menu"
+   >
+     <xul:menupopup type="Camera"> </xul:menupopup>
+   </xul:menu>
+   <xul:menu
+     id="webRTC-sharingMicrophone-menu"
+-    class="menu-iconic"
+     data-l10n-id="webrtc-microphone-system-menu"
+   >
+     <xul:menupopup type="Microphone"> </xul:menupopup>
+   </xul:menu>
+   <xul:menu
+     id="webRTC-sharingScreen-menu"
+-    class="menu-iconic"
+     data-l10n-id="webrtc-screen-system-menu"
+   >
+     <xul:menupopup type="Screen"> </xul:menupopup>
+diff --git a/browser/components/contextualidentity/content/usercontext.css b/browser/components/contextualidentity/content/usercontext.css
+index 73cbe0c8ef43..657197a18ee0 100644
+--- a/browser/components/contextualidentity/content/usercontext.css
++++ b/browser/components/contextualidentity/content/usercontext.css
+@@ -143,6 +143,6 @@
+ }
+ 
+ .menuitem-iconic[data-usercontextid] {
+-  --menuitem-icon: var(--identity-icon);
++  list-style-image: var(--identity-icon);
+   --menuitem-icon-fill: var(--identity-icon-color);
+ }
+diff --git a/browser/components/extensions/test/browser/browser_ext_sidebarAction_context.js b/browser/components/extensions/test/browser/browser_ext_sidebarAction_context.js
+index dcde455f52a6..93d34d448701 100644
+--- a/browser/components/extensions/test/browser/browser_ext_sidebarAction_context.js
++++ b/browser/components/extensions/test/browser/browser_ext_sidebarAction_context.js
+@@ -107,7 +107,7 @@ async function runTests(options) {
+ 
+     let title = details.title || options.manifest.name;
+ 
+-    is(getMenuitemImage(menu), details.icon, "icon URL is correct");
++    is(getListStyleImage(menu), details.icon, "icon URL is correct");
+     is(menu.getAttribute("label"), title, "image label is correct");
+   }
+ 
+diff --git a/browser/components/extensions/test/browser/head.js b/browser/components/extensions/test/browser/head.js
+index 73c0a764b3e2..df8ced8ff8af 100644
+--- a/browser/components/extensions/test/browser/head.js
++++ b/browser/components/extensions/test/browser/head.js
+@@ -19,7 +19,7 @@
+  *          openTabContextMenu closeTabContextMenu
+  *          openToolsMenu closeToolsMenu
+  *          imageBuffer imageBufferFromDataURI
+- *          getInlineOptionsBrowser getMenuitemImage getRawMenuitemImage
++ *          getInlineOptionsBrowser
+  *          getListStyleImage getRawListStyleImage getPanelForNode
+  *          awaitExtensionPanel awaitPopupResize
+  *          promiseContentDimensions alterContent
+@@ -145,20 +145,17 @@ function getInlineOptionsBrowser(aboutAddonsBrowser) {
+   return contentDocument.getElementById("addon-inline-options");
+ }
+ 
+-function _ensurePopupsInitialized(element) {
++function getRawListStyleImage(button) {
+   // Ensure popups are initialized so that the elements are rendered and
+   // getComputedStyle works.
+   for (
+-    let popup = element.closest("panel,menupopup");
++    let popup = button.closest("panel,menupopup");
+     popup;
+     popup = popup.parentElement?.closest("panel,menupopup")
+   ) {
+     popup.ensureInitialized();
+   }
+-}
+ 
+-function getRawListStyleImage(button) {
+-  _ensurePopupsInitialized(button);
+   return button.ownerGlobal.getComputedStyle(button).listStyleImage;
+ }
+ 
+@@ -167,18 +164,6 @@ function getListStyleImage(button) {
+   return match && match[1];
+ }
+ 
+-function getRawMenuitemImage(menuitem) {
+-  _ensurePopupsInitialized(menuitem);
+-  return menuitem.ownerGlobal
+-    .getComputedStyle(menuitem)
+-    .getPropertyValue("--webextension-menuitem-image");
+-}
+-
+-function getMenuitemImage(menuitem) {
+-  let match = /url\("([^"]*)"\)/.exec(getRawMenuitemImage(menuitem));
+-  return match && match[1];
+-}
+-
+ function promiseAnimationFrame(win = window) {
+   return AppUiTestInternals.promiseAnimationFrame(win);
+ }
+diff --git a/browser/components/places/tests/browser/browser_bookmark_add_tags.js b/browser/components/places/tests/browser/browser_bookmark_add_tags.js
+index 52fd68b5d461..1a64ba5a333a 100644
+--- a/browser/components/places/tests/browser/browser_bookmark_add_tags.js
++++ b/browser/components/places/tests/browser/browser_bookmark_add_tags.js
+@@ -74,7 +74,11 @@ add_task(async function test_add_bookmark_tags_from_bookmarkProperties() {
+         "bookmarks-add-bookmark",
+       "Bookmark title is correct"
+     );
+-    Assert.ok(bookmarkStar.hasAttribute("starred"), "Page is starred");
++    Assert.equal(
++      bookmarkStar.getAttribute("starred"),
++      "true",
++      "Page is starred"
++    );
+   });
+   await promiseNotification;
+ 
+diff --git a/browser/components/places/tests/browser/browser_bookmark_popup.js b/browser/components/places/tests/browser/browser_bookmark_popup.js
+index a807fe25972a..52e05bc1f483 100644
+--- a/browser/components/places/tests/browser/browser_bookmark_popup.js
++++ b/browser/components/places/tests/browser/browser_bookmark_popup.js
+@@ -109,7 +109,11 @@ async function test_bookmarks_popup({
+         if (popupEditFn) {
+           await popupEditFn();
+         }
+-        Assert.ok(bookmarkStar.hasAttribute("starred"), "Page is starred");
++        Assert.equal(
++          bookmarkStar.getAttribute("starred"),
++          "true",
++          "Page is starred"
++        );
+         Assert.equal(
+           bookmarkPanelTitle.dataset.l10nId,
+           isNewBookmark ? "bookmarks-add-bookmark" : "bookmarks-edit-bookmark",
+diff --git a/browser/components/places/tests/browser/browser_bookmark_private_window.js b/browser/components/places/tests/browser/browser_bookmark_private_window.js
+index 297a47e99c41..25578338161a 100644
+--- a/browser/components/places/tests/browser/browser_bookmark_private_window.js
++++ b/browser/components/places/tests/browser/browser_bookmark_private_window.js
+@@ -36,8 +36,9 @@ add_task(async function test_add_bookmark_from_private_window() {
+   await shownPromise;
+ 
+   // Check if the bookmark star changes its state after click.
+-  Assert.ok(
+-    bookmarkStar.hasAttribute("starred"),
++  Assert.equal(
++    bookmarkStar.getAttribute("starred"),
++    "true",
+     "Bookmark star changed its state correctly."
+   );
+ 
+diff --git a/browser/components/preferences/home.js b/browser/components/preferences/home.js
+index 42cbb33d4a62..883ab4221015 100644
+--- a/browser/components/preferences/home.js
++++ b/browser/components/preferences/home.js
+@@ -190,6 +190,7 @@ var gHomePane = {
+           option.value = addon.id;
+           option.label = addon.name;
+           menupopup.append(option);
++          option.querySelector("image").src = addon.iconURL;
+         }
+         let setting = extensionOptions.find(o => o.id == addon.id);
+         if (
+diff --git a/browser/components/preferences/main.js b/browser/components/preferences/main.js
+index 9ff98b8f488d..a60831d9309e 100644
+--- a/browser/components/preferences/main.js
++++ b/browser/components/preferences/main.js
+@@ -3166,7 +3164,6 @@ var gMainPane = {
+         iconSrc: this._getSaveFileIcon(),
+         handlerActionId: Ci.nsIHandlerInfo.saveToDisk,
+       });
+-      saveMenuItem.className = "menuitem-iconic";
+       this.actionsMenu.appendChild(saveMenuItem);
+     }
+ 
+diff --git a/browser/components/tabbrowser/TabsList.sys.mjs b/browser/components/tabbrowser/TabsList.sys.mjs
+index b2d6c83f23cf..9223f7169fb6 100644
+--- a/browser/components/tabbrowser/TabsList.sys.mjs
++++ b/browser/components/tabbrowser/TabsList.sys.mjs
+@@ -610,11 +610,8 @@ export class TabsPanel extends TabsListBase {
+       "all-tabs-group-button",
+       "subviewbutton",
+       "subviewbutton-iconic",
+-      "tab-group-icon"
++      group.collapsed ? "tab-group-icon-collapsed" : "tab-group-icon"
+     );
+-    if (group.collapsed) {
+-      button.classList.add("tab-group-icon-collapsed");
+-    }
+     button.setAttribute("flex", "1");
+     button.setAttribute("crop", "end");
+ 
+diff --git a/browser/components/tabbrowser/content/tabbrowser.js b/browser/components/tabbrowser/content/tabbrowser.js
+index 2f704e2805e2..d2a55d293409 100644
+--- a/browser/components/tabbrowser/content/tabbrowser.js
++++ b/browser/components/tabbrowser/content/tabbrowser.js
+@@ -9356,10 +9356,9 @@ var TabContextMenu = {
+       document.l10n.setAttributes(item, "tab-context-unnamed-group");
+     }
+ 
+-    item.classList.add("menuitem-iconic", "tab-group-icon");
+-    if (isSaved) {
+-      item.classList.add("tab-group-icon-closed");
+-    }
++    let iconClass = isSaved ? "tab-group-icon-closed" : "tab-group-icon";
++    item.classList.add("menuitem-iconic");
++    item.classList.add(iconClass);
+ 
+     item.style.setProperty(
+       "--tab-group-color",
+diff --git a/browser/themes/osx/browser.css b/browser/themes/osx/browser.css
+index 47654cb6f47d..9bea393a6a54 100644
+--- a/browser/themes/osx/browser.css
++++ b/browser/themes/osx/browser.css
+@@ -72,6 +72,14 @@
+   list-style-image: none;
+ }
+ 
++/* ----- BOOKMARK MENUS ----- */
++
++#bookmarksToolbarFolderMenu,
++#BMB_bookmarksToolbar,
++#panelMenu_bookmarksToolbar {
++  list-style-image: url("chrome://browser/skin/places/bookmarksToolbar.svg");
++}
++
+ /* Inactive elements are faded out on OSX */
+ .toolbarbutton-1:not(:hover):-moz-window-inactive,
+ .bookmark-item:not(:hover):-moz-window-inactive,
+diff --git a/browser/themes/shared/browser-shared.css b/browser/themes/shared/browser-shared.css
+index 1ad6974cfa08..e8849ca76929 100644
+--- a/browser/themes/shared/browser-shared.css
++++ b/browser/themes/shared/browser-shared.css
+@@ -408,7 +408,7 @@ body {
+ /* Profiles menu */
+ 
+ #menu_newProfile {
+-  --menuitem-icon: url(chrome://global/skin/icons/plus.svg);
++  list-style-image: url(chrome://global/skin/icons/plus.svg);
+ }
+ 
+ .menuitem-iconic-profile {
+@@ -1394,10 +1394,3 @@ popupnotificationcontent {
+     }
+   }
+ }
+-
+-/* Bookmarks roots menu-items */
+-
+-#BMB_bookmarksToolbar,
+-#bookmarksToolbarFolderMenu {
+-  --menuitem-icon: url("chrome://browser/skin/places/bookmarksToolbar.svg");
+-}
+diff --git a/browser/themes/shared/contextmenu.css b/browser/themes/shared/contextmenu.css
+index d63aa1660d44..8cd0d2581b4d 100644
+--- a/browser/themes/shared/contextmenu.css
++++ b/browser/themes/shared/contextmenu.css
+@@ -28,26 +28,27 @@
+ }
+ 
+ #context-back {
+-  --menuitem-icon: url("chrome://browser/skin/back.svg");
++  list-style-image: url("chrome://browser/skin/back.svg");
+ }
+ 
+ #context-forward {
+-  --menuitem-icon: url("chrome://browser/skin/forward.svg");
++  list-style-image: url("chrome://browser/skin/forward.svg");
+ }
+ 
+ #context-reload {
+-  --menuitem-icon: url("chrome://global/skin/icons/reload.svg");
++  list-style-image: url("chrome://global/skin/icons/reload.svg");
+ }
+ 
+ #context-stop {
+-  --menuitem-icon: url("chrome://global/skin/icons/close.svg");
++  list-style-image: url("chrome://global/skin/icons/close.svg");
+ }
+ 
+ #context-bookmarkpage {
+-  --menuitem-icon: url("chrome://browser/skin/bookmark-hollow.svg");
+-  &[starred] {
+-    --menuitem-icon: url("chrome://browser/skin/bookmark.svg");
+-  }
++  list-style-image: url("chrome://browser/skin/bookmark-hollow.svg");
++}
++
++#context-bookmarkpage[starred="true"] {
++  list-style-image: url("chrome://browser/skin/bookmark.svg");
+ }
+ 
+ #context-back:-moz-locale-dir(rtl),
+@@ -57,5 +58,5 @@
+ }
+ 
+ #context-media-eme-learnmore {
+-  --menuitem-icon: url("chrome://browser/skin/drm-icon.svg");
++  list-style-image: url("chrome://browser/skin/drm-icon.svg");
+ }
+diff --git a/browser/themes/shared/places/editBookmark.css b/browser/themes/shared/places/editBookmark.css
+index a0bbfb54b448..9149704abc1d 100644
+--- a/browser/themes/shared/places/editBookmark.css
++++ b/browser/themes/shared/places/editBookmark.css
+@@ -26,14 +26,16 @@
+   height: 16px;
+ }
+ 
+-menulist.folder-icon {
+-  -moz-context-properties: fill;
+-  fill: currentColor;
+-  list-style-image: url("chrome://global/skin/icons/folder.svg") !important;
+-}
+-
+ .folder-icon {
+-  --menuitem-icon: url("chrome://global/skin/icons/folder.svg");
++  list-style-image: url("chrome://global/skin/icons/folder.svg") !important;
++
++  /* This is needed because windows and Linux hide icons inside menulists
++   * unconditionally (why?) */
++  > .menu-icon {
++    -moz-context-properties: fill;
++    fill: currentColor;
++    display: flex;
++  }
+ }
+ 
+ #editBMPanel_tagsSelector > richlistitem > image {
+@@ -74,20 +76,14 @@ menulist.folder-icon {
+ 
+ /* Bookmark panel dropdown icons */
+ 
+-#editBMPanel_folderMenuList[selectedGuid="toolbar_____"] {
+-  list-style-image: url("chrome://browser/skin/places/bookmarksToolbar.svg") !important;
+-}
+-
++#editBMPanel_folderMenuList[selectedGuid="toolbar_____"],
+ #editBMPanel_toolbarFolderItem {
+-  --menuitem-icon: url("chrome://browser/skin/places/bookmarksToolbar.svg");
+-}
+-
+-#editBMPanel_folderMenuList[selectedGuid="menu________"] {
+-  list-style-image: url("chrome://browser/skin/places/bookmarksMenu.svg") !important;
++  list-style-image: url("chrome://browser/skin/places/bookmarksToolbar.svg") !important;
+ }
+ 
++#editBMPanel_folderMenuList[selectedGuid="menu________"],
+ #editBMPanel_bmRootItem {
+-  --menuitem-icon: url("chrome://browser/skin/places/bookmarksMenu.svg");
++  list-style-image: url("chrome://browser/skin/places/bookmarksMenu.svg") !important;
+ }
+ 
+ #bookmarkpropertiesdialog #editBookmarkPanelContent > label:not(.editBMPanel_nameRow),
+diff --git a/browser/themes/shared/sidebar.css b/browser/themes/shared/sidebar.css
+index 15161a37a924..2823222cd4a1 100644
+--- a/browser/themes/shared/sidebar.css
++++ b/browser/themes/shared/sidebar.css
+@@ -228,7 +228,7 @@ menuseparator + #sidebar-extensions-separator {
+ }
+ 
+ .webextension-menuitem {
+-  --menuitem-icon: var(--webextension-menuitem-image);
++  list-style-image: var(--webextension-menuitem-image, inherit) !important;
+ }
+ 
+ /* Sidebar animation */
+diff --git a/browser/themes/shared/tabbrowser/tabs.css b/browser/themes/shared/tabbrowser/tabs.css
+index 064444f65f97..b957fc31ba29 100644
+--- a/browser/themes/shared/tabbrowser/tabs.css
++++ b/browser/themes/shared/tabbrowser/tabs.css
+@@ -2077,28 +2077,35 @@ toolbar:not(#TabsToolbar) #firefox-view-button {
+   }
+ }
+ 
+-/* NOTE(emilio): The double class is an specificity hack to win over the
+- * .subviewbutton-iconic rules */
+-.tab-group-icon.tab-group-icon {
++.menu-iconic.tab-group-icon,
++.menuitem-iconic.tab-group-icon,
++.subviewbutton-iconic.tab-group-icon {
+   list-style-image: url("chrome://browser/skin/tabbrowser/tab-group-chicklet.svg");
+-  --menuitem-icon: url("chrome://browser/skin/tabbrowser/tab-group-chicklet.svg");
+   --menuitem-icon-fill: light-dark(var(--tab-group-color), var(--tab-group-color-invert));
+   -moz-context-properties: fill, stroke;
+   stroke: light-dark(var(--tab-group-color), var(--tab-group-color-invert));
++}
+ 
+   > .toolbarbutton-icon {
+     fill: var(--menuitem-icon-fill);
+   }
+ 
+-  &.tab-group-icon-collapsed {
+-    --menuitem-icon-fill: light-dark(var(--tab-group-color-pale), var(--tab-group-color));
+-    stroke: light-dark(var(--tab-group-color), var(--tab-group-color-pale));
+-  }
++.menu-iconic.tab-group-icon-collapsed,
++.menuitem-iconic.tab-group-icon-collapsed,
++.subviewbutton-iconic.tab-group-icon-collapsed {
++  list-style-image: url("chrome://browser/skin/tabbrowser/tab-group-chicklet.svg");
++  -moz-context-properties: fill, stroke;
++    --menuitem-icon-fill: light-dark(var(--tab-group-color-pale), var(--tab-group-color));
++  stroke: light-dark(var(--tab-group-color), var(--tab-group-color-pale));
++}
+ 
+-  &.tab-group-icon-closed {
+-    --menuitem-icon-fill: transparent;
+-    stroke: light-dark(var(--tab-group-color), var(--tab-group-color-invert));
+-  }
++.menu-iconic.tab-group-icon-closed,
++.menuitem-iconic.tab-group-icon-closed,
++.subviewbutton-iconic.tab-group-icon-closed {
++  list-style-image: url("chrome://browser/skin/tabbrowser/tab-group-chicklet.svg");
++  -moz-context-properties: fill, stroke;
++    --menuitem-icon-fill: transparent;
++  stroke: light-dark(var(--tab-group-color), var(--tab-group-color-invert));
+ }
+ 
+ #tab-group-default-actions {
+diff --git a/browser/themes/shared/toolbarbutton-icons.css b/browser/themes/shared/toolbarbutton-icons.css
+index cdfee632a544..a1255d3384e8 100644
+--- a/browser/themes/shared/toolbarbutton-icons.css
++++ b/browser/themes/shared/toolbarbutton-icons.css
+@@ -256,30 +256,31 @@
+ /* Bookmark toolbar buttons and menu items */
+ 
+ .bookmark-item {
+-  --bookmark-item-icon: url("chrome://global/skin/icons/defaultFavicon.svg");
+-  --menuitem-icon: var(--bookmark-item-icon);
++  list-style-image: url("chrome://global/skin/icons/defaultFavicon.svg");
+ 
+   &:is(toolbarbutton) {
+     -moz-context-properties: fill, fill-opacity;
+     fill: var(--toolbarbutton-icon-fill);
+-    list-style-image: var(--bookmark-item-icon);
+   }
+ 
+-  &[container],
+-  &[hostContainer] {
+-    --bookmark-item-icon: url("chrome://global/skin/icons/folder.svg");
++  &[container] {
++    list-style-image: url("chrome://global/skin/icons/folder.svg");
+   }
+ 
+   &[query] {
+-    --bookmark-item-icon: url("chrome://browser/skin/places/folder-smart.svg");
++    list-style-image: url("chrome://browser/skin/places/folder-smart.svg");
+   }
+ 
+   &[tagContainer] {
+-    --bookmark-item-icon: url("chrome://browser/skin/places/tag.svg");
++    list-style-image: url("chrome://browser/skin/places/tag.svg");
+   }
+ 
+   &[dayContainer] {
+-    --bookmark-item-icon: url("chrome://browser/skin/history.svg");
++    list-style-image: url("chrome://browser/skin/history.svg");
++  }
++
++  &[hostContainer] {
++    list-style-image: url("chrome://global/skin/icons/folder.svg");
+   }
+ }
+ 
+diff --git a/browser/themes/shared/webRTC-menubar-indicator.css b/browser/themes/shared/webRTC-menubar-indicator.css
+index 464d0433ddfc..0183efdef4e0 100644
+--- a/browser/themes/shared/webRTC-menubar-indicator.css
++++ b/browser/themes/shared/webRTC-menubar-indicator.css
+@@ -10,13 +10,19 @@
+ }
+ 
+ #webRTC-sharingCamera-menu {
+-  --menuitem-icon: url("chrome://browser/skin/notification-icons/camera.svg");
++  list-style-image: url("chrome://browser/skin/notification-icons/camera.svg");
+ }
+ 
+ #webRTC-sharingMicrophone-menu {
+-  --menuitem-icon: url("chrome://browser/skin/notification-icons/microphone.svg");
++  list-style-image: url("chrome://browser/skin/notification-icons/microphone.svg");
+ }
+ 
+ #webRTC-sharingScreen-menu {
+-  --menuitem-icon: url("chrome://browser/skin/notification-icons/screen.svg");
++  list-style-image: url("chrome://browser/skin/notification-icons/screen.svg");
++}
++
++#webRTC-sharingCamera-menu > menupopup,
++#webRTC-sharingMicrophone-menu > menupopup,
++#webRTC-sharingScreen-menu > menupopup {
++  list-style-image: none; /* don't inherit into menu items */
+ }
+diff --git a/browser/themes/windows/browser.css b/browser/themes/windows/browser.css
+index b21142682788..4f960ae35aa6 100644
+--- a/browser/themes/windows/browser.css
++++ b/browser/themes/windows/browser.css
+@@ -215,6 +215,14 @@
+   }
+ }
+ 
++/* Bookmarks roots menu-items */
++
++#bookmarksToolbarFolderMenu,
++#BMB_bookmarksToolbar,
++#panelMenu_bookmarksToolbar {
++  list-style-image: url("chrome://browser/skin/places/bookmarksToolbar.svg");
++}
++
+ /* Address bar */
+ 
+ .urlbar,
+diff --git a/layout/style/nsStyleStruct.cpp b/layout/style/nsStyleStruct.cpp
+index d62e2fdb9dd7..957fb263fc5a 100644
+--- a/layout/style/nsStyleStruct.cpp
++++ b/layout/style/nsStyleStruct.cpp
+@@ -684,6 +684,14 @@ nsChangeHint nsStyleList::CalcDifference(const nsStyleList& aNewData,
+   return hint;
+ }
+ 
++already_AddRefed<nsIURI> nsStyleList::GetListStyleImageURI() const {
++  if (!mListStyleImage.IsUrl()) {
++    return nullptr;
++  }
++
++  return do_AddRef(mListStyleImage.AsUrl().GetURI());
++}
++
+ // --------------------
+ // nsStyleXUL
+ //
+diff --git a/layout/style/nsStyleStruct.h b/layout/style/nsStyleStruct.h
+index 40e3e2286ba7..1bd714d681dc 100644
+--- a/layout/style/nsStyleStruct.h
++++ b/layout/style/nsStyleStruct.h
+@@ -771,6 +771,8 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleList {
+   nsChangeHint CalcDifference(const nsStyleList& aNewData,
+                               const mozilla::ComputedStyle& aOldStyle) const;
+ 
++  already_AddRefed<nsIURI> GetListStyleImageURI() const;
++
+   mozilla::StyleListStylePosition mListStylePosition;
+ 
+   mozilla::StyleListStyleType mListStyleType;
+diff --git a/toolkit/content/widgets/menu.js b/toolkit/content/widgets/menu.js
+index 236201115d9d..94f726354800 100644
+--- a/toolkit/content/widgets/menu.js
++++ b/toolkit/content/widgets/menu.js
+@@ -193,7 +193,8 @@
+         // find-in-page in preferences, it really sucks. We can't use
+         // text=label everywhere because we rely on the accesskey...
+         ".menu-highlightable-text": "text=label,crop,accesskey",
+-        ".menu-icon": "srcset=image",
++        ".menu-icon":
++          "src=image,validate,triggeringprincipal=iconloadingprincipal",
+         ".menu-accel": "value=acceltext",
+       };
+     }
+@@ -201,7 +202,7 @@
+     static get fragment() {
+       let frag = document.importNode(
+         MozXULElement.parseXULToFragment(`
+-      <html:img loading="lazy" class="menu-icon" aria-hidden="true"/>
++      <image class="menu-icon" aria-hidden="true"/>
+       <label class="menu-text" crop="end" aria-hidden="true"/>
+       <label class="menu-highlightable-text" crop="end" aria-hidden="true"/>
+       <label class="menu-accel" aria-hidden="true"/>
+@@ -298,7 +299,8 @@
+     static get inheritedAttributes() {
+       return {
+         ".menu-text": "value=label,accesskey,crop",
+-        ".menu-icon": "srcset=image",
++        ".menu-icon":
++          "src=image,triggeringprincipal=iconloadingprincipal,validate",
+         ".menu-accel": "value=acceltext",
+       };
+     }
+@@ -324,7 +326,7 @@
+     get fragment() {
+       let frag = document.importNode(
+         MozXULElement.parseXULToFragment(`
+-      <html:img loading="lazy" class="menu-icon" aria-hidden="true"/>
++      <image class="menu-icon"/>
+       <label class="menu-text" flex="1" crop="end" aria-hidden="true"/>
+       <label class="menu-accel" aria-hidden="true"/>
+     `),
+diff --git a/toolkit/themes/shared/menu.css b/toolkit/themes/shared/menu.css
+index 26c23f607c3c..63bb8e5ae436 100644
+--- a/toolkit/themes/shared/menu.css
++++ b/toolkit/themes/shared/menu.css
+@@ -2,9 +2,11 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
++@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
++
+ menupopup,
+ panel {
+-  --menu-arrow-opacity: 1;
++  --menu-icon-opacity: 1;
+   --menu-arrow-size: 1em;
+   --menuitem-border-radius: 3px;
+   --menuitem-margin: 0px;
+@@ -21,7 +23,7 @@ panel {
+     --menu-arrow-size: max(1em, 16px);
+ 
+     @media (prefers-color-scheme: light) {
+-      --menu-arrow-opacity: 0.7;
++      --menu-icon-opacity: 0.7;
+     }
+   }
+ }
+@@ -212,8 +214,6 @@ menucaption {
+   flex-shrink: 0;
+   list-style-image: none;
+   max-width: var(--menuitem-max-width);
+-  /* Prevents the icon from being inherited to submenus. */
+-  --menuitem-icon: normal;
+ }
+ 
+ menu,
+@@ -257,7 +257,7 @@ menupopup > menu::after {
+ 
+   -moz-context-properties: fill, fill-opacity;
+   fill: currentColor;
+-  fill-opacity: var(--menu-arrow-opacity);
++  fill-opacity: var(--menu-icon-opacity);
+ 
+   margin-inline: 1em 0;
+   @media (-moz-platform: linux) {
+@@ -319,13 +319,6 @@ menuitem[highlightable] > .menu-text {
+ .menu-icon {
+   width: 16px;
+   height: 16px;
+-  box-sizing: border-box;
+-
+-  /* Empty icons shouldn't take up any space */
+-  display: none;
+-  /* This avoids showing the broken image border for non-iconic items when
+-   * adding a gutter */
+-  visibility: hidden;
+ 
+   @media (-moz-platform: linux) {
+     /* Matches inline menuitem padding */
+@@ -339,14 +332,10 @@ menuitem[highlightable] > .menu-text {
+     margin-block: -2px;
+     margin-inline-end: 6px;
+   }
+-
+-  menuitem:where(.menuitem-iconic, [image]) > &,
+-  menu:where(.menu-iconic) > & {
+-    &:where(:not([srcset])) {
+-      content: var(--menuitem-icon);
+-    }
+-    display: revert;
+-    visibility: inherit;
++  /* Empty icons shouldn't take up any space */
++  menuitem:not(.menuitem-iconic, [image]) > &,
++  menu:not(.menu-iconic) > & {
++    display: none;
+   }
+ }
+ 
+@@ -354,14 +343,12 @@ menuitem[highlightable] > .menu-text {
+ 
+ /* On linux, we use regular checkboxes and radio buttons */
+ @media (-moz-platform: linux) {
+-  menuitem:is([type="checkbox"], [checked]) > .menu-icon {
+-    visibility: inherit;
++  menuitem:is([type="checkbox"], [checked]) .menu-icon {
+     appearance: auto;
+     -moz-default-appearance: checkbox;
+   }
+ 
+-  menuitem[type="radio"] > .menu-icon {
+-    visibility: inherit;
++  menuitem[type="radio"] .menu-icon {
+     appearance: auto;
+     -moz-default-appearance: radio;
+   }
+@@ -374,11 +361,10 @@ menuitem[highlightable] > .menu-text {
+      Windows versions looks pretty bad with the Win10 styles, so for now we'll
+      insert a generic checkmark icon for both types. */
+   menuitem[checked] > .menu-icon {
+-    visibility: inherit;
+     -moz-context-properties: fill, fill-opacity;
+     fill: currentColor;
+-    fill-opacity: var(--menu-arrow-opacity);
+-    content: url("chrome://global/skin/icons/menu-check.svg");
++    fill-opacity: var(--menu-icon-opacity);
++    list-style-image: url("chrome://global/skin/icons/menu-check.svg");
+   }
+ }
+ 
+diff --git a/widget/NativeMenu.cpp b/widget/NativeMenu.cpp
+deleted file mode 100644
+index 12cdba434294..000000000000
+--- a/widget/NativeMenu.cpp
++++ /dev/null
+@@ -1,52 +0,0 @@
+-/* This Source Code Form is subject to the terms of the Mozilla Public
+- * License, v. 2.0. If a copy of the MPL was not distributed with this
+- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+-
+-#include "NativeMenu.h"
+-#include "mozilla/dom/Element.h"
+-#include "mozilla/dom/HTMLImageElement.h"
+-#include "mozilla/dom/ResponsiveImageSelector.h"
+-#include "mozilla/ComputedStyle.h"
+-#include "nsComputedDOMStyle.h"
+-
+-namespace mozilla::widget {
+-
+-NativeMenuIcon NativeMenu::GetIcon(dom::Element& aElement) {
+-  RefPtr img =
+-      dom::HTMLImageElement::FromNodeOrNull(aElement.GetFirstElementChild());
+-  if (!img) {
+-    return {};
+-  }
+-  // We need the style for context paint, even if we end up using the image
+-  // attribute.
+-  RefPtr<const ComputedStyle> style = nsComputedDOMStyle::GetComputedStyle(img);
+-  if (RefPtr uri = img->GetCurrentURI()) {
+-    return {std::move(uri), std::move(style)};
+-  }
+-  // Try to take the selected image from the image selector. This works even if
+-  // the image hasn't loaded yet (due to loading=lazy or such).
+-  if (auto* selector = img->GetResponsiveImageSelector()) {
+-    if (RefPtr uri = selector->GetSelectedImageURL()) {
+-      return {std::move(uri), std::move(style)};
+-    }
+-  }
+-  // Otherwise look for the icon's content property.
+-  if (!style) {
+-    return {};
+-  }
+-  auto items = style->StyleContent()->NonAltContentItems();
+-  if (items.Length() != 1 || !items[0].IsImage()) {
+-    return {};
+-  }
+-  const auto* url = items[0].AsImage().GetImageRequestURLValue();
+-  if (!url) {
+-    return {};
+-  }
+-  RefPtr uri = url->GetURI();
+-  if (!uri) {
+-    return {};
+-  }
+-  return {std::move(uri), std::move(style)};
+-}
+-
+-}  // namespace mozilla::widget
+diff --git a/widget/NativeMenu.h b/widget/NativeMenu.h
+index 0d29c6d636b8..ef1808c7f929 100644
+--- a/widget/NativeMenu.h
++++ b/widget/NativeMenu.h
+@@ -9,35 +9,24 @@
+ #include "nsISupportsImpl.h"
+ #include "Units.h"
+ 
+-class nsIURI;
+ class nsIFrame;
+ class nsPresContext;
+ 
+ namespace mozilla {
+ using Modifiers = uint16_t;
+ class ErrorResult;
+-class ComputedStyle;
++}  // namespace mozilla
+ 
+-namespace dom {
++namespace mozilla::dom {
+ class Element;
+ }
+ 
+-namespace widget {
+-
+-struct NativeMenuIcon {
+-  RefPtr<nsIURI> mURI;
+-  RefPtr<const ComputedStyle> mStyle;
+-
+-  explicit operator bool() const { return !!mURI; }
+-};
++namespace mozilla::widget {
+ 
+ class NativeMenu {
+  public:
+   NS_INLINE_DECL_REFCOUNTING(NativeMenu)
+ 
+-  // Given a <menu> or <menuitem> element, get the relevant icon's URI.
+-  static NativeMenuIcon GetIcon(dom::Element&);
+-
+   // Show this menu anchored to the specified rect and position.
+   // This call assumes that the popupshowing event for the root popup has
+   // already been sent and "approved", i.e. preventDefault() was not called.
+@@ -107,7 +96,6 @@ class NativeMenu {
+   virtual ~NativeMenu() = default;
+ };
+ 
+-}  // namespace widget
+-}  // namespace mozilla
++}  // namespace mozilla::widget
+ 
+ #endif  // mozilla_widget_NativeMenu_h
+diff --git a/widget/cocoa/nsMenuItemIconX.h b/widget/cocoa/nsMenuItemIconX.h
+index 6ddd07a6ad10..e60e920f9d32 100644
+--- a/widget/cocoa/nsMenuItemIconX.h
++++ b/widget/cocoa/nsMenuItemIconX.h
+@@ -57,6 +57,9 @@ class nsMenuItemIconX final : public mozilla::widget::IconLoader::Listener {
+   // Returns whether there should be an icon.
+   bool StartIconLoad(nsIContent* aContent);
+ 
++  // GetIconURI returns null if the item should not have any icon.
++  already_AddRefed<nsIURI> GetIconURI(nsIContent* aContent);
++
+   Listener* mListener;  // [weak]
+   RefPtr<const mozilla::ComputedStyle> mComputedStyle;
+   mozilla::WeakPtr<nsPresContext> mPresContext;
+diff --git a/widget/cocoa/nsMenuItemIconX.mm b/widget/cocoa/nsMenuItemIconX.mm
+index 85e091c92fa8..c240408f8092 100644
+--- a/widget/cocoa/nsMenuItemIconX.mm
++++ b/widget/cocoa/nsMenuItemIconX.mm
+@@ -24,7 +24,6 @@
+ #include "MOZIconHelper.h"
+ #include "mozilla/dom/Document.h"
+ #include "mozilla/dom/DocumentInlines.h"
+-#include "mozilla/widget/NativeMenu.h"
+ #include "mozilla/SVGImageContext.h"
+ #include "nsCocoaUtils.h"
+ #include "nsComputedDOMStyle.h"
+@@ -86,21 +85,60 @@ void nsMenuItemIconX::SetupIcon(nsIContent* aContent) {
+ }
+ 
+ bool nsMenuItemIconX::StartIconLoad(nsIContent* aContent) {
+-  if (!aContent->IsElement()) {
+-    return false;
+-  }
+-  auto icon = widget::NativeMenu::GetIcon(*aContent->AsElement());
+-  if (!icon) {
++  RefPtr<nsIURI> iconURI = GetIconURI(aContent);
++  if (!iconURI) {
+     return false;
+   }
+ 
+-  mComputedStyle = std::move(icon.mStyle);
+-  mPresContext = aContent->OwnerDoc()->GetPresContext();
+   if (!mIconLoader) {
+     mIconLoader = new IconLoader(this);
+   }
+ 
+-  return NS_SUCCEEDED(mIconLoader->LoadIcon(icon.mURI, aContent));
++  nsresult rv = mIconLoader->LoadIcon(iconURI, aContent);
++  return NS_SUCCEEDED(rv);
++}
++
++already_AddRefed<nsIURI> nsMenuItemIconX::GetIconURI(nsIContent* aContent) {
++  // First, look at the content node's "image" attribute.
++  nsAutoString imageURIString;
++  bool hasImageAttr =
++      aContent->IsElement() &&
++      aContent->AsElement()->GetAttr(nsGkAtoms::image, imageURIString);
++
++  if (hasImageAttr) {
++    // Use the URL from the image attribute.
++    // If this menu item shouldn't have an icon, the string will be empty,
++    // and NS_NewURI will fail.
++    RefPtr<nsIURI> iconURI;
++    nsresult rv = NS_NewURI(getter_AddRefs(iconURI), imageURIString);
++    if (NS_FAILED(rv)) {
++      return nullptr;
++    }
++    return iconURI.forget();
++  }
++
++  // If the content node has no "image" attribute, get the
++  // "list-style-image" property from CSS.
++  RefPtr<mozilla::dom::Document> document = aContent->GetComposedDoc();
++  if (!document || !aContent->IsElement()) {
++    return nullptr;
++  }
++
++  RefPtr<const ComputedStyle> sc =
++      nsComputedDOMStyle::GetComputedStyle(aContent->AsElement());
++  if (!sc) {
++    return nullptr;
++  }
++
++  RefPtr<nsIURI> iconURI = sc->StyleList()->GetListStyleImageURI();
++  if (!iconURI) {
++    return nullptr;
++  }
++
++  mComputedStyle = std::move(sc);
++  mPresContext = document->GetPresContext();
++
++  return iconURI.forget();
+ }
+ 
+ //
+diff --git a/widget/moz.build b/widget/moz.build
+index a6f2f73fcb6d..f867fe3ec9d6 100644
+--- a/widget/moz.build
++++ b/widget/moz.build
+@@ -256,7 +256,6 @@ UNIFIED_SOURCES += [
+     "IMEData.cpp",
+     "InProcessCompositorWidget.cpp",
+     "InputData.cpp",
+-    "NativeMenu.cpp",
+     "nsAutoRollup.cpp",
+     "nsBaseAppShell.cpp",
+     "nsBaseClipboard.cpp",
+diff --git a/widget/nsNativeTheme.cpp b/widget/nsNativeTheme.cpp
+index b7339e802a37..ad3b234896d8 100644
+--- a/widget/nsNativeTheme.cpp
++++ b/widget/nsNativeTheme.cpp
+@@ -28,7 +28,6 @@
+ #include "mozilla/ScrollContainerFrame.h"
+ #include "mozilla/StaticPrefs_layout.h"
+ #include "mozilla/dom/DocumentInlines.h"
+-#include "nsXULElement.h"
+ #include <algorithm>
+ 
+ using namespace mozilla;
+@@ -49,16 +48,15 @@ NS_IMPL_ISUPPORTS(nsNativeTheme, nsITimerCallback, nsINamed)
+     return ElementState();
+   }
+ 
+-  bool isXULElement = frameContent->IsXULElement();
+-  if (aAppearance == StyleAppearance::Checkbox ||
+-      aAppearance == StyleAppearance::Radio) {
+-    if (nsXULElement::FromNodeOrNull(frameContent->GetParent())) {
++  const bool isXULElement = frameContent->IsXULElement();
++  if (isXULElement) {
++    if (aAppearance == StyleAppearance::Checkbox ||
++        aAppearance == StyleAppearance::Radio) {
+       aFrame = aFrame->GetParent();
+-      frameContent = frameContent->GetParent();
+-      isXULElement = true;
++      frameContent = aFrame->GetContent();
+     }
++    MOZ_ASSERT(frameContent && frameContent->IsElement());
+   }
+-  MOZ_ASSERT(frameContent && frameContent->IsElement());
+ 
+   ElementState flags = frameContent->AsElement()->StyleState();
+   if (aAppearance == StyleAppearance::SpinnerDownbutton ||
+diff --git a/widget/windows/SystemStatusBar.cpp b/widget/windows/SystemStatusBar.cpp
+index 603c45117852..66ab815df089 100644
+--- a/widget/windows/SystemStatusBar.cpp
++++ b/widget/windows/SystemStatusBar.cpp
+@@ -14,7 +14,6 @@
+ #include "mozilla/LinkedList.h"
+ #include "mozilla/StaticPtr.h"
+ #include "mozilla/widget/IconLoader.h"
+-#include "mozilla/widget/NativeMenu.h"
+ #include "mozilla/dom/XULButtonElement.h"
+ #include "nsComputedDOMStyle.h"
+ #include "nsIContentPolicy.h"
+@@ -110,9 +109,47 @@ void StatusBarEntry::Destroy() {
+ nsresult StatusBarEntry::Init() {
+   MOZ_ASSERT(NS_IsMainThread());
+ 
++  // First, look at the content node's "image" attribute.
++  nsAutoString imageURIString;
++  bool hasImageAttr = mMenu->GetAttr(nsGkAtoms::image, imageURIString);
++
++  nsresult rv;
++  nsCOMPtr<nsIURI> iconURI;
++  if (!hasImageAttr) {
++    // If the content node has no "image" attribute, get the
++    // "list-style-image" property from CSS.
++    RefPtr<mozilla::dom::Document> document = mMenu->GetComposedDoc();
++    if (!document) {
++      return NS_ERROR_FAILURE;
++    }
++
++    RefPtr<const ComputedStyle> sc =
++        nsComputedDOMStyle::GetComputedStyle(mMenu);
++    if (!sc) {
++      return NS_ERROR_FAILURE;
++    }
++
++    iconURI = sc->StyleList()->GetListStyleImageURI();
++  } else {
++    uint64_t dummy = 0;
++    nsContentPolicyType policyType;
++    nsCOMPtr<nsIPrincipal> triggeringPrincipal = mMenu->NodePrincipal();
++    nsContentUtils::GetContentPolicyTypeForUIImageLoading(
++        mMenu, getter_AddRefs(triggeringPrincipal), policyType, &dummy);
++    if (policyType != nsIContentPolicy::TYPE_INTERNAL_IMAGE) {
++      return NS_ERROR_ILLEGAL_VALUE;
++    }
++
++    // If this menu item shouldn't have an icon, the string will be empty,
++    // and NS_NewURI will fail.
++    rv = NS_NewURI(getter_AddRefs(iconURI), imageURIString);
++    if (NS_FAILED(rv)) return rv;
++  }
++
+   mIconLoader = new IconLoader(this);
+-  if (auto icon = NativeMenu::GetIcon(*mMenu)) {
+-    mIconLoader->LoadIcon(icon.mURI, mMenu);
++
++  if (iconURI) {
++    rv = mIconLoader->LoadIcon(iconURI, mMenu);
+   }
+ 
+   HWND iconWindow;

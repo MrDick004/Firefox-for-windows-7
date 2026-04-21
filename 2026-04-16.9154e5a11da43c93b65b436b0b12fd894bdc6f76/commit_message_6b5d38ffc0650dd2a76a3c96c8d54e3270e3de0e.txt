@@ -1,0 +1,1 @@
+Bug 1965699 : Use only MarkFullscreenWindow for non-fullscreen windows in Windows r=win-reviewers,gstoll    2025-06-17 11:21:44    6b5d38ffc0650dd2a76a3c96c8d54e3270e3de0e

@@ -1,0 +1,83 @@
+diff --git a/security/sandbox/chromium/base/synchronization/lock_impl.h b/security/sandbox/chromium/base/synchronization/lock_impl.h
+index 880e70db36c10..603585a050417 100644
+--- a/security/sandbox/chromium/base/synchronization/lock_impl.h
++++ b/security/sandbox/chromium/base/synchronization/lock_impl.h
+@@ -6,7 +6,6 @@
+ #if BUILDFLAG(IS_WIN)
+ #include "base/win/windows_types.h"
+ #elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
+-#include <errno.h>
+ #include <pthread.h>
+ #include <string.h>
+ #endif
+@@ -43,7 +41,7 @@ class BASE_EXPORT LockImpl {
+ 
+   // Release the lock.  This must only be called by the lock's holder: after
+   // a successful call to Try, or a call to Lock.
+-  inline void Unlock();
++  void Unlock();
+ 
+   // Return the native underlying lock.
+   // TODO(awalker): refactor lock and condition variables so that this is
+@@ -61,19 +59,6 @@ class BASE_EXPORT LockImpl {
+   NativeHandle native_handle_;
+ };
+ 
+-#if BUILDFLAG(IS_WIN)
+-void LockImpl::Unlock() {
+-  ::ReleaseSRWLockExclusive(reinterpret_cast<PSRWLOCK>(&native_handle_));
+-}
+-#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
+-void LockImpl::Unlock() {
+-  [[maybe_unused]] int rv = pthread_mutex_unlock(&native_handle_);
+-#if DCHECK_IS_ON()
+-  dcheck_unlock_result(rv);
+-#endif
+-}
+-#endif
+-
+ // This is an implementation used for AutoLock templated on the lock type.
+ template <class LockType>
+ class SCOPED_LOCKABLE BasicAutoLock {
+diff --git a/security/sandbox/chromium/base/synchronization/lock_impl_posix.cc b/security/sandbox/chromium/base/synchronization/lock_impl_posix.cc
+index 5ad337d9f715c..e54595b87f10a 100644
+--- a/security/sandbox/chromium/base/synchronization/lock_impl_posix.cc
++++ b/security/sandbox/chromium/base/synchronization/lock_impl_posix.cc
+@@ -4,9 +4,11 @@
+ #include "base/synchronization/lock_impl.h"
+ 
+ #include <ostream>
++#include <errno.h>
+ #include <string>
+ 
+ #include "base/check_op.h"
++#include "base/logging.h"
+ #include "base/posix/safe_strerror.h"
+ #include "base/synchronization/lock.h"
+ #include "base/synchronization/synchronization_buildflags.h"
+@@ -63,6 +65,11 @@ void LockImpl::Lock() {
+   DCHECK_EQ(rv, 0) << ". " << SystemErrorCodeToString(rv);
+ }
+ 
++void LockImpl::Unlock() {
++  int rv = pthread_mutex_unlock(&native_handle_);
++  DCHECK_EQ(rv, 0) << ". " << strerror(rv);
++}
++
+ // static
+ bool LockImpl::PriorityInheritanceAvailable() {
+ #if BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)
+diff --git a/security/sandbox/chromium/base/synchronization/lock_impl_win.cc b/security/sandbox/chromium/base/synchronization/lock_impl_win.cc
+index 7a2ff72fc8d6a..31f95f4e394ba 100644
+--- a/security/sandbox/chromium/base/synchronization/lock_impl_win.cc
++++ b/security/sandbox/chromium/base/synchronization/lock_impl_win.cc
+@@ -22,5 +22,9 @@ void LockImpl::Lock() {
+   ::AcquireSRWLockExclusive(reinterpret_cast<PSRWLOCK>(&native_handle_));
+ }
+ 
++void LockImpl::Unlock() {
++  ::ReleaseSRWLockExclusive(reinterpret_cast<PSRWLOCK>(&native_handle_));
++}
++
+ }  // namespace internal
+ }  // namespace base

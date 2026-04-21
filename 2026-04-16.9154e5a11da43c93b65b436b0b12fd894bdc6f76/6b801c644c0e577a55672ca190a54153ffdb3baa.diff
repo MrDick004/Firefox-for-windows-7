@@ -1,0 +1,85 @@
+diff --git a/moz.configure b/moz.configure
+index 323b48faddf7..e495352794f1 100755
+--- a/moz.configure
++++ b/moz.configure
+@@ -584,19 +584,11 @@ set_config("LINK_GTEST_DURING_COMPILE", True, when="--enable-gtest-in-build")
+ # ==============================================================
+ option(
+     "--enable-ui-locale",
+-    env="MOZ_UI_LOCALE",
+     default="en-US",
+     help="Select the user interface locale (default: en-US)",
+ )
+ 
+-
+-@depends("--enable-ui-locale")
+-def moz_ui_locale(value):
+-    return value[0]
+-
+-
+-set_config("MOZ_UI_LOCALE", moz_ui_locale)
+-
++set_config("MOZ_UI_LOCALE", depends("--enable-ui-locale")(lambda x: x))
+ 
+ # clang-plugin location
+ # ==============================================================
+diff --git a/python/mozbuild/mozbuild/backend/common.py b/python/mozbuild/mozbuild/backend/common.py
+index dc780878df63..71b09b41fa08 100644
+--- a/python/mozbuild/mozbuild/backend/common.py
++++ b/python/mozbuild/mozbuild/backend/common.py
+@@ -474,7 +474,7 @@ class CommonBackend(BuildBackend):
+         from the current locale as specified by ``MOZ_UI_LOCALE``, using ``L10NBASEDIR`` as the
+         parent directory for non-en-US locales.
+         """
+-        ab_cd = self.environment.substs["MOZ_UI_LOCALE"]
++        ab_cd = self.environment.substs["MOZ_UI_LOCALE"][0]
+         l10nbase = mozpath.join(self.environment.substs["L10NBASEDIR"], ab_cd)
+         # Filenames from LOCALIZED_FILES will start with en-US/.
+         if filename.startswith("en-US/"):
+@@ -503,7 +503,7 @@ class CommonBackend(BuildBackend):
+         if obj.defines:
+             pp.context.update(obj.defines.defines)
+         pp.context.update(self.environment.defines)
+-        ab_cd = obj.config.substs["MOZ_UI_LOCALE"]
++        ab_cd = obj.config.substs["MOZ_UI_LOCALE"][0]
+         pp.context.update(AB_CD=ab_cd)
+         pp.out = JarManifestParser()
+         try:
+diff --git a/python/mozbuild/mozbuild/backend/fastermake.py b/python/mozbuild/mozbuild/backend/fastermake.py
+index 1374dde41182..214e6e3e30f4 100644
+--- a/python/mozbuild/mozbuild/backend/fastermake.py
++++ b/python/mozbuild/mozbuild/backend/fastermake.py
+@@ -64,7 +64,7 @@ class FasterMakeBackend(MakeBackend, PartialBackend):
+         elif isinstance(
+             obj, (FinalTargetFiles, FinalTargetPreprocessedFiles)
+         ) and obj.install_target.startswith("dist/bin"):
+-            ab_cd = self.environment.substs["MOZ_UI_LOCALE"]
++            ab_cd = self.environment.substs["MOZ_UI_LOCALE"][0]
+             localized = isinstance(obj, (LocalizedFiles, LocalizedPreprocessedFiles))
+             defines = obj.defines or {}
+             if defines:
+diff --git a/python/mozbuild/mozbuild/mach_commands.py b/python/mozbuild/mozbuild/mach_commands.py
+index 3a26aa6f97f2..55473acafa85 100644
+--- a/python/mozbuild/mozbuild/mach_commands.py
++++ b/python/mozbuild/mozbuild/mach_commands.py
+@@ -3752,20 +3752,6 @@ def repackage_single_locales(command_context, verbose=False, locales=[], dest=No
+                 "{locale}> {line}",
+             )
+ 
+-        command_context.run_process(
+-            [
+-                sys.executable,
+-                mozpath.join(command_context.topsrcdir, "mach"),
+-                "--log-no-times",
+-                "configure",
+-                f"--enable-ui-locale={locale}",
+-            ],
+-            append_env=append_env,
+-            pass_thru=False,
+-            ensure_exit_code=True,
+-            line_handler=line_handler,
+-        )
+-
+         command_context.run_process(
+             [
+                 sys.executable,

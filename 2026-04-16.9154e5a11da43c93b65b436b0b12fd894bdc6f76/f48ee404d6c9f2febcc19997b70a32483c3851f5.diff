@@ -1,0 +1,213 @@
+diff --git a/toolkit/themes/linux/global/jar.mn b/toolkit/themes/linux/global/jar.mn
+index 3ec3333f59f6..743fa3a8d0d4 100644
+--- a/toolkit/themes/linux/global/jar.mn
++++ b/toolkit/themes/linux/global/jar.mn
+@@ -7,6 +7,7 @@
+ toolkit.jar:
+    skin/classic/global/autocomplete.css
+    skin/classic/global/global.css
++   skin/classic/global/menulist.css
+    skin/classic/global/richlistbox.css
+ 
+    skin/classic/global/icons/Authentication.png                (icons/Authentication.png)
+diff --git a/toolkit/themes/linux/global/menulist.css b/toolkit/themes/linux/global/menulist.css
+new file mode 100644
+index 000000000000..5c520292002c
+--- /dev/null
++++ b/toolkit/themes/linux/global/menulist.css
+@@ -0,0 +1,28 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++@import url("chrome://global/skin/menulist-shared.css");
++
++:host([native]) {
++  margin: 2px 4px;
++  color: -moz-DialogText;
++  font: menu;
++}
++
++:host([native]:not([disabled="true"]):hover) {
++  color: -moz-buttonhovertext;
++}
++
++:host([native]:not([disabled="true"]):hover:active),
++:host([native]:not([disabled="true"])[open="true"]) {
++  color: -moz-buttonactivetext;
++}
++
++:host([native]) label {
++  margin: 1px 3px;
++}
++
++:host([native]) dropmarker {
++  display: none;
++}
+diff --git a/toolkit/themes/osx/global/jar.mn b/toolkit/themes/osx/global/jar.mn
+index c991bd1749c6..b8eb5b4faae8 100644
+--- a/toolkit/themes/osx/global/jar.mn
++++ b/toolkit/themes/osx/global/jar.mn
+@@ -9,6 +9,7 @@ toolkit.jar:
+   skin/classic/global/button.css
+   skin/classic/global/dialog.css
+   skin/classic/global/global.css
++  skin/classic/global/menulist.css
+   skin/classic/global/richlistbox.css
+   skin/classic/global/wizard.css
+   skin/classic/global/arrow/panelarrow-vertical.svg                  (arrow/panelarrow-vertical.svg)
+diff --git a/toolkit/themes/osx/global/menulist.css b/toolkit/themes/osx/global/menulist.css
+new file mode 100644
+index 000000000000..86c4f9deee2a
+--- /dev/null
++++ b/toolkit/themes/osx/global/menulist.css
+@@ -0,0 +1,23 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++@import url("chrome://global/skin/menulist-shared.css");
++
++:host([native]) {
++  margin: 5px 2px 3px;
++  min-height: 20px;
++  color: -moz-DialogText;
++}
++
++:host([native]) #label-box {
++  margin-bottom: 1px;
++}
++
++:host([native]) label {
++  margin: 1px 3px;
++}
++
++:host([native]) dropmarker {
++  display: none;
++}
+diff --git a/toolkit/themes/shared/desktop-jar.inc.mn b/toolkit/themes/shared/desktop-jar.inc.mn
+index e4538da31782..0743654bc6b8 100644
+--- a/toolkit/themes/shared/desktop-jar.inc.mn
++++ b/toolkit/themes/shared/desktop-jar.inc.mn
+@@ -36,7 +36,7 @@
+   skin/classic/global/findbar.css                          (../../shared/findbar.css)
+   skin/classic/global/global-shared.css                    (../../shared/global-shared.css)
+   skin/classic/global/menu.css                             (../../shared/menu.css)
+-  skin/classic/global/menulist.css                         (../../shared/menulist.css)
++  skin/classic/global/menulist-shared.css                  (../../shared/menulist-shared.css)
+   skin/classic/global/notification.css                     (../../shared/notification.css)
+   skin/classic/global/numberinput.css                      (../../shared/numberinput.css)
+   skin/classic/global/offlineSupportPages.css              (../../shared/offlineSupportPages.css)
+diff --git a/toolkit/themes/shared/global-shared.css b/toolkit/themes/shared/global-shared.css
+index 66ec3add2d3d..1a8b8546f711 100644
+--- a/toolkit/themes/shared/global-shared.css
++++ b/toolkit/themes/shared/global-shared.css
+@@ -221,7 +221,7 @@ html|textarea {
+   }
+ }
+ 
+-/* adapted from toolkit/themes/shared/menulist.css */
++/* adapted from toolkit/themes/shared/menulist-shared.css */
+ html|select:where(:not([size], [multiple])) {
+   --select-image-spacing: var(--space-small);
+   --select-padding-inline-end: calc(var(--select-image-spacing) * 2 + var(--dimension-12)); /* padding plus image width */
+diff --git a/toolkit/themes/shared/menulist.css b/toolkit/themes/shared/menulist-shared.css
+similarity index 68%
+rename from toolkit/themes/shared/menulist.css
+rename to toolkit/themes/shared/menulist-shared.css
+index e5ac973b1ee2..5dd554967457 100644
+--- a/toolkit/themes/shared/menulist.css
++++ b/toolkit/themes/shared/menulist-shared.css
+@@ -6,45 +6,6 @@
+   appearance: auto;
+   -moz-default-appearance: menulist;
+   text-shadow: none;
+-  @media (-moz-platform: linux) {
+-    font: menu;
+-  }
+-  @media (-moz-platform: linux) or (-moz-platform: windows) {
+-    margin: 2px 4px;
+-    color: ButtonText;
+-    padding: 2px 3px;
+-    border: 1px solid ThreeDLightShadow;
+-
+-    dropmarker {
+-      align-self: stretch;
+-    }
+-  }
+-  @media (-moz-platform: macos) {
+-    margin: 5px 2px 3px;
+-    min-height: 20px;
+-    color: -moz-DialogText;
+-
+-    #label-box {
+-      margin-bottom: 1px;
+-    }
+-
+-    label {
+-      margin: 1px 3px;
+-    }
+-
+-    dropmarker {
+-      display: none;
+-    }
+-  }
+-}
+-
+-@media (-moz-platform: linux) or (-moz-platform: windows) {
+-  :host([native]:where(:hover)) {
+-    color: -moz-buttonhovertext;
+-  }
+-  :host([native]:where(:hover:active, [open="true"])) {
+-    color: -moz-buttonactivetext;
+-  }
+ }
+ 
+ :host([native][disabled]) {
+diff --git a/toolkit/themes/windows/global/jar.mn b/toolkit/themes/windows/global/jar.mn
+index 2eb1f89b9bbc..515d0cfcc470 100644
+--- a/toolkit/themes/windows/global/jar.mn
++++ b/toolkit/themes/windows/global/jar.mn
+@@ -6,6 +6,7 @@
+ 
+ toolkit.jar:
+   skin/classic/global/autocomplete.css
++  skin/classic/global/menulist.css
+   skin/classic/global/global.css
+   skin/classic/global/printPageSetup.css
+   skin/classic/global/richlistbox.css
+diff --git a/toolkit/themes/windows/global/menulist.css b/toolkit/themes/windows/global/menulist.css
+new file mode 100644
+index 000000000000..c89fc73616c2
+--- /dev/null
++++ b/toolkit/themes/windows/global/menulist.css
+@@ -0,0 +1,29 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++@import url("chrome://global/skin/menulist-shared.css");
++
++:host([native]) {
++  margin: 2px 4px;
++  color: FieldText;
++}
++
++@media (prefers-contrast) {
++  :host([native]:not([open="true"]):focus) > #label-box {
++    background-color: SelectedItem;
++    color: SelectedItemText;
++  }
++}
++
++:host([native]:not([open="true"]):focus-visible) > #label-box {
++  outline: var(--default-focusring);
++}
++
++:host([native]) :is(image, label) {
++  margin-block: -1px;
++}
++
++:host([native]) dropmarker {
++  margin-inline: 3px -3px;
++}
