@@ -1,0 +1,1 @@
+Bug 1521450 - Enable per-monitor DPI scaling V2 in the Windows GUI r=gsvelto,glandium    2024-09-28 01:18:58    a0ca1d43b3292ed3d9b84f8857ac5f711f4ed174

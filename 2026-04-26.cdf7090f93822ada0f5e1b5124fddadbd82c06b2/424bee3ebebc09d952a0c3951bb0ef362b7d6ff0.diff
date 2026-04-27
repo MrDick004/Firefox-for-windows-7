@@ -1,0 +1,86 @@
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 1c94a515c1e4..a3ba6a9dc15a 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -662,9 +662,10 @@ static bool IsCloaked(HWND hwnd) {
+  *
+  **************************************************************/
+ 
+-nsWindow::nsWindow()
++nsWindow::nsWindow(bool aIsChildWindow)
+     : nsIWidget(BorderStyle::Default),
+       mFrameState(std::in_place, this),
++      mIsChildWindow(aIsChildWindow),
+       mMicaBackdrop(false),
+       mLastPaintEndTime(TimeStamp::Now()),
+       mCachedHitTestTime(TimeStamp::Now()),
+@@ -1323,7 +1323,7 @@ DWORD nsWindow::WindowStyle() {
+       break;
+ 
+     case WindowType::Popup:
+-      style = WS_OVERLAPPED | WS_POPUP | WS_CLIPCHILDREN;
++      style = WS_OVERLAPPED | WS_POPUP;
+       break;
+ 
+     default:
+@@ -1338,6 +1338,13 @@ DWORD nsWindow::WindowStyle() {
+ 
+   style &= ~WindowStylesRemovedForBorderStyle(mBorderStyle);
+ 
++  if (mIsChildWindow) {
++    style |= WS_CLIPCHILDREN;
++    if (!(style & WS_POPUP)) {
++      style |= WS_CHILD;  // WS_POPUP and WS_CHILD are mutually exclusive.
++    }
++  }
++
+   VERIFY_WINDOW_STYLE(style);
+   return style;
+ }
+@@ -6915,6 +6922,14 @@ bool nsWindow::ShouldUseOffMainThreadCompositing() {
+   if (mWindowType == WindowType::Popup && mPopupType == PopupType::Tooltip) {
+     return false;
+   }
++
++  // Content rendering of popup is always done by child window.
++  // See nsDocumentViewer::ShouldAttachToTopLevel().
++  if (mWindowType == WindowType::Popup && !mIsChildWindow) {
++    MOZ_ASSERT(!mParent);
++    return false;
++  }
++
+   return nsIWidget::ShouldUseOffMainThreadCompositing();
+ }
+ 
+@@ -8232,7 +8247,7 @@ already_AddRefed<nsIWidget> nsIWidget::CreateTopLevelWindow() {
+ }
+ 
+ already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
+-  nsCOMPtr<nsIWidget> window = new nsWindow();
++  nsCOMPtr<nsIWidget> window = new nsWindow(true);
+   return window.forget();
+ }
+ 
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index ce8fe8495064..219e421ee8fc 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -144,7 +144,7 @@ class nsWindow final : public nsBaseWidget,
+ 
+   NS_INLINE_DECL_REFCOUNTING_INHERITED(nsWindow, nsIWidget)
+ 
+-  nsWindow();
++  explicit nsWindow(bool aIsChildWindow = false);
+ 
+   void SendAnAPZEvent(mozilla::InputData& aEvent);
+ 
+@@ -874,6 +874,9 @@ class nsWindow final : public nsBaseWidget,
+   // Whether we're in the process of sending a WM_SETTEXT ourselves
+   bool mSendingSetText = false;
+ 
++  // Whether we were created as a child window (aka ChildWindow) or not.
++  bool mIsChildWindow : 1;
++
+   // Whether we are asked to render a mica backdrop.
+   bool mMicaBackdrop : 1;
+ 

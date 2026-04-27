@@ -1,0 +1,857 @@
+diff --git a/ipc/mscom/AgileReference.cpp b/ipc/mscom/AgileReference.cpp
+index 76fe773b0a23..8af1a65dc4db 100644
+--- a/ipc/mscom/AgileReference.cpp
++++ b/ipc/mscom/AgileReference.cpp
+@@ -23,46 +31,204 @@ HRESULT WINAPI RoGetAgileReference(AgileReferenceOptions options, REFIID riid,
+ #include "mozilla/mscom/AgileReference.h"
+ 
+ #include "mozilla/Assertions.h"
++#include "mozilla/DebugOnly.h"
++#include "mozilla/DynamicallyLinkedFunctionPtr.h"
+ #include "mozilla/mscom/Utils.h"
+ 
++#if defined(MOZILLA_INTERNAL_API)
++#  include "nsDebug.h"
++#  include "nsPrintfCString.h"
++#endif  // defined(MOZILLA_INTERNAL_API)
++
+ #if defined(__MINGW32__)
+ 
+-// Unfortunately, at time of writing, MinGW doesn't know how to statically link
+-// to RoGetAgileReference. On these builds only, we substitute a runtime-linked
+-// function pointer.
++#endif  // defined(__MINGW32__)
+ 
+-#  include "mozilla/DynamicallyLinkedFunctionPtr.h"
++namespace mozilla {
++namespace mscom {
++namespace detail {
++
++GlobalInterfaceTableCookie::GlobalInterfaceTableCookie(IUnknown* aObject,
++                                                       REFIID aIid,
++                                                       HRESULT& aOutHResult)
++    : mCookie(0) {
++  IGlobalInterfaceTable* git = ObtainGit();
++  MOZ_ASSERT(git);
++  if (!git) {
++    aOutHResult = E_POINTER;
++    return;
++  }
+ 
+-static const mozilla::StaticDynamicallyLinkedFunctionPtr<
+-    decltype(&::RoGetAgileReference)>
+-    pRoGetAgileReference(L"ole32.dll", "RoGetAgileReference");
++  aOutHResult = git->RegisterInterfaceInGlobal(aObject, aIid, &mCookie);
++  MOZ_ASSERT(SUCCEEDED(aOutHResult));
++}
+ 
+-#  define RoGetAgileReference pRoGetAgileReference
++GlobalInterfaceTableCookie::~GlobalInterfaceTableCookie() {
++  IGlobalInterfaceTable* git = ObtainGit();
++  MOZ_ASSERT(git);
++  if (!git) {
++    return;
++  }
+ 
+-#endif  // defined(__MINGW32__)
++  DebugOnly<HRESULT> hr = git->RevokeInterfaceFromGlobal(mCookie);
++#if defined(MOZILLA_INTERNAL_API)
++  NS_WARNING_ASSERTION(
++      SUCCEEDED(hr),
++      nsPrintfCString("IGlobalInterfaceTable::RevokeInterfaceFromGlobal failed "
++                      "with HRESULT 0x%08lX",
++                      ((HRESULT)hr))
++          .get());
++#else
++  MOZ_ASSERT(SUCCEEDED(hr));
++#endif  // defined(MOZILLA_INTERNAL_API)
++  mCookie = 0;
++}
++
++HRESULT GlobalInterfaceTableCookie::GetInterface(REFIID aIid,
++                                                 void** aOutInterface) const {
++  IGlobalInterfaceTable* git = ObtainGit();
++  MOZ_ASSERT(git);
++  if (!git) {
++    return E_UNEXPECTED;
++  }
++
++  MOZ_ASSERT(IsValid());
++  return git->GetInterfaceFromGlobal(mCookie, aIid, aOutInterface);
++}
++
++/* static */
++IGlobalInterfaceTable* GlobalInterfaceTableCookie::ObtainGit() {
++  // Internally to COM, the Global Interface Table is a singleton, therefore we
++  // don't worry about holding onto this reference indefinitely.
++  static IGlobalInterfaceTable* sGit = []() -> IGlobalInterfaceTable* {
++    IGlobalInterfaceTable* result = nullptr;
++    DebugOnly<HRESULT> hr = ::CoCreateInstance(
++        CLSID_StdGlobalInterfaceTable, nullptr, CLSCTX_INPROC_SERVER,
++        IID_IGlobalInterfaceTable, reinterpret_cast<void**>(&result));
++    MOZ_ASSERT(SUCCEEDED(hr));
++    return result;
++  }();
++
++  return sGit;
++}
++
++}  // namespace detail
++
++AgileReference::AgileReference() : mIid(), mHResult(E_NOINTERFACE) {}
++
++AgileReference::AgileReference(REFIID aIid, IUnknown* aObject)
++    : mIid(aIid), mHResult(E_UNEXPECTED) {
++  AssignInternal(aObject);
++}
++
++AgileReference::AgileReference(AgileReference&& aOther)
++    : mIid(aOther.mIid),
++      mAgileRef(std::move(aOther.mAgileRef)),
++      mGitCookie(std::move(aOther.mGitCookie)),
++      mHResult(aOther.mHResult) {
++  aOther.mHResult = CO_E_RELEASED;
++}
++
++void AgileReference::Assign(REFIID aIid, IUnknown* aObject) {
++  Clear();
++  mIid = aIid;
++  AssignInternal(aObject);
++}
+ 
+-namespace mozilla::mscom::detail {
++void AgileReference::AssignInternal(IUnknown* aObject) {
++  // We expect mIid to already be set
++  DebugOnly<IID> zeroIid = {};
++  MOZ_ASSERT(mIid != zeroIid);
++
++  /*
++   * There are two possible techniques for creating agile references. Starting
++   * with Windows 8.1, we may use the RoGetAgileReference API, which is faster.
++   * If that API is not available, we fall back to using the Global Interface
++   * Table.
++   */
++  static const StaticDynamicallyLinkedFunctionPtr<
++      decltype(&::RoGetAgileReference)>
++      pRoGetAgileReference(L"ole32.dll", "RoGetAgileReference");
+ 
+-HRESULT AgileReference_CreateImpl(RefPtr<IAgileReference>& aRefPtr, REFIID riid,
+-                                  IUnknown* aObject) {
+   MOZ_ASSERT(aObject);
+-  MOZ_ASSERT(IsCOMInitializedOnCurrentThread());
+-  return ::RoGetAgileReference(AGILEREFERENCE_DEFAULT, riid, aObject,
+-                               getter_AddRefs(aRefPtr));
++
++  if (pRoGetAgileReference &&
++      SUCCEEDED(mHResult =
++                    pRoGetAgileReference(AGILEREFERENCE_DEFAULT, mIid, aObject,
++                                         getter_AddRefs(mAgileRef)))) {
++    return;
++  }
++
++  mGitCookie = new detail::GlobalInterfaceTableCookie(aObject, mIid, mHResult);
++  MOZ_ASSERT(mGitCookie->IsValid());
+ }
+ 
+-HRESULT AgileReference_ResolveImpl(RefPtr<IAgileReference> const& aRefPtr,
+-                                   REFIID riid, void** aOutInterface) {
+-  MOZ_ASSERT(aRefPtr);
++AgileReference::~AgileReference() { Clear(); }
++
++void AgileReference::Clear() {
++  mIid = {};
++  mAgileRef = nullptr;
++  mGitCookie = nullptr;
++  mHResult = E_NOINTERFACE;
++}
++
++AgileReference& AgileReference::operator=(const AgileReference& aOther) {
++  Clear();
++  mIid = aOther.mIid;
++  mAgileRef = aOther.mAgileRef;
++  mGitCookie = aOther.mGitCookie;
++  mHResult = aOther.mHResult;
++  return *this;
++}
++
++AgileReference& AgileReference::operator=(AgileReference&& aOther) {
++  Clear();
++  mIid = aOther.mIid;
++  mAgileRef = std::move(aOther.mAgileRef);
++  mGitCookie = std::move(aOther.mGitCookie);
++  mHResult = aOther.mHResult;
++  aOther.mHResult = CO_E_RELEASED;
++  return *this;
++}
++
++HRESULT
++AgileReference::Resolve(REFIID aIid, void** aOutInterface) const {
+   MOZ_ASSERT(aOutInterface);
++  // This check is exclusive-OR; we should have one or the other, but not both
++  MOZ_ASSERT((mAgileRef || mGitCookie) && !(mAgileRef && mGitCookie));
+   MOZ_ASSERT(IsCOMInitializedOnCurrentThread());
+ 
+-  if (!aRefPtr || !aOutInterface) {
++  if (!aOutInterface) {
+     return E_INVALIDARG;
+   }
+ 
+   *aOutInterface = nullptr;
+-  return aRefPtr->Resolve(riid, aOutInterface);
++
++  if (mAgileRef) {
++    // IAgileReference lets you directly resolve the interface you want...
++    return mAgileRef->Resolve(aIid, aOutInterface);
++  }
++
++  if (!mGitCookie) {
++    return E_UNEXPECTED;
++  }
++
++  RefPtr<IUnknown> originalInterface;
++  HRESULT hr =
++      mGitCookie->GetInterface(mIid, getter_AddRefs(originalInterface));
++  if (FAILED(hr)) {
++    return hr;
++  }
++
++  if (aIid == mIid) {
++    originalInterface.forget(aOutInterface);
++    return S_OK;
++  }
++
++  // ...Whereas the GIT requires us to obtain the same interface that we
++  // requested and then QI for the desired interface afterward.
++  return originalInterface->QueryInterface(aIid, aOutInterface);
+ }
+ 
+-}  // namespace mozilla::mscom::detail
++}  // namespace mscom
++}  // namespace mozilla
+diff --git a/ipc/mscom/AgileReference.h b/ipc/mscom/AgileReference.h
+index 384c391ac76d..d39e4444943e 100644
+--- a/ipc/mscom/AgileReference.h
++++ b/ipc/mscom/AgileReference.h
+@@ -9,134 +9,135 @@
+ #define mozilla_mscom_AgileReference_h
+ 
+ #include "mozilla/RefPtr.h"
+-#include "mozilla/Result.h"
+-#include "nsDebug.h"
+ #include "nsISupportsImpl.h"
+ 
+ #include <objidl.h>
+ 
+-namespace mozilla::mscom {
+-
++namespace mozilla {
++namespace mscom {
+ namespace detail {
+-// Detemplatized implementation details of `AgileReference`.
+-HRESULT AgileReference_CreateImpl(RefPtr<IAgileReference>&, REFIID, IUnknown*);
+-HRESULT AgileReference_ResolveImpl(RefPtr<IAgileReference> const&, REFIID,
+-                                   void**);
++
++class MOZ_HEAP_CLASS GlobalInterfaceTableCookie final {
++ public:
++  GlobalInterfaceTableCookie(IUnknown* aObject, REFIID aIid,
++                             HRESULT& aOutHResult);
++
++  bool IsValid() const { return !!mCookie; }
++  HRESULT GetInterface(REFIID aIid, void** aOutInterface) const;
++
++  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(GlobalInterfaceTableCookie)
++
++  GlobalInterfaceTableCookie(const GlobalInterfaceTableCookie&) = delete;
++  GlobalInterfaceTableCookie(GlobalInterfaceTableCookie&&) = delete;
++
++  GlobalInterfaceTableCookie& operator=(const GlobalInterfaceTableCookie&) =
++      delete;
++  GlobalInterfaceTableCookie& operator=(GlobalInterfaceTableCookie&&) = delete;
++
++ private:
++  ~GlobalInterfaceTableCookie();
++
++ private:
++  DWORD mCookie;
++
++ private:
++  static IGlobalInterfaceTable* ObtainGit();
++};
++
+ }  // namespace detail
+ 
+ /**
+- * This class encapsulates an "agile reference". These are references that allow
+- * you to pass COM interfaces between apartments. When you have an interface
+- * that you would like to pass between apartments, you wrap that interface in an
+- * AgileReference and pass that instead. Then you can "unwrap" the interface by
+- * calling Resolve(), which will return a proxy object implementing the same
+- * interface.
++ * This class encapsulates an "agile reference." These are references that
++ * allow you to pass COM interfaces between apartments. When you have an
++ * interface that you would like to pass between apartments, you wrap that
++ * interface in an AgileReference and pass the agile reference instead. Then
++ * you unwrap the interface by calling AgileReference::Resolve.
+  *
+  * Sample usage:
+  *
+- * ```
+- * // From a non-main thread, where `foo` is an `IFoo*` or `RefPtr<IFoo>`:
+- * auto myAgileRef = AgileReference(foo);
+- * NS_DispatchToMainThread([mar = std::move(myAgileRef)] {
+- *   RefPtr<IFoo> foo = mar.Resolve();
+- *   // Now methods may be invoked on `foo`
+- * });
+- * ```
++ * // In the multithreaded apartment, foo is an IFoo*
++ * auto myAgileRef = MakeUnique<AgileReference>(IID_IFoo, foo);
++ *
++ * // myAgileRef is passed to our main thread, which runs in a single-threaded
++ * // apartment:
++ *
++ * RefPtr<IFoo> foo;
++ * HRESULT hr = myAgileRef->Resolve(IID_IFoo, getter_AddRefs(foo));
++ * // Now foo may be called from the main thread
+  */
+-template <typename InterfaceT>
+ class AgileReference final {
+-  static_assert(
+-      std::is_base_of_v<IUnknown, InterfaceT>,
+-      "template parameter of AgileReference must be a COM interface type");
+-
+  public:
+-  AgileReference() = default;
+-  ~AgileReference() = default;
++  AgileReference();
++
++  template <typename InterfaceT>
++  explicit AgileReference(RefPtr<InterfaceT>& aObject)
++      : AgileReference(__uuidof(InterfaceT), aObject) {}
++
++  AgileReference(REFIID aIid, IUnknown* aObject);
+ 
+   AgileReference(const AgileReference& aOther) = default;
+-  AgileReference(AgileReference&& aOther) noexcept = default;
++  AgileReference(AgileReference&& aOther);
+ 
+-  AgileReference& operator=(const AgileReference& aOther) = default;
+-  AgileReference& operator=(AgileReference&& aOther) noexcept = default;
++  ~AgileReference();
+ 
+-  AgileReference& operator=(std::nullptr_t) {
+-    mAgileRef = nullptr;
+-    return *this;
++  explicit operator bool() const {
++    return mAgileRef || (mGitCookie && mGitCookie->IsValid());
+   }
+ 
+-  // Create a new AgileReference from an existing COM object.
+-  //
+-  // These constructors do not provide the HRESULT on failure. If that's
+-  // desired, use `AgileReference::Create()`, below.
+-  explicit AgileReference(InterfaceT* aObject) {
+-    HRESULT const hr = detail::AgileReference_CreateImpl(
+-        mAgileRef, __uuidof(InterfaceT), aObject);
+-    (void)NS_WARN_IF(FAILED(hr));
++  HRESULT GetHResult() const { return mHResult; }
++
++  template <typename T>
++  void Assign(const RefPtr<T>& aOther) {
++    Assign(__uuidof(T), aOther);
+   }
+-  explicit AgileReference(RefPtr<InterfaceT> const& aObject)
+-      : AgileReference(aObject.get()) {}
+-
+-  // Create a new AgileReference from an existing COM object, or alternatively,
+-  // return the HRESULT explaining why one couldn't be created.
+-  //
+-  // A convenience wrapper `MakeAgileReference()` which infers `InterfaceT` from
+-  // the RefPtr's concrete type is provided below.
+-  static Result<AgileReference<InterfaceT>, HRESULT> Create(
+-      RefPtr<InterfaceT> const& aObject) {
+-    AgileReference ret;
+-    HRESULT const hr = detail::AgileReference_CreateImpl(
+-        ret.mAgileRef, __uuidof(InterfaceT), aObject.get());
+-    if (FAILED(hr)) {
+-      return Err(hr);
+-    }
+-    return ret;
++
++  template <typename T>
++  AgileReference& operator=(const RefPtr<T>& aOther) {
++    Assign(aOther);
++    return *this;
+   }
+ 
+-  explicit operator bool() const { return !!mAgileRef; }
++  HRESULT Resolve(REFIID aIid, void** aOutInterface) const;
+ 
+-  // Common case: resolve directly to the originally-specified interface-type.
+-  RefPtr<InterfaceT> Resolve() const {
+-    auto res = ResolveAs<InterfaceT>();
+-    if (res.isErr()) return nullptr;
+-    return res.unwrap();
+-  }
++  AgileReference& operator=(const AgileReference& aOther);
++  AgileReference& operator=(AgileReference&& aOther);
+ 
+-  // Uncommon cases: resolve directly to a different interface type, and/or
+-  // provide IAgileReference::Resolve()'s HRESULT.
+-  //
+-  // When used in other COM apartments, `IAgileInterface::Resolve()` returns a
+-  // proxy object which (at time of writing) is not documented to provide any
+-  // interface other than the one for which it was instantiated. (Calling
+-  // `QueryInterface` _might_ work, but isn't explicitly guaranteed.)
+-  //
+-  template <typename OtherInterface = InterfaceT>
+-  Result<RefPtr<OtherInterface>, HRESULT> ResolveAs() const {
+-    RefPtr<OtherInterface> p;
+-    auto const hr = ResolveRaw(__uuidof(OtherInterface), getter_AddRefs(p));
+-    if (FAILED(hr)) {
+-      return Err(hr);
+-    }
+-    return p;
++  AgileReference& operator=(decltype(nullptr)) {
++    Clear();
++    return *this;
+   }
+ 
+-  // Raw version of Resolve/ResolveAs. Rarely, if ever, preferable to the
+-  // statically-typed versions.
+-  HRESULT ResolveRaw(REFIID aIid, void** aOutInterface) const {
+-    return detail::AgileReference_ResolveImpl(mAgileRef, aIid, aOutInterface);
+-  }
++  void Clear();
++
++ private:
++  void Assign(REFIID aIid, IUnknown* aObject);
++  void AssignInternal(IUnknown* aObject);
+ 
+  private:
++  IID mIid;
+   RefPtr<IAgileReference> mAgileRef;
++  RefPtr<detail::GlobalInterfaceTableCookie> mGitCookie;
++  HRESULT mHResult;
+ };
+ 
+-// Attempt to create an AgileReference from a refcounted interface pointer,
+-// providing the HRESULT as a secondary return-value.
+-template <typename InterfaceT>
+-inline Result<AgileReference<InterfaceT>, HRESULT> MakeAgileReference(
+-    RefPtr<InterfaceT> const& aObj) {
+-  return AgileReference<InterfaceT>::Create(aObj);
++}  // namespace mscom
++}  // namespace mozilla
++
++template <typename T>
++RefPtr<T>::RefPtr(const mozilla::mscom::AgileReference& aAgileRef)
++    : mRawPtr(nullptr) {
++  (*this) = aAgileRef;
+ }
+ 
+-}  // namespace mozilla::mscom
++template <typename T>
++RefPtr<T>& RefPtr<T>::operator=(
++    const mozilla::mscom::AgileReference& aAgileRef) {
++  void* newRawPtr;
++  if (FAILED(aAgileRef.Resolve(__uuidof(T), &newRawPtr))) {
++    newRawPtr = nullptr;
++  }
++  assign_assuming_AddRef(static_cast<T*>(newRawPtr));
++  return *this;
++}
+ 
+ #endif  // mozilla_mscom_AgileReference_h
+diff --git a/ipc/mscom/EnsureMTA.cpp b/ipc/mscom/EnsureMTA.cpp
+index 49d8446fa289..33dfe018d2e1 100644
+--- a/ipc/mscom/EnsureMTA.cpp
++++ b/ipc/mscom/EnsureMTA.cpp
+@@ -107,6 +107,66 @@ EnsureMTA::EnsureMTA() {
+   SyncDispatchToPersistentThread(runnable);
+ }
+ 
++/* static */
++RefPtr<EnsureMTA::CreateInstanceAgileRefPromise>
++EnsureMTA::CreateInstanceInternal(REFCLSID aClsid, REFIID aIid) {
++  MOZ_ASSERT(IsCurrentThreadExplicitMTA());
++
++  RefPtr<IUnknown> iface;
++  HRESULT hr = wrapped::CoCreateInstance(aClsid, nullptr, CLSCTX_INPROC_SERVER,
++                                         aIid, getter_AddRefs(iface));
++  if (FAILED(hr)) {
++    return CreateInstanceAgileRefPromise::CreateAndReject(hr, __func__);
++  }
++
++  // We need to use the two argument constructor for AgileReference because our
++  // RefPtr is not parameterized on the specific interface being requested.
++  AgileReference agileRef(aIid, iface);
++  if (!agileRef) {
++    return CreateInstanceAgileRefPromise::CreateAndReject(agileRef.GetHResult(),
++                                                          __func__);
++  }
++
++  return CreateInstanceAgileRefPromise::CreateAndResolve(std::move(agileRef),
++                                                         __func__);
++}
++
++/* static */
++RefPtr<EnsureMTA::CreateInstanceAgileRefPromise> EnsureMTA::CreateInstance(
++    REFCLSID aClsid, REFIID aIid) {
++  MOZ_ASSERT(IsCOMInitializedOnCurrentThread());
++
++  const bool isClassOk = IsClassThreadAwareInprocServer(aClsid);
++  MOZ_ASSERT(isClassOk,
++             "mozilla::mscom::EnsureMTA::CreateInstance is not "
++             "safe/performant/necessary to use with this CLSID. This CLSID "
++             "either does not support creation from within a multithreaded "
++             "apartment, or it is not an in-process server.");
++  if (!isClassOk) {
++    return CreateInstanceAgileRefPromise::CreateAndReject(CO_E_NOT_SUPPORTED,
++                                                          __func__);
++  }
++
++  if (IsCurrentThreadExplicitMTA()) {
++    // It's safe to immediately call CreateInstanceInternal
++    return CreateInstanceInternal(aClsid, aIid);
++  }
++
++  // aClsid and aIid are references. Make local copies that we can put into the
++  // lambda in case the sources of aClsid or aIid are not static data
++  CLSID localClsid = aClsid;
++  IID localIid = aIid;
++
++  auto invoker = [localClsid,
++                  localIid]() -> RefPtr<CreateInstanceAgileRefPromise> {
++    return CreateInstanceInternal(localClsid, localIid);
++  };
++
++  nsCOMPtr<nsIThread> mtaThread(GetPersistentMTAThread());
++
++  return InvokeAsync(mtaThread, __func__, std::move(invoker));
++}
++
+ /* static */
+ nsCOMPtr<nsIThread> EnsureMTA::GetPersistentMTAThread() {
+   static StaticLocalAutoPtr<BackgroundMTAData> sMTAData(
+diff --git a/ipc/mscom/EnsureMTA.h b/ipc/mscom/EnsureMTA.h
+index 662192c47655..5e410d4daaa7 100644
+--- a/ipc/mscom/EnsureMTA.h
++++ b/ipc/mscom/EnsureMTA.h
+@@ -73,7 +73,69 @@ class MOZ_STACK_CLASS EnsureMTA final {
+     SyncDispatch(std::move(runnable), aOpt);
+   }
+ 
++  using CreateInstanceAgileRefPromise =
++      MozPromise<AgileReference, HRESULT, false>;
++
++  /**
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   *
++   * Asynchronously instantiate a new COM object from a MTA thread, unless the
++   * current thread is already living inside the multithreaded apartment, in
++   * which case the object is immediately instantiated.
++   *
++   * This function only supports the most common configurations for creating
++   * a new object, so it only supports in-process servers. Furthermore, this
++   * function does not support aggregation (ie. the |pUnkOuter| parameter to
++   * CoCreateInstance).
++   *
++   * Given that attempting to instantiate an Apartment-threaded COM object
++   * inside the MTA results in a *loss* of performance, we assert when that
++   * situation arises.
++   *
++   * The resulting promise, once resolved, provides an AgileReference that may
++   * be passed between any COM-initialized thread in the current process.
++   *
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   *
++   * WARNING:
++   * Some COM objects do not support creation in the multithreaded apartment,
++   * in which case this function is not available as an option. In this case,
++   * the promise will always be rejected. In debug builds we will assert.
++   *
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   *
++   * WARNING:
++   * Any in-process COM objects whose interfaces accept HWNDs are probably
++   * *not* safe to instantiate in the multithreaded apartment! Even if this
++   * function succeeds when creating such an object, you *MUST NOT* do so, as
++   * these failures might not become apparent until your code is running out in
++   * the wild on the release channel!
++   *
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   *
++   * WARNING:
++   * When you obtain an interface from the AgileReference, it may or may not be
++   * a proxy to the real object. This depends entirely on the implementation of
++   * the underlying class and the multithreading capabilities that the class
++   * declares to the COM runtime. If the interface is proxied, it might be
++   * expensive to invoke methods on that interface! *Always* test the
++   * performance of your method calls when calling interfaces that are resolved
++   * via this function!
++   *
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   *
++   * (Despite this myriad of warnings, it is still *much* safer to use this
++   * function to asynchronously create COM objects than it is to roll your own!)
++   *
++   *       *** A MSCOM PEER SHOULD REVIEW ALL NEW USES OF THIS API! ***
++   */
++  static RefPtr<CreateInstanceAgileRefPromise> CreateInstance(REFCLSID aClsid,
++                                                              REFIID aIid);
++
+  private:
++  static RefPtr<CreateInstanceAgileRefPromise> CreateInstanceInternal(
++      REFCLSID aClsid, REFIID aIid);
++
+   static nsCOMPtr<nsIThread> GetPersistentMTAThread();
+ 
+   static void SyncDispatch(nsCOMPtr<nsIRunnable>&& aRunnable, Option aOpt);
+diff --git a/ipc/mscom/Utils.cpp b/ipc/mscom/Utils.cpp
+index d93e012587e9..cb227e15e263 100644
+--- a/ipc/mscom/Utils.cpp
++++ b/ipc/mscom/Utils.cpp
+@@ -320,5 +320,43 @@ void GUIDToString(REFGUID aGuid,
+ 
+ #endif  // defined(MOZILLA_INTERNAL_API)
+ 
++#if defined(MOZILLA_INTERNAL_API)
++bool IsClassThreadAwareInprocServer(REFCLSID aClsid) {
++  nsAutoString strClsid;
++  GUIDToString(aClsid, strClsid);
++
++  nsAutoString inprocServerSubkey(u"CLSID\\"_ns);
++  inprocServerSubkey.Append(strClsid);
++  inprocServerSubkey.Append(u"\\InprocServer32"_ns);
++
++  // Of the possible values, "Apartment" is the longest, so we'll make this
++  // buffer large enough to hold that one.
++  wchar_t threadingModelBuf[std::size(L"Apartment")] = {};
++
++  DWORD numBytes = sizeof(threadingModelBuf);
++  LONG result = ::RegGetValueW(HKEY_CLASSES_ROOT, inprocServerSubkey.get(),
++                               L"ThreadingModel", RRF_RT_REG_SZ, nullptr,
++                               threadingModelBuf, &numBytes);
++  if (result != ERROR_SUCCESS) {
++    // This will also handle the case where the CLSID is not an inproc server.
++    return false;
++  }
++
++  DWORD numChars = numBytes / sizeof(wchar_t);
++  // numChars includes the null terminator
++  if (numChars <= 1) {
++    return false;
++  }
++
++  nsDependentString threadingModel(threadingModelBuf, numChars - 1);
++
++  // Ensure that the threading model is one of the known values that indicates
++  // that the class can operate natively (ie, no proxying) inside a MTA.
++  return threadingModel.LowerCaseEqualsLiteral("both") ||
++         threadingModel.LowerCaseEqualsLiteral("free") ||
++         threadingModel.LowerCaseEqualsLiteral("neutral");
++}
++#endif  // defined(MOZILLA_INTERNAL_API)
++
+ }  // namespace mscom
+ }  // namespace mozilla
+diff --git a/ipc/mscom/Utils.h b/ipc/mscom/Utils.h
+index aabf5f589160..214b15044d3a 100644
+--- a/ipc/mscom/Utils.h
++++ b/ipc/mscom/Utils.h
+@@ -73,6 +73,29 @@ long CreateStream(const uint8_t* aBuf, const uint32_t aBufLen,
+ constexpr size_t kGuidRegFormatCharLenInclNul = 39;
+ 
+ #if defined(MOZILLA_INTERNAL_API)
++/**
++ * Checks the registry to see if |aClsid| is a thread-aware in-process server.
++ *
++ * In DCOM, an in-process server is a server that is implemented inside a DLL
++ * that is loaded into the client's process for execution. If |aClsid| declares
++ * itself to be a local server (that is, a server that resides in another
++ * process), this function returns false.
++ *
++ * For the server to be thread-aware, its registry entry must declare a
++ * ThreadingModel that is one of "Free", "Both", or "Neutral". If the threading
++ * model is "Apartment" or some other, invalid value, the class is treated as
++ * being single-threaded.
++ *
++ * NB: This function cannot check CLSIDs that were registered via manifests,
++ * as unfortunately there is not a documented API available to query for those.
++ * This should not be an issue for most CLSIDs that Gecko is interested in, as
++ * we typically instantiate system CLSIDs which are available in the registry.
++ *
++ * @param aClsid The CLSID of the COM class to be checked.
++ * @return true if the class meets the above criteria, otherwise false.
++ */
++bool IsClassThreadAwareInprocServer(REFCLSID aClsid);
++
+ void GUIDToString(REFGUID aGuid, nsAString& aOutString);
+ 
+ /**
+diff --git a/mfbt/RefPtr.h b/mfbt/RefPtr.h
+index 343e78d61eb8..b36491f49b63 100644
+--- a/mfbt/RefPtr.h
++++ b/mfbt/RefPtr.h
+@@ -33,6 +33,11 @@ template <class T>
+ class StaticLocalRefPtr;
+ template <class T>
+ class StaticRefPtr;
++#if defined(XP_WIN)
++namespace mscom {
++class AgileReference;
++}  // namespace mscom
++#endif  // defined(XP_WIN)
+ 
+ // Traditionally, RefPtr supports automatic refcounting of any pointer type
+ // with AddRef() and Release() methods that follow the traditional semantics.
+@@ -161,6 +166,9 @@ class MOZ_IS_REFPTR RefPtr {
+ 
+   MOZ_IMPLICIT RefPtr(const nsQueryReferent& aHelper);
+   MOZ_IMPLICIT RefPtr(const nsCOMPtr_helper& aHelper);
++#if defined(XP_WIN)
++  MOZ_IMPLICIT RefPtr(const mozilla::mscom::AgileReference& aAgileRef);
++#endif  // defined(XP_WIN)
+ 
+   // Defined in OwningNonNull.h
+   template <class U>
+@@ -221,6 +229,9 @@ class MOZ_IS_REFPTR RefPtr {
+ 
+   RefPtr<T>& operator=(const nsQueryReferent& aQueryReferent);
+   RefPtr<T>& operator=(const nsCOMPtr_helper& aHelper);
++#if defined(XP_WIN)
++  RefPtr<T>& operator=(const mozilla::mscom::AgileReference& aAgileRef);
++#endif  // defined(XP_WIN)
+ 
+   template <typename I,
+             typename = std::enable_if_t<std::is_convertible_v<I*, T*>>>
+diff --git a/widget/windows/AudioSession.cpp b/widget/windows/AudioSession.cpp
+index c14278f56c63..a38e2a83f6de 100644
+--- a/widget/windows/AudioSession.cpp
++++ b/widget/windows/AudioSession.cpp
+@@ -255,13 +255,19 @@ void AudioSession::StopInternal(const MutexAutoLock& aProofOfLock,
+   // to the main thread's apartment as an AgileReference for completeness,
+   // since it was created from an MTA thread.
+   MOZ_ASSERT(mscom::IsCurrentThreadMTA());
+-  mscom::AgileReference agileAsc(mAudioSessionControl);
++  const IID IID_IAudioSessionControl = __uuidof(IAudioSessionControl);
++  auto agileAsc = MakeUnique<mozilla::mscom::AgileReference>(
++      IID_IAudioSessionControl, mAudioSessionControl);
+   mAudioSessionControl = nullptr;
+   NS_DispatchToMainThread(NS_NewRunnableFunction(
+-      "FreeIAudioSessionControl", [agileAsc = std::move(agileAsc)]() mutable {
++      "FreeIAudioSessionControl", [agileAsc = std::move(agileAsc),
++                           IID_IAudioSessionControl] {
++        RefPtr<IAudioSessionControl> toDelete;
++        [[maybe_unused]] HRESULT hr = agileAsc->Resolve(
++            IID_IAudioSessionControl, getter_AddRefs(toDelete));
++        MOZ_ASSERT(SUCCEEDED(hr));
+         // Now release the AgileReference which holds our only reference to the
+         // IAudioSessionControl, then restart (i.e. create a new one).
+-        agileAsc = nullptr;
+         NS_DispatchBackgroundTask(NS_NewCancelableRunnableFunction(
+             "RestartAudioSession", [] { AudioSession::MaybeRestart(); }));
+       }));
+diff --git a/widget/windows/LegacyJumpListBuilder.cpp b/widget/windows/LegacyJumpListBuilder.cpp
+index fbfe10f64b12..03500a069a06 100644
+--- a/widget/windows/LegacyJumpListBuilder.cpp
++++ b/widget/windows/LegacyJumpListBuilder.cpp
+@@ -112,7 +112,7 @@ LegacyJumpListBuilder::LegacyJumpListBuilder()
+     ReentrantMonitorAutoEnter lock(mMonitor);
+     // Since we are accessing mJumpListMgr across different threads
+     // (ie, different apartments), mJumpListMgr must be an agile reference.
+-    mJumpListMgr = mscom::AgileReference(jumpListMgr);
++    mJumpListMgr = jumpListMgr;
+   });
+ 
+   if (!mJumpListMgr) {
+@@ -130,6 +130,11 @@ LegacyJumpListBuilder::LegacyJumpListBuilder()
+     observerService->AddObserver(this, TOPIC_PROFILE_BEFORE_CHANGE, false);
+     observerService->AddObserver(this, TOPIC_CLEAR_PRIVATE_DATA, false);
+   }
++
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
++  if (!jumpListMgr) {
++    return;
++  }
+ }
+ 
+ LegacyJumpListBuilder::~LegacyJumpListBuilder() {
+@@ -141,7 +146,7 @@ NS_IMETHODIMP LegacyJumpListBuilder::SetAppUserModelID(
+   ReentrantMonitorAutoEnter lock(mMonitor);
+   if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
+ 
+-  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return NS_ERROR_NOT_AVAILABLE;
+   }
+@@ -182,7 +187,7 @@ NS_IMETHODIMP LegacyJumpListBuilder::GetMaxListItems(int16_t* aMaxItems) {
+     return NS_OK;
+   }
+ 
+-  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return NS_ERROR_UNEXPECTED;
+   }
+@@ -255,7 +260,7 @@ void LegacyJumpListBuilder::DoInitListBuild(RefPtr<Promise>&& aPromise) {
+         }));
+   });
+ 
+-  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return;
+   }
+@@ -330,7 +335,7 @@ NS_IMETHODIMP LegacyJumpListBuilder::AddListToBuild(int16_t aCatType,
+   ReentrantMonitorAutoEnter lock(mMonitor);
+   if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
+ 
+-  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return NS_ERROR_UNEXPECTED;
+   }
+@@ -454,7 +459,7 @@ NS_IMETHODIMP LegacyJumpListBuilder::AbortListBuild() {
+   ReentrantMonitorAutoEnter lock(mMonitor);
+   if (!mJumpListMgr) return NS_ERROR_NOT_AVAILABLE;
+ 
+-  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return NS_ERROR_UNEXPECTED;
+   }
+@@ -503,7 +508,7 @@ void LegacyJumpListBuilder::DoCommitListBuild(
+     (void)NS_DispatchToMainThread(aCallback);
+   });
+ 
+-  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return;
+   }
+@@ -526,7 +531,7 @@ NS_IMETHODIMP LegacyJumpListBuilder::DeleteActiveList(bool* _retval) {
+     AbortListBuild();
+   }
+ 
+-  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr.Resolve();
++  RefPtr<ICustomDestinationList> jumpListMgr = mJumpListMgr;
+   if (!jumpListMgr) {
+     return NS_ERROR_UNEXPECTED;
+   }
+diff --git a/widget/windows/LegacyJumpListBuilder.h b/widget/windows/LegacyJumpListBuilder.h
+index 1d96773c47a8..e89a983924ed 100644
+--- a/widget/windows/LegacyJumpListBuilder.h
++++ b/widget/windows/LegacyJumpListBuilder.h
+@@ -46,8 +46,7 @@ class LegacyJumpListBuilder : public nsILegacyJumpListBuilder,
+   static Atomic<bool> sBuildingList;
+ 
+  private:
+-  mscom::AgileReference<ICustomDestinationList> mJumpListMgr
+-      MOZ_GUARDED_BY(mMonitor);
++  mscom::AgileReference mJumpListMgr MOZ_GUARDED_BY(mMonitor);
+   uint32_t mMaxItems MOZ_GUARDED_BY(mMonitor);
+   bool mHasCommit;
+   RefPtr<LazyIdleThread> mIOThread;

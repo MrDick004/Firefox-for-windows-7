@@ -1,0 +1,27 @@
+diff --git a/ipc/mscom/AgileReference.cpp b/ipc/mscom/AgileReference.cpp
+index 46e88aabbfc7..6cf051e26844 100644
+--- a/ipc/mscom/AgileReference.cpp
++++ b/ipc/mscom/AgileReference.cpp
+@@ -10,6 +10,22 @@
+ #include "mozilla/Assertions.h"
+ #include "mozilla/mscom/Utils.h"
+ 
++#if defined(__MINGW32__)
++
++// Unfortunately, at time of writing, MinGW doesn't know how to statically link
++// to RoGetAgileReference. On these builds only, we substitute a runtime-linked
++// function pointer.
++
++#  include "mozilla/DynamicallyLinkedFunctionPtr.h"
++
++static const mozilla::StaticDynamicallyLinkedFunctionPtr<
++    decltype(&::RoGetAgileReference)>
++    pRoGetAgileReference(L"ole32.dll", "RoGetAgileReference");
++
++#  define RoGetAgileReference pRoGetAgileReference
++
++#endif  // defined(__MINGW32__)
++
+ namespace mozilla::mscom::detail {
+ 
+ HRESULT AgileReference_CreateImpl(RefPtr<IAgileReference>& aRefPtr, REFIID riid,

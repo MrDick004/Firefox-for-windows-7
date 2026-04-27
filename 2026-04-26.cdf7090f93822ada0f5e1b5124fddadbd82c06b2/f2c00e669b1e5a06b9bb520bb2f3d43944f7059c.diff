@@ -1,0 +1,57 @@
+diff --git a/browser/themes/shared/browser-colors.css b/browser/themes/shared/browser-colors.css
+index 518d3b0fdd79..49d45ce6fdc6 100644
+--- a/browser/themes/shared/browser-colors.css
++++ b/browser/themes/shared/browser-colors.css
+@@ -101,8 +101,8 @@
+     --input-color: light-dark(rgb(21, 20, 26), rgb(251, 251, 254));
+     --input-bgcolor: light-dark(rgb(255, 255, 255), #42414d);
+ 
+-    --tab-selected-bgcolor: light-dark(rgb(255, 255, 255), rgba(106, 106, 120, 0.7));
+-    --tab-selected-textcolor: light-dark(rgb(21, 20, 26), rgb(255, 255, 255));
++    --tab-selected-bgcolor: light-dark(rgb(255, 255, 255), rgb(66, 65, 77));
++    --tab-selected-textcolor: light-dark(rgb(21, 20, 26), rgb(251, 251, 254));
+     --tabs-navbar-separator-style: none;
+ 
+     &:where([tabsintitlebar]) {
+diff --git a/toolkit/mozapps/extensions/test/browser/browser_html_detail_view.js b/toolkit/mozapps/extensions/test/browser/browser_html_detail_view.js
+index d7d0a991069d..7dedf8ee5bd7 100644
+--- a/toolkit/mozapps/extensions/test/browser/browser_html_detail_view.js
++++ b/toolkit/mozapps/extensions/test/browser/browser_html_detail_view.js
+@@ -634,12 +634,7 @@ add_task(async function testFullDetails() {
+   row = rows.shift();
+   await checkLabel(row, "last-updated");
+   text = row.lastChild;
+-  let expectedDate = new Date(2019, 2, 7).toLocaleDateString(undefined, {
+-    year: "numeric",
+-    month: "long",
+-    day: "numeric",
+-  });
+-  is(text.textContent, expectedDate, "The last updated date is set.");
++  is(text.textContent, "March 7, 2019", "The last updated date is set");
+ 
+   // Homepage.
+   row = rows.shift();
+@@ -823,21 +818,16 @@ add_task(async function testDefaultTheme() {
+ 
+   let rows = getDetailRows(card);
+ 
+-  let addonInfo = await AddonManager.getAddonByID(DEFAULT_THEME_ID);
+   // Author.
+   let author = rows.shift();
+   await checkLabel(author, "author");
+   let text = author.lastChild;
+-  is(text.textContent, addonInfo.creator.name, "The author is set");
++  is(text.textContent, "Mozilla", "The author is set");
+ 
+   // Version.
+   let version = rows.shift();
+   await checkLabel(version, "version");
+-  is(
+-    version.lastChild.textContent,
+-    addonInfo.version,
+-    "Default theme version matches."
+-  );
++  is(version.lastChild.textContent, "1.4", "It's always version 1.4");
+ 
+   // Last updated.
+   let lastUpdated = rows.shift();

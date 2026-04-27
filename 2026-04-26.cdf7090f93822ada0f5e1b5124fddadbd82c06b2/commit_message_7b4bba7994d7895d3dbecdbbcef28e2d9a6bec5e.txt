@@ -1,0 +1,1 @@
+Bug 2013094 - Remove clip leaf merging r=gfx-reviewers,nical    2026/2/2 6:36:57    7b4bba7994d7895d3dbecdbbcef28e2d9a6bec5e

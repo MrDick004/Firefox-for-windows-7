@@ -1,0 +1,1 @@
+Bug 2018507 - Refactor rectangle intern related structures to be consistent with other prims r=gfx-reviewers,nical    2026-02-25 04:45:23    b7910caf7f8532409fe275f8458870b423892005

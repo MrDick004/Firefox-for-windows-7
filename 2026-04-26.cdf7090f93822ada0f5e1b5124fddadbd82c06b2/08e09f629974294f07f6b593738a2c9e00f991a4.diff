@@ -1,0 +1,96 @@
+diff --git a/dom/canvas/test/test_bug232227.html b/dom/canvas/test/test_bug232227.html
+index 6aa9bc722c14..ce91104e9749 100644
+--- a/dom/canvas/test/test_bug232227.html
++++ b/dom/canvas/test/test_bug232227.html
+@@ -44,6 +44,7 @@ function runTest(testCanvasColors) {
+     [ "Window", 0xFF, 0xFF, 0xFF ],
+     [ "WindowFrame", 0x8f, 0x8f, 0x9d], // deprecated, same as ButtonBorder (bug 1803933)
+     [ "WindowText", 0x00, 0x00, 0x00 ],
++    [ "-moz-ButtonDefault", 0x69, 0x69, 0x69 ],
+     [ "-moz-CellHighlight", 0xF0, 0xF0, 0xF0 ],
+     [ "-moz-CellHighlightText", 0x00, 0x00, 0x00 ],
+     [ "-moz-Combobox", 0xE9, 0xE9, 0xED ],
+diff --git a/servo/components/style/values/specified/color.rs b/servo/components/style/values/specified/color.rs
+index 1fc2869109a6..be6dd07fdc8c 100644
+--- a/servo/components/style/values/specified/color.rs
++++ b/servo/components/style/values/specified/color.rs
+@@ -198,6 +198,7 @@ pub enum SystemColor {
+     Window,
+     Windowframe,
+     Windowtext,
++    MozButtondefault,
+     #[parse(aliases = "-moz-default-color")]
+     Canvastext,
+     #[parse(aliases = "-moz-default-background-color")]
+diff --git a/widget/android/nsLookAndFeel.cpp b/widget/android/nsLookAndFeel.cpp
+index cf243a251cb5..d84d160db594 100644
+--- a/widget/android/nsLookAndFeel.cpp
++++ b/widget/android/nsLookAndFeel.cpp
+@@ -190,6 +190,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
+       break;
+     case ColorID::Infotext:
+     case ColorID::Threeddarkshadow:  // 3-D shadow outer edge color
++    case ColorID::MozButtondefault:  // default button border color
+       aColor = NS_RGB(0x00, 0x00, 0x00);
+       break;
+     case ColorID::Menu:
+diff --git a/widget/gtk/nsLookAndFeel.cpp b/widget/gtk/nsLookAndFeel.cpp
+index 57042422d116..a1bec22fb16e 100644
+--- a/widget/gtk/nsLookAndFeel.cpp
++++ b/widget/gtk/nsLookAndFeel.cpp
+@@ -687,6 +687,9 @@ nsresult nsLookAndFeel::PerThemeData::GetColor(ColorID aID,
+     case ColorID::Fieldtext:
+       aColor = mField.mFg;
+       break;
++    case ColorID::MozButtondefault:
++      aColor = mButton.mBg;
++      break;
+     case ColorID::MozSidebar:
+       aColor = mSidebar.mBg;
+       break;
+diff --git a/widget/nsXPLookAndFeel.cpp b/widget/nsXPLookAndFeel.cpp
+index 6eb21b46703a..9e08ed478ce0 100644
+--- a/widget/nsXPLookAndFeel.cpp
++++ b/widget/nsXPLookAndFeel.cpp
+@@ -248,6 +248,7 @@ static const char sColorPrefs[][41] = {
+     "ui.window",
+     "ui.windowframe",
+     "ui.windowtext",
++    "ui.-moz-buttondefault",
+     "ui.-moz-default-color",
+     "ui.-moz-default-background-color",
+     "ui.-moz-dialog",
+@@ -677,6 +678,7 @@ nscolor nsXPLookAndFeel::GetStandinForNativeColor(ColorID aID,
+       COLOR(Marktext, 0x00, 0x00, 0x00)
+       COLOR(Window, 0xFF, 0xFF, 0xFF)
+       COLOR(Windowtext, 0x00, 0x00, 0x00)
++      COLOR(MozButtondefault, 0x69, 0x69, 0x69)
+       COLOR(Field, 0xFF, 0xFF, 0xFF)
+       COLORA(MozDisabledfield, 0xFF, 0xFF, 0xFF, 128)
+       COLOR(Fieldtext, 0x00, 0x00, 0x00)
+diff --git a/widget/tests/test_platform_colors.xhtml b/widget/tests/test_platform_colors.xhtml
+index 4d32762eaaf2..af03d1d65969 100644
+--- a/widget/tests/test_platform_colors.xhtml
++++ b/widget/tests/test_platform_colors.xhtml
+@@ -51,6 +51,7 @@ var colors = {
+   "windowframe": ["rgb(204, 204, 204)"],
+   "windowtext": ["rgb(0, 0, 0)"],
+   "-moz-activehyperlinktext": ["rgb(238, 0, 0)"],
++  "-moz-buttondefault": ["rgb(220, 220, 220)"],
+   "-moz-buttonhoverface": ["rgb(240, 240, 240)"],
+   "-moz-buttonhovertext": ["rgb(0, 0, 0)"],
+   "-moz-cellhighlight": ["rgb(212, 212, 212)", "rgb(220, 220, 220)"],
+diff --git a/widget/windows/nsLookAndFeel.cpp b/widget/windows/nsLookAndFeel.cpp
+index 7ea7c9399346..d85b5e8a4d47 100644
+--- a/widget/windows/nsLookAndFeel.cpp
++++ b/widget/windows/nsLookAndFeel.cpp
+@@ -387,6 +387,9 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+     case ColorID::MozColheaderhovertext:
+       idx = COLOR_WINDOWTEXT;
+       break;
++    case ColorID::MozButtondefault:
++      idx = COLOR_3DDKSHADOW;
++      break;
+     case ColorID::Linktext:
+       idx = COLOR_HOTLIGHT;
+       break;

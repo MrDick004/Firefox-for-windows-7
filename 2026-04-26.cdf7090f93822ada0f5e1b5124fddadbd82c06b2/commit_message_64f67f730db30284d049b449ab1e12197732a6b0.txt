@@ -1,0 +1,1 @@
+Bug 1946365 - Use FillRect to clear window. r=win-reviewers,rkraesig    2025-02-19 01:56:01    64f67f730db30284d049b449ab1e12197732a6b0

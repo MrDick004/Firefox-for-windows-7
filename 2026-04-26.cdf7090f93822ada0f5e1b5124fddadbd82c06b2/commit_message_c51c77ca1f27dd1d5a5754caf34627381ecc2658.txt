@@ -1,0 +1,1 @@
+Bug 1751010: Make it possible to generate an AUMID without setting it, or retrieving the current one. r=mhowell    2022-03-01 22:16:47    c51c77ca1f27dd1d5a5754caf34627381ecc2658
