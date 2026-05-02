@@ -1,0 +1,103 @@
+diff --git a/config/check_spidermonkey_style.py b/config/check_spidermonkey_style.py
+index 287e79e5024b..17b1286eb6cb 100644
+--- a/config/check_spidermonkey_style.py
++++ b/config/check_spidermonkey_style.py
+@@ -146,18 +146,12 @@ oddly_ordered_inclnames = set(
+         "psapi.h",  # Must be included after "util/WindowsWrapper.h" on Windows
+         "machine/endian.h",  # Must be included after <sys/types.h> on BSD
+         "process.h",  # Windows-specific
+-        "util/WindowsWrapper.h",  # Must precede other system headers(?)
++        "winbase.h",  # Must precede other system headers(?)
++        "windef.h",  # Must precede other system headers(?)
++        "windows.h",  # Must precede other system headers(?)
+     ]
+ )
+ 
+-# System headers which shouldn't be included directly, but instead use the
+-# designated wrapper.
+-wrapper_system_inclnames = {
+-    "windows.h": "util/WindowsWrapper.h",
+-    "windef.h": "util/WindowsWrapper.h",
+-    "winbase.h": "util/WindowsWrapper.h",
+-}
+-
+ # The files in tests/style/ contain code that fails this checking in various
+ # ways.  Here is the output we expect.  If the actual output differs from
+ # this, one of the following must have happened.
+@@ -719,18 +713,6 @@ def check_file(
+                     'the #include "..." form',
+                 )
+ 
+-            # Check for system header which shouldn't be included directly.
+-            if (
+-                include.inclname in wrapper_system_inclnames
+-                and wrapper_system_inclnames[include.inclname] != inclname
+-            ):
+-                wrapper_inclname = wrapper_system_inclnames[include.inclname]
+-                error(
+-                    filename,
+-                    include.linenum,
+-                    f"{include.quote()} should not be included directly, "
+-                    f'instead use "{wrapper_inclname}"',
+-                )
+         else:
+             msg = deprecated_inclnames.get(include.inclname)
+             if msg:
+diff --git a/js/src/frontend/FrontendContext.cpp b/js/src/frontend/FrontendContext.cpp
+index 9d971a592017..742053293ab6 100644
+--- a/js/src/frontend/FrontendContext.cpp
++++ b/js/src/frontend/FrontendContext.cpp
+@@ -7,7 +7,7 @@
+ #include "frontend/FrontendContext.h"
+ 
+ #ifdef _WIN32
+-#  include "util/WindowsWrapper.h"
++#  include <windows.h>
+ #  include <process.h>  // GetCurrentThreadId
+ #else
+ #  include <pthread.h>  // pthread_self
+diff --git a/js/src/jit/PerfSpewer.cpp b/js/src/jit/PerfSpewer.cpp
+index c694340ac58a..3ba3f1989192 100644
+--- a/js/src/jit/PerfSpewer.cpp
++++ b/js/src/jit/PerfSpewer.cpp
+@@ -74,11 +74,12 @@ pid_t gettid_pthread() {
+ #include "vm/MutexIDs.h"
+ 
+ #ifdef XP_WIN
+-#  include "util/WindowsWrapper.h"
++#  include <windef.h>
+ #  include <codecvt>
+ #  include <evntprov.h>
+ #  include <locale>
+ #  include <string>
++#  include <windows.h>
+ 
+ const GUID PROVIDER_JSCRIPT9 = {
+     0x57277741,
+diff --git a/js/src/shell/OSObject.cpp b/js/src/shell/OSObject.cpp
+index c47c4ce51a21..cd01252504ad 100644
+--- a/js/src/shell/OSObject.cpp
++++ b/js/src/shell/OSObject.cpp
+@@ -19,7 +19,7 @@
+ #  include <process.h>
+ #  include <string.h>
+ #  include <wchar.h>
+-#  include "util/WindowsWrapper.h"
++#  include <windows.h>
+ #elif __wasi__
+ #  include <dirent.h>
+ #  include <sys/types.h>
+diff --git a/js/src/vm/Time.cpp b/js/src/vm/Time.cpp
+index 1c0fb775f259..79884a962c20 100644
+--- a/js/src/vm/Time.cpp
++++ b/js/src/vm/Time.cpp
+@@ -17,7 +17,8 @@
+ #include "jstypes.h"
+ 
+ #ifdef XP_WIN
+-#  include "util/WindowsWrapper.h"
++#  include <windef.h>
++#  include <winbase.h>
+ #  include <crtdbg.h> /* for _CrtSetReportMode */
+ #  include <stdlib.h> /* for _set_invalid_parameter_handler */
+ #endif

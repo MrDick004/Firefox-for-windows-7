@@ -1,0 +1,96 @@
+diff --git a/browser/themes/addons/dark/manifest.json b/browser/themes/addons/dark/manifest.json
+index 36406459d0fd..323c35337c12 100644
+--- a/browser/themes/addons/dark/manifest.json
++++ b/browser/themes/addons/dark/manifest.json
+@@ -10,8 +10,8 @@
+   "theme": {
+     "colors": {
+       "tab_background_text": "#fbfbfe",
+-      "tab_selected": "rgba(106,106,120,0.7)",
+-      "tab_text": "rgb(255,255,255)",
++      "tab_selected": "rgb(66,65,77)",
++      "tab_text": "rgb(251,251,254)",
+       "icons": "rgb(251,251,254)",
+       "frame": "rgb(28, 27, 34)",
+       "frame_inactive": "rgb(31, 30, 37)",
+diff --git a/browser/themes/shared/browser-colors.css b/browser/themes/shared/browser-colors.css
+index 518d3b0fdd79..49d45ce6fdc6 100644
+--- a/browser/themes/shared/browser-colors.css
++++ b/browser/themes/shared/browser-colors.css
+@@ -101,8 +101,8 @@
+     --input-color: light-dark(rgb(21, 20, 26), rgb(251, 251, 254));
+     --input-bgcolor: light-dark(rgb(255, 255, 255), #42414d);
+ 
+-    --tab-selected-bgcolor: light-dark(rgb(255, 255, 255), rgba(106, 106, 120, 0.7));
+-    --tab-selected-textcolor: light-dark(rgb(21, 20, 26), rgb(255, 255, 255));
++    --tab-selected-bgcolor: light-dark(rgb(255, 255, 255), rgb(66, 65, 77));
++    --tab-selected-textcolor: light-dark(rgb(21, 20, 26), rgb(251, 251, 254));
+     --tabs-navbar-separator-style: none;
+ 
+     /* stylelint-disable-next-line media-query-no-invalid */
+diff --git a/toolkit/mozapps/extensions/default-theme/manifest.json b/toolkit/mozapps/extensions/default-theme/manifest.json
+index 46da67a714fe..67376448b008 100644
+--- a/toolkit/mozapps/extensions/default-theme/manifest.json
++++ b/toolkit/mozapps/extensions/default-theme/manifest.json
+@@ -10,7 +10,7 @@
+   "name": "System theme — auto",
+   "description": "Follow the operating system setting for buttons, menus, and windows.",
+   "author": "Mozilla",
+-  "version": "1.4.1",
++  "version": "1.4",
+ 
+   "icons": { "32": "icon.svg" },
+ 
+@@ -19,8 +19,8 @@
+   "dark_theme": {
+     "colors": {
+       "tab_background_text": "#fbfbfe",
+-      "tab_selected": "rgba(200,200,220,0.3)",
+-      "tab_text": "rgb(255,255,255)",
++      "tab_selected": "rgb(66,65,77)",
++      "tab_text": "rgb(251,251,254)",
+       "icons": "rgb(251,251,254)",
+       "frame": "#1c1b22",
+       "popup": "rgb(66,65,77)",
+diff --git a/toolkit/mozapps/extensions/test/browser/browser_html_detail_view.js b/toolkit/mozapps/extensions/test/browser/browser_html_detail_view.js
+index d7d0a991069d..7dedf8ee5bd7 100644
+--- a/toolkit/mozapps/extensions/test/browser/browser_html_detail_view.js
++++ b/toolkit/mozapps/extensions/test/browser/browser_html_detail_view.js
+@@ -634,12 +634,7 @@ add_task(async function testFullDetails() {
+   row = rows.shift();
+   await checkLabel(row, "last-updated");
+   text = row.lastChild;
+-  let expectedDate = new Date(2019, 2, 7).toLocaleDateString(undefined, {
+-    year: "numeric",
+-    month: "long",
+-    day: "numeric",
+-  });
+-  is(text.textContent, expectedDate, "The last updated date is set.");
++  is(text.textContent, "March 7, 2019", "The last updated date is set");
+ 
+   // Homepage.
+   row = rows.shift();
+@@ -823,21 +818,16 @@ add_task(async function testDefaultTheme() {
+ 
+   let rows = getDetailRows(card);
+ 
+-  let addonInfo = await AddonManager.getAddonByID(DEFAULT_THEME_ID);
+   // Author.
+   let author = rows.shift();
+   await checkLabel(author, "author");
+   let text = author.lastChild;
+-  is(text.textContent, addonInfo.creator.name, "The author is set");
++  is(text.textContent, "Mozilla", "The author is set");
+ 
+   // Version.
+   let version = rows.shift();
+   await checkLabel(version, "version");
+-  is(
+-    version.lastChild.textContent,
+-    addonInfo.version,
+-    "Default theme version matches."
+-  );
++  is(version.lastChild.textContent, "1.4", "It's always version 1.4");
+ 
+   // Last updated.
+   let lastUpdated = rows.shift();

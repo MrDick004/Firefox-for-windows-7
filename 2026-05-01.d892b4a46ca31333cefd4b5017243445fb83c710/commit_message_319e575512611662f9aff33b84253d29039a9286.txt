@@ -1,0 +1,1 @@
+Bug 1743983 pt2 - Rewrite the minidump-analyzer in Rust r=gsvelto    2024-09-24 21:36:22    319e575512611662f9aff33b84253d29039a9286

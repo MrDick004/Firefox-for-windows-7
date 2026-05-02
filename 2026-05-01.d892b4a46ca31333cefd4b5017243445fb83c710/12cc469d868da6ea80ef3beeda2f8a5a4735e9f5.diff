@@ -1,0 +1,1271 @@
+diff --git a/gfx/webrender_bindings/RenderCompositor.cpp b/gfx/webrender_bindings/RenderCompositor.cpp
+index c562c734068f..1b8d4b6d2ac5 100644
+--- a/gfx/webrender_bindings/RenderCompositor.cpp
++++ b/gfx/webrender_bindings/RenderCompositor.cpp
+@@ -247,6 +247,7 @@ void RenderCompositor::GetWindowVisibility(WindowVisibility* aVisibility) {
+   if (!widget) {
+     return;
+   }
++  aVisibility->size_mode = ToWrWindowSizeMode(widget->GetWindowSizeMode());
+   aVisibility->is_fully_occluded = widget->GetWindowIsFullyOccluded();
+ #endif
+ }
+diff --git a/gfx/webrender_bindings/WebRenderTypes.h b/gfx/webrender_bindings/WebRenderTypes.h
+index 9053639bd1fc..9b0353ec1bf7 100644
+--- a/gfx/webrender_bindings/WebRenderTypes.h
++++ b/gfx/webrender_bindings/WebRenderTypes.h
+@@ -887,6 +887,22 @@ static inline wr::SyntheticItalics DegreesToSyntheticItalics(float aDegrees) {
+   return synthetic_italics;
+ }
+ 
++static inline wr::WindowSizeMode ToWrWindowSizeMode(nsSizeMode aSizeMode) {
++  switch (aSizeMode) {
++    case nsSizeMode_Normal:
++      return wr::WindowSizeMode::Normal;
++    case nsSizeMode_Minimized:
++      return wr::WindowSizeMode::Minimized;
++    case nsSizeMode_Maximized:
++      return wr::WindowSizeMode::Maximized;
++    case nsSizeMode_Fullscreen:
++      return wr::WindowSizeMode::Fullscreen;
++    default:
++      MOZ_ASSERT_UNREACHABLE("Tried to convert invalid size mode.");
++      return wr::WindowSizeMode::Invalid;
++  }
++}
++
+ static inline wr::APZScrollGeneration ToWrAPZScrollGeneration(
+     const mozilla::APZScrollGeneration& aGeneration) {
+   return wr::APZScrollGeneration(aGeneration.Raw());
+diff --git a/gfx/wr/webrender/src/composite.rs b/gfx/wr/webrender/src/composite.rs
+index a8792f5e556f..67241e674e69 100644
+--- a/gfx/wr/webrender/src/composite.rs
++++ b/gfx/wr/webrender/src/composite.rs
+@@ -1112,15 +1112,27 @@ impl Default for CompositorCapabilities {
+     }
+ }
+ 
++#[repr(C)]
++#[derive(Copy, Clone, Debug)]
++pub enum WindowSizeMode {
++    Normal,
++    Minimized,
++    Maximized,
++    Fullscreen,
++    Invalid,
++}
++
+ #[repr(C)]
+ #[derive(Copy, Clone, Debug)]
+ pub struct WindowVisibility {
++    pub size_mode: WindowSizeMode,
+     pub is_fully_occluded: bool,
+ }
+ 
+ impl Default for WindowVisibility {
+     fn default() -> Self {
+         WindowVisibility {
++            size_mode: WindowSizeMode::Normal,
+             is_fully_occluded: false,
+         }
+     }
+diff --git a/widget/windows/CompositorWidgetChild.cpp b/widget/windows/CompositorWidgetChild.cpp
+index 7044235ac11b..b294efef5162 100644
+--- a/widget/windows/CompositorWidgetChild.cpp
++++ b/widget/windows/CompositorWidgetChild.cpp
+@@ -20,11 +20,14 @@ CompositorWidgetChild::CompositorWidgetChild(
+     RefPtr<CompositorVsyncDispatcher> aVsyncDispatcher,
+     RefPtr<CompositorWidgetVsyncObserver> aVsyncObserver,
+     const CompositorWidgetInitData& aInitData)
+-    : mVsyncDispatcher(std::move(aVsyncDispatcher)),
+-      mVsyncObserver(std::move(aVsyncObserver)),
++    : mVsyncDispatcher(aVsyncDispatcher),
++      mVsyncObserver(aVsyncObserver),
+       mCompositorWnd(nullptr),
+       mWnd(reinterpret_cast<HWND>(
+-          aInitData.get_WinCompositorWidgetInitData().hWnd())) {
++          aInitData.get_WinCompositorWidgetInitData().hWnd())),
++      mTransparencyMode(
++          aInitData.get_WinCompositorWidgetInitData().transparencyMode()),
++      mRemoteBackbufferProvider() {
+   MOZ_ASSERT(XRE_IsParentProcess());
+   MOZ_ASSERT(!gfxPlatform::IsHeadless());
+   MOZ_ASSERT(mWnd && ::IsWindow(mWnd));
+@@ -34,7 +37,8 @@ CompositorWidgetChild::~CompositorWidgetChild() {}
+ 
+ bool CompositorWidgetChild::Initialize() {
+   mRemoteBackbufferProvider = std::make_unique<remote_backbuffer::Provider>();
+-  if (!mRemoteBackbufferProvider->Initialize(mWnd, OtherPid())) {
++  if (!mRemoteBackbufferProvider->Initialize(mWnd, OtherPid(),
++                                             mTransparencyMode)) {
+     return false;
+   }
+ 
+@@ -62,8 +66,17 @@ bool CompositorWidgetChild::OnWindowResize(const LayoutDeviceIntSize& aSize) {
+   return true;
+ }
+ 
+-void CompositorWidgetChild::NotifyVisibilityUpdated(bool aIsFullyOccluded) {
+-  Unused << SendNotifyVisibilityUpdated(aIsFullyOccluded);
++void CompositorWidgetChild::OnWindowModeChange(nsSizeMode aSizeMode) {}
++
++void CompositorWidgetChild::UpdateTransparency(TransparencyMode aMode) {
++  mTransparencyMode = aMode;
++  mRemoteBackbufferProvider->UpdateTransparencyMode(aMode);
++  Unused << SendUpdateTransparency(aMode);
++}
++
++void CompositorWidgetChild::NotifyVisibilityUpdated(nsSizeMode aSizeMode,
++                                                    bool aIsFullyOccluded) {
++  Unused << SendNotifyVisibilityUpdated(aSizeMode, aIsFullyOccluded);
+ };
+ 
+ void CompositorWidgetChild::ClearTransparentWindow() {
+diff --git a/widget/windows/CompositorWidgetChild.h b/widget/windows/CompositorWidgetChild.h
+index cac048d68756..bec8ead98ead 100644
+--- a/widget/windows/CompositorWidgetChild.h
++++ b/widget/windows/CompositorWidgetChild.h
+@@ -33,9 +33,10 @@ class CompositorWidgetChild final : public PCompositorWidgetChild,
+   void LeavePresentLock() override;
+   void OnDestroyWindow() override;
+   bool OnWindowResize(const LayoutDeviceIntSize& aSize) override;
+-  void NotifyVisibilityUpdated(bool aIsFullyOccluded) override;
+-
+-  void UpdateTransparency(TransparencyMode) override {}
++  void OnWindowModeChange(nsSizeMode aSizeMode) override;
++  void UpdateTransparency(TransparencyMode aMode) override;
++  void NotifyVisibilityUpdated(nsSizeMode aSizeMode,
++                               bool aIsFullyOccluded) override;
+   void ClearTransparentWindow() override;
+ 
+   mozilla::ipc::IPCResult RecvObserveVsync() override;
+@@ -50,6 +51,7 @@ class CompositorWidgetChild final : public PCompositorWidgetChild,
+   HWND mCompositorWnd;
+ 
+   HWND mWnd;
++  TransparencyMode mTransparencyMode;
+ 
+   std::unique_ptr<remote_backbuffer::Provider> mRemoteBackbufferProvider;
+ };
+diff --git a/widget/windows/CompositorWidgetParent.cpp b/widget/windows/CompositorWidgetParent.cpp
+index 9addae9d8fd3..d38125f4caff 100644
+--- a/widget/windows/CompositorWidgetParent.cpp
++++ b/widget/windows/CompositorWidgetParent.cpp
+@@ -34,17 +34,25 @@ CompositorWidgetParent::CompositorWidgetParent(
+                           aOptions),
+       mWnd(reinterpret_cast<HWND>(
+           aInitData.get_WinCompositorWidgetInitData().hWnd())),
+-      mIsFullyOccluded(false) {
++      mTransparencyMode(uint32_t(
++          aInitData.get_WinCompositorWidgetInitData().transparencyMode())),
++      mSizeMode(nsSizeMode_Normal),
++      mIsFullyOccluded(false),
++      mRemoteBackbufferClient() {
+   MOZ_ASSERT(XRE_GetProcessType() == GeckoProcessType_GPU);
+   MOZ_ASSERT(mWnd && ::IsWindow(mWnd));
+ }
+ 
+-CompositorWidgetParent::~CompositorWidgetParent() = default;
++CompositorWidgetParent::~CompositorWidgetParent() {}
+ 
+ bool CompositorWidgetParent::Initialize(
+     const RemoteBackbufferHandles& aRemoteHandles) {
+   mRemoteBackbufferClient = std::make_unique<remote_backbuffer::Client>();
+-  return mRemoteBackbufferClient->Initialize(aRemoteHandles);
++  if (!mRemoteBackbufferClient->Initialize(aRemoteHandles)) {
++    return false;
++  }
++
++  return true;
+ }
+ 
+ bool CompositorWidgetParent::PreRender(WidgetRenderingContext* aContext) {
+@@ -128,12 +136,23 @@ mozilla::ipc::IPCResult CompositorWidgetParent::RecvLeavePresentLock() {
+   return IPC_OK();
+ }
+ 
++mozilla::ipc::IPCResult CompositorWidgetParent::RecvUpdateTransparency(
++    const TransparencyMode& aMode) {
++  mTransparencyMode = uint32_t(aMode);
++  return IPC_OK();
++}
++
+ mozilla::ipc::IPCResult CompositorWidgetParent::RecvNotifyVisibilityUpdated(
+-    const bool& aIsFullyOccluded) {
++    const nsSizeMode& aSizeMode, const bool& aIsFullyOccluded) {
++  mSizeMode = aSizeMode;
+   mIsFullyOccluded = aIsFullyOccluded;
+   return IPC_OK();
+ }
+ 
++nsSizeMode CompositorWidgetParent::GetWindowSizeMode() const {
++  return mSizeMode;
++}
++
+ bool CompositorWidgetParent::GetWindowIsFullyOccluded() const {
+   return mIsFullyOccluded;
+ }
+diff --git a/widget/windows/CompositorWidgetParent.h b/widget/windows/CompositorWidgetParent.h
+index 9426c380934b..0f91fa7ccb3e 100644
+--- a/widget/windows/CompositorWidgetParent.h
++++ b/widget/windows/CompositorWidgetParent.h
+@@ -45,14 +45,17 @@ class CompositorWidgetParent final : public PCompositorWidgetParent,
+   bool InitCompositor(layers::Compositor* aCompositor) override;
+   bool IsHidden() const override;
+ 
++  nsSizeMode GetWindowSizeMode() const override;
+   bool GetWindowIsFullyOccluded() const override;
+ 
+   mozilla::ipc::IPCResult RecvInitialize(
+       const RemoteBackbufferHandles& aRemoteHandles) override;
+   mozilla::ipc::IPCResult RecvEnterPresentLock() override;
+   mozilla::ipc::IPCResult RecvLeavePresentLock() override;
++  mozilla::ipc::IPCResult RecvUpdateTransparency(
++      const TransparencyMode& aMode) override;
+   mozilla::ipc::IPCResult RecvNotifyVisibilityUpdated(
+-      const bool& aIsFullyOccluded) override;
++      const nsSizeMode& aSizeMode, const bool& aIsFullyOccluded) override;
+   mozilla::ipc::IPCResult RecvClearTransparentWindow() override;
+   void ActorDestroy(ActorDestroyReason aWhy) override;
+ 
+diff --git a/widget/windows/InProcessWinCompositorWidget.cpp b/widget/windows/InProcessWinCompositorWidget.cpp
+index 3abc62b67a32..de491b734b5e 100644
+--- a/widget/windows/InProcessWinCompositorWidget.cpp
++++ b/widget/windows/InProcessWinCompositorWidget.cpp
+@@ -77,6 +77,8 @@ bool InProcessWinCompositorWidget::OnWindowResize(
+   return ::GetWindowLongPtrW(mWnd, GWL_EXSTYLE) & WS_EX_LAYERED;
+ }
+ 
++void InProcessWinCompositorWidget::OnWindowModeChange(nsSizeMode aSizeMode) {}
++
+ bool InProcessWinCompositorWidget::PreRender(WidgetRenderingContext* aContext) {
+   // This can block waiting for WM_SETTEXT to finish
+   // Using PreRender is unnecessarily pessimistic because
+@@ -275,10 +277,16 @@ void InProcessWinCompositorWidget::UpdateTransparency(TransparencyMode aMode) {
+ }
+ 
+ void InProcessWinCompositorWidget::NotifyVisibilityUpdated(
+-    bool aIsFullyOccluded) {
++    nsSizeMode aSizeMode, bool aIsFullyOccluded) {
++  mSizeMode = aSizeMode;
+   mIsFullyOccluded = aIsFullyOccluded;
+ }
+ 
++nsSizeMode InProcessWinCompositorWidget::GetWindowSizeMode() const {
++  nsSizeMode sizeMode = mSizeMode;
++  return sizeMode;
++}
++
+ bool InProcessWinCompositorWidget::GetWindowIsFullyOccluded() const {
+   bool isFullyOccluded = mIsFullyOccluded;
+   return isFullyOccluded;
+diff --git a/widget/windows/InProcessWinCompositorWidget.h b/widget/windows/InProcessWinCompositorWidget.h
+index 794c61698720..e28720446129 100644
+--- a/widget/windows/InProcessWinCompositorWidget.h
++++ b/widget/windows/InProcessWinCompositorWidget.h
+@@ -45,8 +45,10 @@ class InProcessWinCompositorWidget final
+   void LeavePresentLock() override;
+   void OnDestroyWindow() override;
+   bool OnWindowResize(const LayoutDeviceIntSize& aSize) override;
++  void OnWindowModeChange(nsSizeMode aSizeMode) override;
+   void UpdateTransparency(TransparencyMode aMode) override;
+-  void NotifyVisibilityUpdated(bool aIsFullyOccluded) override;
++  void NotifyVisibilityUpdated(nsSizeMode aSizeMode,
++                               bool aIsFullyOccluded) override;
+   void ClearTransparentWindow() override;
+ 
+   bool DrawsToMemoryDC() const;
+@@ -60,6 +62,7 @@ class InProcessWinCompositorWidget final
+     return mTransparentSurfaceLock;
+   }
+ 
++  nsSizeMode GetWindowSizeMode() const override;
+   bool GetWindowIsFullyOccluded() const override;
+ 
+   void ObserveVsync(VsyncObserver* aObserver) override;
+@@ -90,6 +93,7 @@ class InProcessWinCompositorWidget final
+   }
+ 
+   // Visibility handling.
++  mozilla::Atomic<nsSizeMode, MemoryOrdering::Relaxed> mSizeMode;
+   mozilla::Atomic<bool, MemoryOrdering::Relaxed> mIsFullyOccluded;
+ 
+   RefPtr<gfxASurface> mTransparentSurface;
+diff --git a/widget/windows/PCompositorWidget.ipdl b/widget/windows/PCompositorWidget.ipdl
+index dae852bc9fc4..89ea575a471f 100644
+--- a/widget/windows/PCompositorWidget.ipdl
++++ b/widget/windows/PCompositorWidget.ipdl
+@@ -33,7 +33,8 @@ parent:
+   
+   sync EnterPresentLock();
+   sync LeavePresentLock();
+-  async NotifyVisibilityUpdated(bool aIsFullyOccluded);
++  async UpdateTransparency(TransparencyMode aMode);
++  async NotifyVisibilityUpdated(nsSizeMode aSizeMode, bool aIsFullyOccluded);
+   sync ClearTransparentWindow();
+   async __delete__();
+ 
+diff --git a/widget/windows/PlatformWidgetTypes.ipdlh b/widget/windows/PlatformWidgetTypes.ipdlh
+index 3045f350db85..67dd92b8025e 100644
+--- a/widget/windows/PlatformWidgetTypes.ipdlh
++++ b/widget/windows/PlatformWidgetTypes.ipdlh
+@@ -21,6 +21,7 @@ struct WinCompositorWidgetInitData
+   WindowsHandle hWnd;
+   uintptr_t widgetKey;
+   TransparencyMode transparencyMode;
++  nsSizeMode sizeMode;
+ };
+ 
+ union CompositorWidgetInitData
+diff --git a/widget/windows/RemoteBackbuffer.cpp b/widget/windows/RemoteBackbuffer.cpp
+index e743fd484668..2d53570c3ea9 100644
+--- a/widget/windows/RemoteBackbuffer.cpp
++++ b/widget/windows/RemoteBackbuffer.cpp
+@@ -253,9 +253,15 @@ class PresentableSharedImage {
+     return true;
+   }
+ 
+-  bool PresentToWindow(HWND aWindowHandle,
++  bool PresentToWindow(HWND aWindowHandle, TransparencyMode aTransparencyMode,
+                        Span<const IpcSafeRect> aDirtyRects) {
+-    if (::GetWindowLongPtrW(aWindowHandle, GWL_EXSTYLE) & WS_EX_LAYERED) {
++    if (aTransparencyMode == TransparencyMode::Transparent) {
++      // If our window is a child window or a child-of-a-child, the window
++      // that needs to be updated is the top level ancestor of the tree
++      HWND topLevelWindow = WinUtils::GetTopLevelHWND(aWindowHandle, true);
++      MOZ_ASSERT(::GetWindowLongPtr(topLevelWindow, GWL_EXSTYLE) &
++                 WS_EX_LAYERED);
++
+       BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+       POINT srcPos = {0, 0};
+       RECT clientRect = {};
+@@ -281,7 +287,7 @@ class PresentableSharedImage {
+       }
+ 
+       return !!::UpdateLayeredWindow(
+-          aWindowHandle, nullptr /*paletteDC*/, nullptr /*newPos*/, &winSize,
++          topLevelWindow, nullptr /*paletteDC*/, nullptr /*newPos*/, &winSize,
+           mDeviceContext, &srcPos, 0 /*colorKey*/, &bf, ULW_ALPHA);
+     }
+ 
+@@ -382,7 +388,8 @@ Provider::~Provider() {
+   }
+ }
+ 
+-bool Provider::Initialize(HWND aWindowHandle, DWORD aTargetProcessId) {
++bool Provider::Initialize(HWND aWindowHandle, DWORD aTargetProcessId,
++                          TransparencyMode aTransparencyMode) {
+   MOZ_ASSERT(aWindowHandle);
+   MOZ_ASSERT(aTargetProcessId);
+ 
+@@ -434,7 +441,13 @@ bool Provider::Initialize(HWND aWindowHandle, DWORD aTargetProcessId) {
+       PR_USER_THREAD, [](void* p) { static_cast<Provider*>(p)->ThreadMain(); },
+       this, PR_PRIORITY_NORMAL, PR_GLOBAL_THREAD, PR_JOINABLE_THREAD,
+       0 /*default stack size*/);
+-  return !!mServiceThread;
++  if (!mServiceThread) {
++    return false;
++  }
++
++  mTransparencyMode = uint32_t(aTransparencyMode);
++
++  return true;
+ }
+ 
+ Maybe<RemoteBackbufferHandles> Provider::CreateRemoteHandles() {
+@@ -444,6 +457,10 @@ Maybe<RemoteBackbufferHandles> Provider::CreateRemoteHandles() {
+                               ipc::FileDescriptor(mResponseReadyEvent)));
+ }
+ 
++void Provider::UpdateTransparencyMode(TransparencyMode aTransparencyMode) {
++  mTransparencyMode = uint32_t(aTransparencyMode);
++}
++
+ void Provider::ThreadMain() {
+   AUTO_PROFILER_REGISTER_THREAD("RemoteBackbuffer");
+   NS_SetCurrentThreadName("RemoteBackbuffer");
+@@ -558,7 +575,8 @@ void Provider::HandlePresentRequest(const PresentRequestData& aRequestData,
+   }
+ 
+   if (!mBackbuffer->PresentToWindow(
+-          mWindowHandle, rectSpan.First(aRequestData.lenDirtyRects))) {
++          mWindowHandle, GetTransparencyMode(),
++          rectSpan.First(aRequestData.lenDirtyRects))) {
+     return;
+   }
+ 
+diff --git a/widget/windows/RemoteBackbuffer.h b/widget/windows/RemoteBackbuffer.h
+index b2a2e612317a..5899e809841d 100644
+--- a/widget/windows/RemoteBackbuffer.h
++++ b/widget/windows/RemoteBackbuffer.h
+@@ -30,10 +30,13 @@ class Provider {
+   Provider();
+   ~Provider();
+ 
+-  bool Initialize(HWND aWindowHandle, DWORD aTargetProcessId);
++  bool Initialize(HWND aWindowHandle, DWORD aTargetProcessId,
++                  TransparencyMode aTransparencyMode);
+ 
+   Maybe<RemoteBackbufferHandles> CreateRemoteHandles();
+ 
++  void UpdateTransparencyMode(TransparencyMode aTransparencyMode);
++
+   Provider(const Provider&) = delete;
+   Provider(Provider&&) = delete;
+   Provider& operator=(const Provider&) = delete;
+@@ -56,6 +59,10 @@ class Provider {
+   bool mStopServiceThread;
+   PRThread* mServiceThread;
+   std::unique_ptr<PresentableSharedImage> mBackbuffer;
++  mozilla::Atomic<uint32_t, MemoryOrdering::Relaxed> mTransparencyMode;
++  TransparencyMode GetTransparencyMode() const {
++    return TransparencyMode(uint32_t(mTransparencyMode));
++  }
+ };
+ 
+ class Client {
+diff --git a/widget/windows/WinCompositorWidget.h b/widget/windows/WinCompositorWidget.h
+index 16164d43c3a8..df5d443067b8 100644
+--- a/widget/windows/WinCompositorWidget.h
++++ b/widget/windows/WinCompositorWidget.h
+@@ -27,13 +27,15 @@ class PlatformCompositorWidgetDelegate : public CompositorWidgetDelegate {
+   virtual void LeavePresentLock() = 0;
+   virtual void OnDestroyWindow() = 0;
+   virtual bool OnWindowResize(const LayoutDeviceIntSize& aSize) = 0;
++  virtual void OnWindowModeChange(nsSizeMode aSizeMode) = 0;
+ 
+   // Transparency handling.
+   virtual void UpdateTransparency(TransparencyMode aMode) = 0;
+   virtual void ClearTransparentWindow() = 0;
+ 
+   // Deliver visibility info
+-  virtual void NotifyVisibilityUpdated(bool aIsFullyOccluded) = 0;
++  virtual void NotifyVisibilityUpdated(nsSizeMode aSizeMode,
++                                       bool aIsFullyOccluded) = 0;
+ 
+   // CompositorWidgetDelegate Overrides
+ 
+@@ -74,6 +76,7 @@ class WinCompositorWidget : public CompositorWidget {
+   bool HasFxrOutputHandler() const { return !!mFxrHandler; }
+   FxROutputHandler* GetFxrOutputHandler() const { return mFxrHandler.get(); }
+ 
++  virtual nsSizeMode GetWindowSizeMode() const = 0;
+   virtual bool GetWindowIsFullyOccluded() const = 0;
+ 
+   virtual void UpdateCompositorWnd(const HWND aCompositorWnd,
+diff --git a/widget/windows/WinUtils.cpp b/widget/windows/WinUtils.cpp
+index 44409cb92ef3..9416e38500c0 100644
+--- a/widget/windows/WinUtils.cpp
++++ b/widget/windows/WinUtils.cpp
+@@ -1311,7 +1311,7 @@ LayoutDeviceIntRegion WinUtils::ConvertHRGNToRegion(HRGN aRgn) {
+ }
+ 
+ /* static */
+-nsAutoRegion WinUtils::RegionToHRGN(const LayoutDeviceIntRegion& aRegion) {
++HRGN WinUtils::RegionToHRGN(const LayoutDeviceIntRegion& aRegion) {
+   const uint32_t count = aRegion.GetNumRects();
+   const size_t regionBytes = count * sizeof(RECT);
+   const size_t regionDataBytes = sizeof(RGNDATAHEADER) + regionBytes;
+@@ -1329,7 +1329,7 @@ nsAutoRegion WinUtils::RegionToHRGN(const LayoutDeviceIntRegion& aRegion) {
+   for (auto iter = aRegion.RectIter(); !iter.Done(); iter.Next()) {
+     *buf++ = ToWinRect(iter.Get());
+   }
+-  return nsAutoRegion(::ExtCreateRegion(nullptr, regionDataBytes, data));
++  return ::ExtCreateRegion(nullptr, regionDataBytes, data);
+ }
+ 
+ LayoutDeviceIntRect WinUtils::ToIntRect(const RECT& aRect) {
+diff --git a/widget/windows/WinUtils.h b/widget/windows/WinUtils.h
+index e1ef2a66deb2..df747b83fb86 100644
+--- a/widget/windows/WinUtils.h
++++ b/widget/windows/WinUtils.h
+@@ -33,10 +33,12 @@
+ #include "nsIDownloader.h"
+ #include "nsIURI.h"
+ #include "nsIWidget.h"
+-#include "nsWindowsHelpers.h"
++#include "nsIThread.h"
+ 
+ #include "mozilla/Attributes.h"
+ #include "mozilla/EventForwards.h"
++#include "mozilla/HalScreenConfiguration.h"
++#include "mozilla/HashTable.h"
+ #include "mozilla/LazyIdleThread.h"
+ #include "mozilla/UniquePtr.h"
+ #include "mozilla/Vector.h"
+@@ -414,8 +416,11 @@ class WinUtils {
+    * returns the LayoutDeviceIntRegion.
+    */
+   static LayoutDeviceIntRegion ConvertHRGNToRegion(HRGN aRgn);
+-  /** Performs the inverse of ConvertHRGNToRegion. */
+-  static nsAutoRegion RegionToHRGN(const LayoutDeviceIntRegion&);
++  /**
++   * Performs the inverse of ConvertHRGNToRegion.
++   * The region must be cleaned up with DeleteObject().
++   */
++  static HRGN RegionToHRGN(const LayoutDeviceIntRegion&);
+ 
+   /**
+    * ToIntRect converts a Windows RECT to a LayoutDeviceIntRect.
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 4567403020b3..6e36f55ee0ea 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -835,28 +835,6 @@ void nsWindow::DestroyDirectManipulation() {
+   }
+ }
+ 
+-namespace mozilla::widget {
+-
+-// A mask specifying the window-styles associated with window-chrome.
+-constexpr static const WindowStyles kChromeStylesMask{
+-    .style = WS_CAPTION | WS_THICKFRAME,
+-    .ex = WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE |
+-          WS_EX_STATICEDGE,
+-};
+-
+-WindowStyles WindowStyles::FromHWND(HWND aWnd) {
+-  return {.style = ::GetWindowLongPtrW(aWnd, GWL_STYLE),
+-          .ex = ::GetWindowLongPtrW(aWnd, GWL_EXSTYLE)};
+-}
+-
+-void SetWindowStyles(HWND aWnd, const WindowStyles& aStyles) {
+-  VERIFY_WINDOW_STYLE(aStyles.style);
+-  ::SetWindowLongPtrW(aWnd, GWL_STYLE, aStyles.style);
+-  ::SetWindowLongPtrW(aWnd, GWL_EXSTYLE, aStyles.ex);
+-}
+-
+-}  // namespace mozilla::widget
+-
+ // Create the proper widget
+ nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
+                           widget::InitData* aInitData) {
+@@ -904,9 +882,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
+   mIsAlert = aInitData->mIsAlert;
+   mResizable = aInitData->mResizable;
+ 
+-  Styles desiredStyles{
+-      .style = static_cast<LONG_PTR>(WindowStyle()),
+-      .ex = static_cast<LONG_PTR>(WindowExStyle()),
+-  };
++  DWORD style = WindowStyle();
++  DWORD extendedStyle = WindowExStyle();
+ 
+   if (mWindowType != WindowType::Popup) {
+@@ -915,11 +891,11 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
+     // See if the caller wants to explicitly set clip children and clip siblings
+     if (aInitData->mClipChildren) {
+-      desiredStyles.style |= WS_CLIPCHILDREN;
++      style |= WS_CLIPCHILDREN;
+     } else {
+-      desiredStyles.style &= ~WS_CLIPCHILDREN;
++      style &= ~WS_CLIPCHILDREN;
+     }
+     if (aInitData->mClipSiblings) {
+-      desiredStyles.style |= WS_CLIPSIBLINGS;
++      style |= WS_CLIPSIBLINGS;
+     }
+   }
+ 
+@@ -937,10 +913,10 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
+     sFirstTopLevelWindowCreated = true;
+     mWnd = ConsumePreXULSkeletonUIHandle();
+     if (mWnd) {
+-      MOZ_ASSERT(desiredStyles.style == kPreXULSkeletonUIWindowStyle,
++      MOZ_ASSERT(style == kPreXULSkeletonUIWindowStyle,
+                  "The skeleton UI window style should match the expected "
+                  "style for the first window created");
+-      MOZ_ASSERT(desiredStyles.ex == kPreXULSkeletonUIWindowStyleEx,
++      MOZ_ASSERT(extendedStyle == kPreXULSkeletonUIWindowStyleEx,
+                  "The skeleton UI window extended style should match the "
+                  "expected extended style for the first window created");
+       MOZ_ASSERT(
+@@ -972,28 +948,15 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
+   }
+ 
+   if (!mWnd) {
+-    mWnd =
+-        ::CreateWindowExW(desiredStyles.ex, className, L"", desiredStyles.style,
+-                          aRect.X(), aRect.Y(), aRect.Width(), aRect.Height(),
+-                          parent, nullptr, nsToolkit::mDllInstance, nullptr);
+-    if (!mWnd) {
+-      NS_WARNING("nsWindow CreateWindowEx failed.");
+-      return NS_ERROR_FAILURE;
+-    }
++    mWnd =
++        ::CreateWindowExW(extendedStyle, className, L"", style, aRect.X(),
++                          aRect.Y(), aRect.Width(), aRect.Height(),
++                          parent, nullptr, nsToolkit::mDllInstance, nullptr);
+   }
+ 
+-  {
+-    // Some of the chrome mask window styles can be added implicitly by
+-    // CreateWindowEx, but we really don't want that.
+-    // To be safe, only deal with those bits for now, instead of just
+-    // overriding with extendedStyle or style.
+-    // This can happen with non-native alert windows for example.
+-    const auto actualStyles = Styles::FromHWND(mWnd);
+-    auto newStyles = (actualStyles & ~kChromeStylesMask) |
+-                     (desiredStyles & kChromeStylesMask);
+-    if (newStyles != actualStyles) {
+-      SetWindowStyles(mWnd, newStyles);
+-    }
++  if (!mWnd) {
++    NS_WARNING("nsWindow CreateWindowEx failed.");
++    return NS_ERROR_FAILURE;
+   }
+ 
+   if (!sWinCloakEventHook) {
+@@ -2724,7 +2687,8 @@ bool nsWindow::UpdateNonClientMargins(bool aReflowWindow) {
+     metrics.mOffset.top = metrics.mCaptionHeight - verticalResize;
+ 
+     if (StaticPrefs::widget_windows_hidden_taskbar_hack_size()) {
+-    if (mozilla::Maybe<UINT> maybeEdge = GetHiddenTaskbarEdge()) {
++    mozilla::Maybe<UINT> maybeEdge = GetHiddenTaskbarEdge();
++    if (maybeEdge) {
+       auto edge = maybeEdge.value();
+       if (ABE_LEFT == edge) {
+         metrics.mOffset.left -= kHiddenTaskbarSize;
+@@ -2733,16 +2697,20 @@ bool nsWindow::UpdateNonClientMargins(bool aReflowWindow) {
+       } else if (ABE_BOTTOM == edge || ABE_TOP == edge) {
+         metrics.mOffset.bottom -= kHiddenTaskbarSize;
+       }
++
++      // When we are drawing the non-client region, we need
++      // to clear the portion of the NC region that is exposed by the
++      // hidden taskbar.  As above, we clear the bottom of the NC region
++      // when the taskbar is at the top of the screen.
++      UINT clearEdge = (edge == ABE_TOP) ? ABE_BOTTOM : edge;
++      mClearNCEdge = Some(clearEdge);
+       }
+     }
+   } else {
+     metrics.mOffset = NormalWindowNonClientOffset();
+   }
+ 
+   UpdateOpaqueRegionInternal();
+-  if (StaticPrefs::widget_windows_hidden_taskbar_hack_paint()) {
+-  mNeedsNCAreaClear = true;
+-  }
+ 
+   if (aReflowWindow) {
+     // Force a reflow of content based on the new client
+@@ -2795,7 +2765,7 @@ void nsWindow::SetResizeMargin(mozilla::LayoutDeviceIntCoord aResizeMargin) {
+   UpdateNonClientMargins();
+ }
+ 
+-nsAutoRegion nsWindow::ComputeNonClientHRGN() {
++void nsWindow::InvalidateNonClientRegion() {
+   // +-+-----------------------+-+
+   // | | app non-client chrome | |
+   // | +-----------------------+ |
+@@ -2811,20 +2781,24 @@ nsAutoRegion nsWindow::ComputeNonClientHRGN() {
+   RECT rect;
+   GetWindowRect(mWnd, &rect);
+   MapWindowPoints(nullptr, mWnd, (LPPOINT)&rect, 2);
+-  nsAutoRegion winRgn(::CreateRectRgnIndirect(&rect));
++  HRGN winRgn = CreateRectRgnIndirect(&rect);
+ 
+   // Subtract app client chrome and app content leaving
+   // windows non-client chrome and app non-client chrome
+   // in winRgn.
+-  ::GetWindowRect(mWnd, &rect);
++  GetWindowRect(mWnd, &rect);
+   rect.top += mCustomNonClientMetrics.mCaptionHeight;
+   rect.right -= mCustomNonClientMetrics.mHorResizeMargin;
+   rect.bottom -= mCustomNonClientMetrics.mVertResizeMargin;
+   rect.left += mCustomNonClientMetrics.mHorResizeMargin;
+-  ::MapWindowPoints(nullptr, mWnd, (LPPOINT)&rect, 2);
+-  nsAutoRegion clientRgn(::CreateRectRgnIndirect(&rect));
+-  ::CombineRgn(winRgn, winRgn, clientRgn, RGN_DIFF);
+-  return nsAutoRegion(winRgn.out());
++  MapWindowPoints(nullptr, mWnd, (LPPOINT)&rect, 2);
++  HRGN clientRgn = CreateRectRgnIndirect(&rect);
++  CombineRgn(winRgn, winRgn, clientRgn, RGN_DIFF);
++  DeleteObject(clientRgn);
++
++  // triggers ncpaint and paint events for the two areas
++  RedrawWindow(mWnd, nullptr, winRgn, RDW_FRAME | RDW_INVALIDATE);
++  DeleteObject(winRgn);
+ }
+ 
+ /**************************************************************
+@@ -3066,34 +3040,87 @@ void nsWindow::HideWindowChrome(bool aShouldHide) {
+     return;
+   }
+ 
+-  if (mHideChrome == aShouldHide) {
+-    return;
+-  }
++  if (mHideChrome == aShouldHide) return;
++
++  // Data manipulation: styles + ex-styles, and bitmasking operations thereupon.
++  struct Styles {
++    LONG_PTR style, ex;
++    constexpr Styles operator|(Styles const& that) const {
++      return Styles{.style = style | that.style, .ex = ex | that.ex};
++    }
++    constexpr Styles operator&(Styles const& that) const {
++      return Styles{.style = style & that.style, .ex = ex & that.ex};
++    }
++    constexpr Styles operator~() const {
++      return Styles{.style = ~style, .ex = ~ex};
++    }
++
++    // Compute a style-set which matches `zero` where the bits of `this` are 0
++    // and `one` where the bits of `this` are 1.
++    constexpr Styles merge(Styles zero, Styles one) const {
++      Styles const& mask = *this;
++      return (~mask & zero) | (mask & one);
++    }
++
++    // The dual of `merge`, above: returns a pair [zero, one] satisfying
++    // `a.merge(a.split(b)...) == b`. (Or its equivalent in valid C++.)
++    constexpr std::tuple<Styles, Styles> split(Styles data) const {
++      Styles const& mask = *this;
++      return {~mask & data, mask & data};
++    }
++  };
++
++  // Get styles from an HWND.
++  constexpr auto const GetStyles = [](HWND hwnd) {
++    return Styles{.style = ::GetWindowLongPtrW(hwnd, GWL_STYLE),
++                  .ex = ::GetWindowLongPtrW(hwnd, GWL_EXSTYLE)};
++  };
++  constexpr auto const SetStyles = [](HWND hwnd, Styles styles) {
++    VERIFY_WINDOW_STYLE(styles.style);
++    ::SetWindowLongPtrW(hwnd, GWL_STYLE, styles.style);
++    ::SetWindowLongPtrW(hwnd, GWL_EXSTYLE, styles.ex);
++  };
++
++  // Get styles from *this.
++  auto const GetCachedStyles = [&]() {
++    return mOldStyles.map([](auto const& m) {
++      return Styles{.style = m.style, .ex = m.exStyle};
++    });
++  };
++  auto const SetCachedStyles = [&](Styles styles) {
++    using WStyles = nsWindow::WindowStyles;
++    mOldStyles = Some(WStyles{.style = styles.style, .exStyle = styles.ex});
++  };
++
++  // The mask describing the "chrome" which this function is supposed to remove
++  // (or restore, as the case may be). Other style-flags will be left untouched.
++  constexpr static const Styles kChromeMask{
++      .style = WS_CAPTION | WS_THICKFRAME,
++      .ex = WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE |
++            WS_EX_STATICEDGE};
+ 
+   // The desired style-flagset for fullscreen windows. (This happens to be all
+   // zeroes, but we don't need to rely on that.)
+-  constexpr static const WindowStyles kFullscreenChromeStyles{.style = 0,
+-                                                              .ex = 0};
++  constexpr static const Styles kFullscreenChrome{.style = 0, .ex = 0};
+ 
+-  auto const [chromeless, currentChrome] =
+-      kChromeStylesMask.split(Styles::FromHWND(hwnd));
++  auto const [chromeless, currentChrome] = kChromeMask.split(GetStyles(hwnd));
+   Styles newChrome{}, oldChrome{};
+ 
+   mHideChrome = aShouldHide;
+   if (aShouldHide) {
+-    newChrome = kFullscreenChromeStyles;
++    newChrome = kFullscreenChrome;
+     oldChrome = currentChrome;
+   } else {
+     // if there's nothing to "restore" it to, just use what's there now
+-    oldChrome = mOldStyles.refOr(currentChrome);
++    oldChrome = GetCachedStyles().refOr(currentChrome);
+     newChrome = oldChrome;
+     if (mFutureMarginsToUse) {
+       SetNonClientMargins(mFutureMarginsOnceChromeShows);
+     }
+   }
+ 
+-  mOldStyles = Some(oldChrome);
+-  SetWindowStyles(hwnd, kChromeStylesMask.merge(chromeless, newChrome));
++  SetCachedStyles(oldChrome);
++  SetStyles(hwnd, kChromeMask.merge(chromeless, newChrome));
+ }
+ 
+ /**************************************************************
+@@ -3857,7 +3884,7 @@ WindowRenderer* nsWindow::GetWindowRenderer() {
+     WinCompositorWidgetInitData initData(
+         reinterpret_cast<uintptr_t>(mWnd),
+         reinterpret_cast<uintptr_t>(static_cast<nsIWidget*>(this)),
+-        mTransparencyMode);
++        mTransparencyMode, mFrameState->GetSizeMode());
+     // If we're not using the compositor, the options don't actually matter.
+     CompositorOptions options(false, false);
+     mBasicLayersSurface =
+@@ -4973,7 +5000,12 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+       auto GeckoClientToWinScreenRect =
+           [&origin](LayoutDeviceIntRect aRect) -> RECT {
+         aRect.MoveBy(origin);
+-        return WinUtils::ToWinRect(aRect);
++        return {
++            .left = aRect.x,
++            .top = aRect.y,
++            .right = aRect.XMost(),
++            .bottom = aRect.YMost(),
++        };
+       };
+       auto SetButton = [&](size_t aIndex, WindowButtonType aType) {
+         info->rgrect[aIndex] =
+@@ -5069,6 +5101,10 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+       }
+ 
+     case WM_NCACTIVATE: {
++      /*
++       * WM_NCACTIVATE paints nc areas. Avoid this and re-route painting
++       * through WM_NCPAINT via InvalidateNonClientRegion.
++       */
+       if (!mCustomNonClient) {
+         break;
+       }
+@@ -5079,17 +5115,26 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+             "nsWindow::ForcePresent", this, &nsWindow::ForcePresent));
+       }
+ 
+-      // ::DefWindowProc would paint nc areas. Avoid this, since we just want
+-      // dwm to take care of re-displaying the glass effect if any. Quoting the
+-      // docs[1]:
+-      //
+-      //     If this parameter is set to -1, DefWindowProc does not repaint the
+-      //     nonclient area to reflect the state change.
+-      //
+-      // [1]:
+-      // https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-ncactivate
+-      lParam = -1;
+-    } break;
++      // let the dwm handle nc painting on glass
++      // Never allow native painting if we are on fullscreen
++      if (mFrameState->GetSizeMode() != nsSizeMode_Fullscreen) break;
++
++      if (wParam == TRUE) {
++        // going active
++        *aRetValue = FALSE;  // ignored
++        result = true;
++        // invalidate to trigger a paint
++        InvalidateNonClientRegion();
++        break;
++      } else {
++        // going inactive
++        *aRetValue = TRUE;  // go ahead and deactive
++        result = true;
++        // invalidate to trigger a paint
++        InvalidateNonClientRegion();
++        break;
++      }
++    }
+ 
+     case WM_NCPAINT: {
+       /*
+@@ -5097,12 +5142,6 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+        * do seem to always send a WM_NCPAINT message, so let's update on that.
+        */
+       gfxDWriteFont::UpdateSystemTextVars();
+-      if (mCustomNonClient) {
+-        // We rely on dwm for glass / semi-transparent window painting, so we
+-        // just need to make sure to clear the non-client area next time we get
+-        // around to doing a main-thread paint.
+-        mNeedsNCAreaClear = true;
+-      }
+     } break;
+ 
+     case WM_POWERBROADCAST:
+@@ -6990,6 +7029,18 @@ void nsWindow::OnSizeModeChange() {
+   if (NeedsToTrackWindowOcclusionState()) {
+     WinWindowOcclusionTracker::Get()->OnWindowVisibilityChanged(
+         this, mode != nsSizeMode_Minimized);
++
++    wr::DebugFlags flags{0};
++    flags._0 = gfx::gfxVars::WebRenderDebugFlags();
++    bool debugEnabled = bool(flags & wr::DebugFlags::WINDOW_VISIBILITY_DBG);
++    if (debugEnabled && mCompositorWidgetDelegate) {
++      mCompositorWidgetDelegate->NotifyVisibilityUpdated(mode,
++                                                         mIsFullyOccluded);
++    }
++  }
++
++  if (mCompositorWidgetDelegate) {
++    mCompositorWidgetDelegate->OnWindowModeChange(mode);
+   }
+ 
+   if (mWidgetListener) {
+@@ -7234,17 +7285,13 @@ void nsWindow::SetWindowTranslucencyInner(TransparencyMode aMode) {
+   }
+ 
+   MOZ_ASSERT(WinUtils::GetTopLevelHWND(mWnd, true) == mWnd);
+-  if (IsPopup()) {
+-    // This can probably go away if we make transparent popups report true in
+-    // WidgetTypeSupportsAcceleration(). See there for context.
+-    LONG_PTR exStyle = ::GetWindowLongPtr(mWnd, GWL_EXSTYLE);
+-    if (aMode == TransparencyMode::Transparent) {
+-      exStyle |= WS_EX_LAYERED;
+-    } else {
+-      exStyle &= ~WS_EX_LAYERED;
+-    }
+-    ::SetWindowLongPtrW(mWnd, GWL_EXSTYLE, exStyle);
++  LONG_PTR exStyle = ::GetWindowLongPtr(mWnd, GWL_EXSTYLE);
++  if (aMode == TransparencyMode::Transparent) {
++    exStyle |= WS_EX_LAYERED;
++  } else {
++    exStyle &= ~WS_EX_LAYERED;
+   }
++  ::SetWindowLongPtrW(mWnd, GWL_EXSTYLE, exStyle);
+ 
+   mTransparencyMode = aMode;
+ 
+@@ -8018,14 +8065,35 @@ void nsWindow::PickerClosed() {
+ }
+ 
+ bool nsWindow::WidgetTypeSupportsAcceleration() {
+-  if (IsPopup()) {
+-    // This transparency+popup checks go back to bug 1150376 and bug 943204,
+-    // but removing it causes reproducible timeouts on automation, see bug
+-    // 1891063 comment 11.
+-    return mTransparencyMode != TransparencyMode::Transparent &&
+-           !DeviceManagerDx::Get()->IsWARP();
+-  }
+-  return true;
++  // We don't currently support using an accelerated layer manager with
++  // transparent windows so don't even try. I'm also not sure if we even
++  // want to support this case. See bug 593471.
++  //
++  // Windows' support for transparent accelerated surfaces isn't great.
++  // Some possible approaches:
++  //  - Readback the data and update it using
++  //  UpdateLayeredWindow/UpdateLayeredWindowIndirect
++  //    This is what WPF does. See
++  //    CD3DDeviceLevel1::PresentWithGDI/CD3DSwapChainWithSwDC in WpfGfx. The
++  //    rationale for not using IDirect3DSurface9::GetDC is explained here:
++  //    https://web.archive.org/web/20160521191104/https://blogs.msdn.microsoft.com/dwayneneed/2008/09/08/transparent-windows-in-wpf/
++  //  - Use D3D11_RESOURCE_MISC_GDI_COMPATIBLE, IDXGISurface1::GetDC(),
++  //    and UpdateLayeredWindowIndirect.
++  //    This is suggested here:
++  //    https://docs.microsoft.com/en-us/archive/msdn-magazine/2009/december/windows-with-c-layered-windows-with-direct2d
++  //    but might have the same problem that IDirect3DSurface9::GetDC has.
++  //  - Creating the window with the WS_EX_NOREDIRECTIONBITMAP flag and use
++  //  DirectComposition.
++  //    Not supported on Win7.
++  //  - Using DwmExtendFrameIntoClientArea with negative margins and something
++  //  to turn off the glass effect.
++  //    This doesn't work when the DWM is not running (Win7)
++  //
++  // Also see bug 1150376, D3D11 composition can cause issues on some devices
++  // on Windows 7 where presentation fails randomly for windows with drop
++  // shadows.
++  return mTransparencyMode != TransparencyMode::Transparent &&
++         !(IsPopup() && DeviceManagerDx::Get()->IsWARP());
+ }
+ 
+ bool nsWindow::DispatchTouchEventFromWMPointer(
+@@ -8220,7 +8288,7 @@ void nsWindow::GetCompositorWidgetInitData(
+   *aInitData = WinCompositorWidgetInitData(
+       reinterpret_cast<uintptr_t>(mWnd),
+       reinterpret_cast<uintptr_t>(static_cast<nsIWidget*>(this)),
+-      mTransparencyMode);
++      mTransparencyMode, mFrameState->GetSizeMode());
+ }
+ 
+ bool nsWindow::SynchronouslyRepaintOnResize() { return false; }
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index e3be246df37f..76142f3a3e5d 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -87,57 +87,9 @@ const CLSID CLSID_ImmersiveShell = {
+  * Native WIN32 window wrapper.
+  */
+ 
+-namespace mozilla::widget {
+-
+-// Data manipulation: styles + ex-styles, and bitmasking operations thereupon.
+-struct WindowStyles {
+-  LONG_PTR style = 0;
+-  LONG_PTR ex = 0;
+-
+-  static WindowStyles FromHWND(HWND);
+-
+-  constexpr bool operator==(WindowStyles const& that) const {
+-    return style == that.style && ex == that.ex;
+-  }
+-  constexpr bool operator!=(WindowStyles const& that) const {
+-    return !(*this == that);
+-  }
+-  constexpr WindowStyles operator|(WindowStyles const& that) const {
+-    return WindowStyles{.style = style | that.style, .ex = ex | that.ex};
+-  }
+-  constexpr WindowStyles operator&(WindowStyles const& that) const {
+-    return WindowStyles{.style = style & that.style, .ex = ex & that.ex};
+-  }
+-  constexpr WindowStyles operator~() const {
+-    return WindowStyles{.style = ~style, .ex = ~ex};
+-  }
+-
+-  explicit constexpr operator bool() const { return style || ex; }
+-
+-  // Compute a style-set which matches `zero` where the bits of `this` are 0
+-  // and `one` where the bits of `this` are 1.
+-  constexpr WindowStyles merge(WindowStyles zero, WindowStyles one) const {
+-    WindowStyles const& mask = *this;
+-    return (~mask & zero) | (mask & one);
+-  }
+-
+-  // The dual of `merge`, above: returns a pair [zero, one] satisfying
+-  // `a.merge(a.split(b)...) == b`. (Or its equivalent in valid C++.)
+-  constexpr std::tuple<WindowStyles, WindowStyles> split(
+-      WindowStyles data) const {
+-    WindowStyles const& mask = *this;
+-    return {~mask & data, mask & data};
+-  }
+-};
+-
+-void SetWindowStyles(HWND, const WindowStyles&);
+-
+-}  // namespace mozilla::widget
+-
+ class nsWindow final : public nsBaseWidget,
+                        public mozilla::SupportsThreadSafeWeakPtr<nsWindow> {
+  public:
+-  using Styles = mozilla::widget::WindowStyles;
+   using WindowHook = mozilla::widget::WindowHook;
+   using IMEContext = mozilla::widget::IMEContext;
+   using WidgetEventTime = mozilla::WidgetEventTime;
+@@ -563,7 +515,7 @@ class nsWindow final : public nsBaseWidget {
+   bool UpdateNonClientMargins(bool aReflowWindow = true);
+   void UpdateDarkModeToolbar();
+   void ResetLayout();
+-  nsAutoRegion ComputeNonClientHRGN();
++  void InvalidateNonClientRegion();
+   HWND GetOwnerWnd() const { return ::GetWindow(mWnd, GW_OWNER); }
+   bool IsOwnerForegroundWindow() const {
+     HWND owner = GetOwnerWnd();
+@@ -672,7 +624,8 @@ class nsWindow final : public nsBaseWidget {
+   void StopFlashing();
+   static HWND WindowAtMouse();
+   static bool IsTopLevelMouseExit(HWND aWnd);
+-  LayoutDeviceIntRegion GetRegionToPaint(const PAINTSTRUCT& ps, HDC aDC) const;
++  LayoutDeviceIntRegion GetRegionToPaint(bool aForceFullRepaint, PAINTSTRUCT ps,
++                                         HDC aDC);
+   nsIWidgetListener* GetPaintListener();
+ 
+   void CreateCompositor() override;
+@@ -792,7 +745,12 @@ class nsWindow final : public nsBaseWidget {
+   bool mIsAlert = false;
+   bool mIsPerformingDwmFlushHack = false;
+   bool mDraggingWindowWithMouse = false;
+-  mozilla::Maybe<Styles> mOldStyles;
++  // Partial cached window-styles, for when going fullscreen. (Only window-
++  // decoration-related flags are saved here.)
++  struct WindowStyles {
++    LONG_PTR style, exStyle;
++  };
++  mozilla::Maybe<WindowStyles> mOldStyles;
+   nsNativeDragTarget* mNativeDragTarget = nullptr;
+   HKL mLastKeyboardLayout = 0;
+   mozilla::CheckInvariantWrapper<FrameState> mFrameState;
+@@ -930,9 +888,9 @@ class nsWindow final : public nsBaseWidget {
+ 
+   mozilla::DataMutex<Desktop> mDesktopId;
+ 
+-  // If set, indicates the non-client-area region must be cleared to black on
+-  // next paint.
+-  bool mNeedsNCAreaClear = false;
++  // If set, indicates the edge of the NC region we should clear to black
++  // on next paint.  One of: ABE_TOP, ABE_BOTTOM, ABE_LEFT or ABE_RIGHT.
++  mozilla::Maybe<UINT> mClearNCEdge;
+ 
+   friend class nsWindowGfx;
+ 
+diff --git a/widget/windows/nsWindowGfx.cpp b/widget/windows/nsWindowGfx.cpp
+index cf07794300de..8dc7479c4522 100644
+--- a/widget/windows/nsWindowGfx.cpp
++++ b/widget/windows/nsWindowGfx.cpp
+@@ -99,20 +99,27 @@ static IconMetrics sIconMetrics[] = {
+  **************************************************************/
+ 
+ // GetRegionToPaint returns the invalidated region that needs to be painted
+-LayoutDeviceIntRegion nsWindow::GetRegionToPaint(const PAINTSTRUCT& ps,
+-                                                 HDC aDC) const {
+-  LayoutDeviceIntRegion fullRegion(WinUtils::ToIntRect(ps.rcPaint));
++LayoutDeviceIntRegion nsWindow::GetRegionToPaint(bool aForceFullRepaint,
++                                                 PAINTSTRUCT ps, HDC aDC) {
++  if (aForceFullRepaint) {
++    RECT paintRect;
++    ::GetClientRect(mWnd, &paintRect);
++    return LayoutDeviceIntRegion(WinUtils::ToIntRect(paintRect));
++  }
++
+   HRGN paintRgn = ::CreateRectRgn(0, 0, 0, 0);
+-  if (paintRgn) {
+-    if (GetRandomRgn(aDC, paintRgn, SYSRGN) == 1) {
++  if (paintRgn != nullptr) {
++    int result = GetRandomRgn(aDC, paintRgn, SYSRGN);
++    if (result == 1) {
+       POINT pt = {0, 0};
+       ::MapWindowPoints(nullptr, mWnd, &pt, 1);
+       ::OffsetRgn(paintRgn, pt.x, pt.y);
+-      fullRegion.AndWith(WinUtils::ConvertHRGNToRegion(paintRgn));
+     }
++    LayoutDeviceIntRegion rgn(WinUtils::ConvertHRGNToRegion(paintRgn));
+     ::DeleteObject(paintRgn);
++    return rgn;
+   }
+-  return fullRegion;
++  return LayoutDeviceIntRegion(WinUtils::ToIntRect(ps.rcPaint));
+ }
+ 
+ nsIWidgetListener* nsWindow::GetPaintListener() {
+@@ -157,22 +164,45 @@ bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+       isFallback || renderer->GetBackendType() == LayersBackend::LAYERS_WR,
+       "Unknown layers backend");
+ 
+-  const bool didResize = !mBounds.IsEqualEdges(mLastPaintBounds);
++  if (mClearNCEdge) {
++    // We need to clear this edge of the non-client region to black (once).
++    HDC hdc;
++    RECT rect;
++    hdc = ::GetWindowDC(mWnd);
++    ::GetWindowRect(mWnd, &rect);
++    ::MapWindowPoints(nullptr, mWnd, (LPPOINT)&rect, 2);
++    switch (mClearNCEdge.value()) {
++      case ABE_TOP:
++        rect.bottom = rect.top + kHiddenTaskbarSize;
++        break;
++      case ABE_LEFT:
++        rect.right = rect.left + kHiddenTaskbarSize;
++        break;
++      case ABE_BOTTOM:
++        rect.top = rect.bottom - kHiddenTaskbarSize;
++        break;
++      case ABE_RIGHT:
++        rect.left = rect.right - kHiddenTaskbarSize;
++        break;
++      default:
++        MOZ_ASSERT_UNREACHABLE("Invalid edge value");
++        break;
++    }
++    ::FillRect(hdc, &rect,
++               reinterpret_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH)));
++    ::ReleaseDC(mWnd, hdc);
++
++    mClearNCEdge.reset();
++  }
+ 
+-  if (didResize && knowsCompositor && layerManager) {
++  if (knowsCompositor && layerManager &&
++      !mBounds.IsEqualEdges(mLastPaintBounds)) {
+     // Do an early async composite so that we at least have something on the
+     // screen in the right place, even if the content is out of date.
+     layerManager->ScheduleComposite(wr::RenderReasons::WIDGET);
+   }
+   mLastPaintBounds = mBounds;
+ 
+-  RefPtr<nsWindow> strongThis(this);
+-  if (nsIWidgetListener* listener = GetPaintListener()) {
+-    // WillPaintWindow will update our transparent area if needed, which we use
+-    // below. Note that this might kill the listener.
+-    listener->WillPaintWindow(this);
+-  }
+-
+   // For layered translucent popups all drawing should go to memory DC and no
+   // WM_PAINT messages are normally generated. To support asynchronous painting
+   // we force generation of WM_PAINT messages by invalidating window areas with
+@@ -180,50 +210,31 @@ bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+   const bool usingMemoryDC =
+       IsPopup() && renderer->GetBackendType() == LayersBackend::LAYERS_NONE &&
+       mTransparencyMode == TransparencyMode::Transparent;
+-  const LayoutDeviceIntRect winRect = [&] {
+-    RECT r;
+-    ::GetWindowRect(mWnd, &r);
+-    ::MapWindowPoints(nullptr, mWnd, (LPPOINT)&r, 2);
+-    return WinUtils::ToIntRect(r);
+-  }();
+-  LayoutDeviceIntRegion region;
+-  LayoutDeviceIntRegion translucentRegion;
+-  // BeginPaint/EndPaint must be called to make Windows think that invalid
+-  // area is painted. Otherwise it will continue sending the same message
+-  // endlessly. Note that we need to call it after WillPaintWindow, which
+-  // informs us of our transparent region, but also before clearing the
+-  // nc-area, since ::BeginPaint might send WM_NCPAINT messages[1].
+-  // [1]:
+-  // https://learn.microsoft.com/en-us/windows/win32/gdi/the-wm-paint-message
+-  HDC hDC = ::BeginPaint(mWnd, &ps);
++
++  HDC hDC = nullptr;
+   if (usingMemoryDC) {
++    // BeginPaint/EndPaint must be called to make Windows think that invalid
++    // area is painted. Otherwise it will continue sending the same message
++    // endlessly.
++    ::BeginPaint(mWnd, &ps);
+     ::EndPaint(mWnd, &ps);
++
+     // We're guaranteed to have a widget proxy since we called
+     // GetLayerManager().
+     hDC = mBasicLayersSurface->GetTransparentDC();
+-    region = translucentRegion = LayoutDeviceIntRegion{winRect};
+   } else {
+-    region = GetRegionToPaint(ps, hDC);
+-    if (mTransparencyMode == TransparencyMode::Transparent) {
+-      translucentRegion = LayoutDeviceIntRegion{winRect};
+-      translucentRegion.SubOut(mOpaqueRegion);
+-      region.OrWith(translucentRegion);
+-    }
++    hDC = ::BeginPaint(mWnd, &ps);
+   }
+ 
+-  if (!usingMemoryDC && (mNeedsNCAreaClear || didResize)) {
+-    // We need to clear the non-client-area region, and the transparent parts
+-    // of the window to black (once).
+-    auto black = reinterpret_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH));
+-    nsAutoRegion regionToClear(ComputeNonClientHRGN());
+-    if (mTransparencyMode == TransparencyMode::Transparent &&
+-        !translucentRegion.IsEmpty()) {
+-      nsAutoRegion translucent(WinUtils::RegionToHRGN(translucentRegion));
+-      ::CombineRgn(regionToClear, regionToClear, translucent, RGN_OR);
+-    }
+-    ::FillRgn(hDC, regionToClear, black);
++  const bool forceRepaint = mTransparencyMode == TransparencyMode::Transparent;
++  const LayoutDeviceIntRegion region = GetRegionToPaint(forceRepaint, ps, hDC);
++
++  RefPtr<nsWindow> strongThis(this);
++
++  if (nsIWidgetListener* listener = GetPaintListener()) {
++    // Note that this might kill the listener.
++    listener->WillPaintWindow(this);
+   }
+-  mNeedsNCAreaClear = false;
+ 
+   bool didPaint = false;
+   auto endPaint = MakeScopeExit([&] {
+@@ -378,7 +389,8 @@ void nsWindow::NotifyOcclusionState(mozilla::widget::OcclusionState aState) {
+   flags._0 = gfx::gfxVars::WebRenderDebugFlags();
+   bool debugEnabled = bool(flags & wr::DebugFlags::WINDOW_VISIBILITY_DBG);
+   if (debugEnabled && mCompositorWidgetDelegate) {
+-    mCompositorWidgetDelegate->NotifyVisibilityUpdated(mIsFullyOccluded);
++    mCompositorWidgetDelegate->NotifyVisibilityUpdated(
++        mFrameState->GetSizeMode(), mIsFullyOccluded);
+   }
+ 
+   if (mWidgetListener) {
+@@ -404,7 +416,8 @@ void nsWindow::MaybeEnableWindowOcclusion(bool aEnable) {
+       flags._0 = gfx::gfxVars::WebRenderDebugFlags();
+       bool debugEnabled = bool(flags & wr::DebugFlags::WINDOW_VISIBILITY_DBG);
+       if (debugEnabled && mCompositorWidgetDelegate) {
+-        mCompositorWidgetDelegate->NotifyVisibilityUpdated(mIsFullyOccluded);
++        mCompositorWidgetDelegate->NotifyVisibilityUpdated(
++            mFrameState->GetSizeMode(), mIsFullyOccluded);
+       }
+     }
+     return;
+@@ -424,7 +437,8 @@ void nsWindow::MaybeEnableWindowOcclusion(bool aEnable) {
+   flags._0 = gfx::gfxVars::WebRenderDebugFlags();
+   bool debugEnabled = bool(flags & wr::DebugFlags::WINDOW_VISIBILITY_DBG);
+   if (debugEnabled && mCompositorWidgetDelegate) {
+-    mCompositorWidgetDelegate->NotifyVisibilityUpdated(mIsFullyOccluded);
++    mCompositorWidgetDelegate->NotifyVisibilityUpdated(
++        mFrameState->GetSizeMode(), mIsFullyOccluded);
+   }
+ }
+ 

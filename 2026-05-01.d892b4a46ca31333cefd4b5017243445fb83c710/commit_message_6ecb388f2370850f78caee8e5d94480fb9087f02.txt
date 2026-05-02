@@ -1,0 +1,1 @@
+Bug 1965660 - Remove ::-moz-focus-inner support from paint and widget. r=win-reviewers,dshin,gstoll    2025-05-12 23:01:33    6ecb388f2370850f78caee8e5d94480fb9087f02

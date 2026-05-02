@@ -1,0 +1,62 @@
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 453b72f0bf91..644b75650ff2 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -18200,13 +18200,6 @@
+   value: true
+   mirror: always
+ 
+-# Whether PiP windows have window decorations (borders and shadows).
+-# Off for now while we fix bug 1934760 and related issues.
+-- name: widget.windows.pip-decorations.enabled
+-  type: bool
+-  value: false
+-  mirror: always
+-
+ # Whether we use the accent color for highlight as some other UWP apps do.
+ #
+ # false for now since it can cause some contrast-with-background issues
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 28972bb238f3..ba71007965ad 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -667,7 +667,6 @@ nsWindow::nsWindow(bool aIsChildWindow)
+     : nsBaseWidget(BorderStyle::Default),
+       mFrameState(std::in_place, this),
+       mIsChildWindow(aIsChildWindow),
+-      mPIPWindow(false),
+       mMicaBackdrop(false),
+       mLastPaintEndTime(TimeStamp::Now()),
+       mCachedHitTestTime(TimeStamp::Now()),
+@@ -882,7 +881,6 @@ nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
+       aParent ? (HWND)aParent->GetNativeData(NS_NATIVE_WINDOW) : nullptr;
+ 
+   mIsRTL = aInitData->mRTL;
+-  mPIPWindow = aInitData->mPIPWindow;
+   mOpeningAnimationSuppressed = aInitData->mIsAnimationSuppressed;
+   mAlwaysOnTop = aInitData->mAlwaysOnTop;
+   mIsAlert = aInitData->mIsAlert;
+@@ -2644,9 +2642,6 @@ bool nsWindow::UpdateNonClientMargins(bool aReflowWindow) {
+         }
+       }
+     }
+-  } else if (mPIPWindow &&
+-             !StaticPrefs::widget_windows_pip_decorations_enabled()) {
+-    metrics.mOffset = metrics.DefaultMargins();
+   } else {
+     metrics.mOffset = NormalWindowNonClientOffset();
+   }
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index 11ec5e39575b..4cf01ef3d88e 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -870,9 +870,6 @@ class nsWindow final : public nsBaseWidget {
+   // Whether we were created as a child window (aka ChildWindow) or not.
+   bool mIsChildWindow : 1;
+ 
+-  // Whether we're a PIP window.
+-  bool mPIPWindow : 1;
+-
+   // Whether we are asked to render a mica backdrop.
+   bool mMicaBackdrop : 1;
+ 

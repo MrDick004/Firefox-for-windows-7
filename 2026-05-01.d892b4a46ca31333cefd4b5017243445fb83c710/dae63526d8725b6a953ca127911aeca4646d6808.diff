@@ -1,0 +1,22 @@
+diff --git a/gfx/webrender_bindings/src/bindings.rs b/gfx/webrender_bindings/src/bindings.rs
+index ea5e340b885f..0479902905ae 100644
+--- a/gfx/webrender_bindings/src/bindings.rs
++++ b/gfx/webrender_bindings/src/bindings.rs
+@@ -1923,14 +1923,9 @@ pub extern "C" fn wr_window_new(
+         CompositorConfig::Native {
+             compositor: Box::new(SwCompositor::new(
+                 sw_gl.unwrap(),
+-                    Box::new(WrCompositor(compositor)),
+-                    use_native_compositor,
+-                )),
+-            }
+-    } else if use_layer_compositor {
+-        let compositor = Box::new(WrLayerCompositor::new(compositor)) as Box<dyn LayerCompositor>;
+-        CompositorConfig::Layer {
+-            compositor,
++                Box::new(WrCompositor(compositor)),
++                use_native_compositor,
++            )),
+         }
+     } else if use_native_compositor {
+         CompositorConfig::Native {

@@ -1,0 +1,777 @@
+diff --git a/mozglue/misc/NativeNt.h b/mozglue/misc/NativeNt.h
+index 7be901cff1dd..932dcd0a7b06 100644
+--- a/mozglue/misc/NativeNt.h
++++ b/mozglue/misc/NativeNt.h
+@@ -913,12 +913,6 @@ class MOZ_RAII PEHeaders final {
+                                     IMAGE_SCN_MEM_READ);
+   }
+ 
+-  // There may be other data sections in the binary besides .data
+-  Maybe<Span<const uint8_t>> GetDataSectionInfo() const {
+-    return FindSection(".data", IMAGE_SCN_CNT_INITIALIZED_DATA |
+-                                    IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
+-  }
+-
+   static bool IsValid(PIMAGE_IMPORT_DESCRIPTOR aImpDesc) {
+     return aImpDesc && aImpDesc->OriginalFirstThunk != 0;
+   }
+diff --git a/mozglue/misc/StackWalk.cpp b/mozglue/misc/StackWalk.cpp
+index 186082f972d1..18fd3464b019 100644
+--- a/mozglue/misc/StackWalk.cpp
++++ b/mozglue/misc/StackWalk.cpp
+@@ -6,7 +6,6 @@
+ 
+ /* API for getting a stack trace of the C/C++ stack on the current thread */
+ 
+-#include "mozilla/Array.h"
+ #include "mozilla/ArrayUtils.h"
+ #include "mozilla/Atomics.h"
+ #include "mozilla/Attributes.h"
+@@ -124,57 +123,10 @@ class FrameSkipper {
+ #  endif
+ 
+ #  if defined(_M_AMD64) || defined(_M_ARM64)
+-// We must use RtlLookupFunctionEntry to do stack walking on x86-64 and arm64,
+-// but internally this function does a blocking shared acquire of SRW locks
+-// that live in ntdll and are not exported. This is problematic when we want to
+-// suspend a thread and walk its stack, like we do in the profiler and the
+-// background hang reporter. If the suspended thread happens to hold one of the
+-// locks exclusively while suspended, then the stack walking thread will
+-// deadlock if it calls RtlLookupFunctionEntry.
+-//
+-// Note that we only care about deadlocks between the stack walking thread and
+-// the suspended thread. Any other deadlock scenario is considered out of
+-// scope, because they are unlikely to be our fault -- these other scenarios
+-// imply that some thread that we did not suspend is stuck holding one of the
+-// locks exclusively, and exclusive acquisition of these locks only happens for
+-// a brief time during Microsoft API calls (e.g. LdrLoadDll, LdrUnloadDll).
+-//
+-// We use one of two alternative strategies to gracefully fail to capture a
+-// stack instead of running into a deadlock:
+-//    (1) collect pointers to the ntdll internal locks at stack walk
+-//        initialization, then try to acquire them non-blockingly before
+-//        initiating any stack walk;
+-// or (2) mark all code paths that can potentially end up doing an exclusive
+-//        acquisition of the locks as stack walk suppression paths, then check
+-//        if any thread is currently on a stack walk suppression path before
+-//        initiating any stack walk;
+-//
+-// Strategy (2) can only avoid all deadlocks under the easily wronged
+-// assumption that we have correctly identified all existing paths that should
+-// be stack suppression paths. With strategy (2) we cannot collect stacks e.g.
+-// during the whole duration of a DLL load happening on any thread so the
+-// profiling results are worse.
+-//
+-// Strategy (1) guarantees no deadlock. It also gives better profiling results
+-// because it is more fine-grained. Therefore we always prefer strategy (1),
+-// and we only use strategy (2) as a fallback.
+-
+-// Strategy (1): Ntdll Internal Locks
+-//
+-// The external stack walk initialization code will feed us pointers to the
+-// ntdll internal locks. Once we have them, we no longer need to rely on
+-// strategy (2).
+-static Atomic<bool> sStackWalkLocksInitialized;
+-static Array<SRWLOCK*, 2> sStackWalkLocks;
+-
+-MFBT_API
+-void InitializeStackWalkLocks(const Array<void*, 2>& aStackWalkLocks) {
+-  sStackWalkLocks[0] = reinterpret_cast<SRWLOCK*>(aStackWalkLocks[0]);
+-  sStackWalkLocks[1] = reinterpret_cast<SRWLOCK*>(aStackWalkLocks[1]);
+-  sStackWalkLocksInitialized = true;
+-}
+-
+-// Strategy (2): Stack Walk Suppressions
++// Because various Win64 APIs acquire function-table locks, we need a way of
++// preventing stack walking while those APIs are being called. Otherwise, the
++// stack walker may suspend a thread holding such a lock, and deadlock when the
++// stack unwind code attempts to wait for that lock.
+ //
+ // We're using an atomic counter rather than a critical section because we
+ // don't require mutual exclusion with the stack walker. If the stack walker
+@@ -205,24 +157,6 @@ AutoSuppressStackWalking::~AutoSuppressStackWalking() {
+   DesuppressStackWalking();
+ }
+ 
+-bool IsStackWalkingSafe() {
+-  // Use strategy (1), if initialized.
+-  if (sStackWalkLocksInitialized) {
+-    bool isSafe = false;
+-    if (::TryAcquireSRWLockShared(sStackWalkLocks[0])) {
+-      if (::TryAcquireSRWLockShared(sStackWalkLocks[1])) {
+-        isSafe = true;
+-        ::ReleaseSRWLockShared(sStackWalkLocks[1]);
+-      }
+-      ::ReleaseSRWLockShared(sStackWalkLocks[0]);
+-    }
+-    return isSafe;
+-  }
+-
+-  // Otherwise, fall back to strategy (2).
+-  return sStackWalkSuppressions == 0;
+-}
+-
+ static uint8_t* sJitCodeRegionStart;
+ static size_t sJitCodeRegionSize;
+ uint8_t* sMsMpegJitCodeRegionStart;
+@@ -441,18 +375,17 @@ static void DoMozStackWalkThread(MozWalkStackCallback aCallback,
+ #  endif
+ 
+ #  if defined(_M_AMD64) || defined(_M_ARM64)
+-  // If at least one thread (we don't know which) may be holding a lock that
+-  // can deadlock RtlLookupFunctionEntry, we can't proceed because that thread
+-  // may be the one that we're trying to walk the stack of.
++  // If there are any active suppressions, then at least one thread (we don't
++  // know which) is holding a lock that can deadlock RtlVirtualUnwind. Since
++  // that thread may be the one that we're trying to unwind, we can't proceed.
+   //
+-  // But if there is no such thread by this point, then our target thread can't
+-  // be holding a lock, so it's safe to proceed. By virtue of being suspended,
+-  // the target thread can't acquire any new locks during our stack walking, so
+-  // we only need to do this check once. Other threads may temporarily acquire
+-  // the locks while we're walking the stack, but that's mostly fine -- calling
+-  // RtlLookupFunctionEntry will make us wait for them to release the locks,
+-  // but at least we won't deadlock.
+-  if (!IsStackWalkingSafe()) {
++  // But if there are no suppressions, then our target thread can't be holding
++  // a lock, and it's safe to proceed. By virtue of being suspended, the target
++  // thread can't acquire any new locks during the unwind process, so we only
++  // need to do this check once. After that, sStackWalkSuppressions can be
++  // changed by other threads while we're unwinding, and that's fine because
++  // we can't deadlock with those threads.
++  if (sStackWalkSuppressions) {
+     return;
+   }
+ 
+diff --git a/mozglue/misc/StackWalk_windows.h b/mozglue/misc/StackWalk_windows.h
+index ddc86b398a53..81c81257810b 100644
+--- a/mozglue/misc/StackWalk_windows.h
++++ b/mozglue/misc/StackWalk_windows.h
+@@ -7,30 +7,12 @@
+ #ifndef mozilla_StackWalk_windows_h
+ #define mozilla_StackWalk_windows_h
+ 
+-#include "mozilla/Array.h"
+ #include "mozilla/Types.h"
+ 
+ #if defined(_M_AMD64) || defined(_M_ARM64)
+ /**
+- * This function enables strategy (1) for avoiding deadlocks between the stack
+- * walking thread and the suspended thread. In aStackWalkLocks the caller must
+- * provide pointers to the two ntdll-internal SRW locks acquired by
+- * RtlLookupFunctionEntry. These locks are LdrpInvertedFunctionTableSRWLock and
+- * RtlpDynamicFunctionTableLock -- we don't need to know which one is which.
+- * Until InitializeStackWalkLocks function is called, strategy (2) is used.
+- *
+- * See comment in StackWalk.cpp
+- */
+-MFBT_API
+-void InitializeStackWalkLocks(const mozilla::Array<void*, 2>& aStackWalkLocks);
+-
+-/**
+- * As part of strategy (2) for avoiding deadlocks between the stack walking
+- * thread and the suspended thread, we mark stack walk suppression paths by
+- * putting them under the scope of a AutoSuppressStackWalking object. Any code
+- * path that may do an exclusive acquire of LdrpInvertedFunctionTableSRWLock or
+- * RtlpDynamicFunctionTableLock should be marked this way, to ensure that
+- * strategy (2) can properly mitigate all deadlock scenarios.
++ * Allow stack walkers to work around the egregious win64 dynamic lookup table
++ * list API by locking around SuspendThread to avoid deadlock.
+  *
+  * See comment in StackWalk.cpp
+  */
+diff --git a/mozglue/misc/WindowsDiagnostics.cpp b/mozglue/misc/WindowsDiagnostics.cpp
+index 7d038c02b861..03fb39749fb5 100644
+--- a/mozglue/misc/WindowsDiagnostics.cpp
++++ b/mozglue/misc/WindowsDiagnostics.cpp
+@@ -13,7 +13,7 @@
+ #include <windows.h>
+ #include <winternl.h>
+ 
+-#if defined(_M_AMD64)
++#if defined(MOZ_DIAGNOSTIC_ASSERT_ENABLED) && defined(_M_X64)
+ 
+ namespace mozilla {
+ 
+@@ -23,9 +23,9 @@ static bool sIsSingleStepping = false;
+ 
+ MFBT_API AutoOnSingleStepCallback::AutoOnSingleStepCallback(
+     OnSingleStepCallback aOnSingleStepCallback, void* aState) {
+-  MOZ_RELEASE_ASSERT(!sIsSingleStepping && !sOnSingleStepCallback &&
+-                         !sOnSingleStepCallbackState,
+-                     "Single-stepping is already active");
++  MOZ_DIAGNOSTIC_ASSERT(!sIsSingleStepping && !sOnSingleStepCallback &&
++                            !sOnSingleStepCallbackState,
++                        "Single-stepping is already active");
+ 
+   sOnSingleStepCallback = std::move(aOnSingleStepCallback);
+   sOnSingleStepCallbackState = aState;
+@@ -42,7 +42,7 @@ MFBT_API AutoOnSingleStepCallback::~AutoOnSingleStepCallback() {
+ // a first single-step exception. It is then up to the exception handler to
+ // keep the trap flag enabled so that a new single step exception gets
+ // triggered with the following instruction.
+-MFBT_API MOZ_NEVER_INLINE MOZ_NAKED void EnableTrapFlag() {
++MFBT_API MOZ_NEVER_INLINE __attribute__((naked)) void EnableTrapFlag() {
+   asm volatile(
+       "pushfq;"
+       "orw $0x100,(%rsp);"
+@@ -53,7 +53,7 @@ MFBT_API MOZ_NEVER_INLINE MOZ_NAKED void EnableTrapFlag() {
+ // This function does not do anything special, but when we reach its address
+ // while single-stepping the exception handler will know that it is now time to
+ // leave the trap flag turned off.
+-MFBT_API MOZ_NEVER_INLINE MOZ_NAKED void DisableTrapFlag() {
++MFBT_API MOZ_NEVER_INLINE __attribute__((naked)) void DisableTrapFlag() {
+   asm volatile("retq;");
+ }
+ 
+@@ -78,4 +78,4 @@ MFBT_API LONG SingleStepExceptionHandler(_EXCEPTION_POINTERS* aExceptionInfo) {
+ 
+ }  // namespace mozilla
+ 
+-#endif  // _M_AMD64
++#endif  // MOZ_DIAGNOSTIC_ASSERT_ENABLED && _M_X64
+diff --git a/mozglue/misc/WindowsDiagnostics.h b/mozglue/misc/WindowsDiagnostics.h
+index d9a03ef10c2c..09bc314e8938 100644
+--- a/mozglue/misc/WindowsDiagnostics.h
++++ b/mozglue/misc/WindowsDiagnostics.h
+@@ -86,7 +86,9 @@ struct WinErrorState {
+   bool operator!=(WinErrorState const& that) const { return !operator==(that); }
+ };
+ 
+-#if defined(_M_AMD64)
++// TODO This code does not have tests. Only use it on paths that are already
++//      known to crash. Add tests before using it in release builds.
++#if defined(MOZ_DIAGNOSTIC_ASSERT_ENABLED) && defined(_M_X64)
+ 
+ using OnSingleStepCallback = std::function<bool(void*, CONTEXT*)>;
+ 
+@@ -106,6 +108,9 @@ MFBT_API MOZ_NEVER_INLINE __attribute__((naked)) void EnableTrapFlag();
+ MFBT_API MOZ_NEVER_INLINE __attribute__((naked)) void DisableTrapFlag();
+ MFBT_API LONG SingleStepExceptionHandler(_EXCEPTION_POINTERS* aExceptionInfo);
+ 
++// This block uses nt::PEHeaders and thus depends on NativeNt.h.
++#  if !defined(IMPL_MFBT)
++
+ // Run aCallbackToRun instruction by instruction, and between each instruction
+ // call aOnSingleStepCallback. Single-stepping ends when aOnSingleStepCallback
+ // returns false (in which case aCallbackToRun will continue to run
+@@ -135,9 +140,6 @@ CollectSingleStepData(CallbackToRun aCallbackToRun,
+   return WindowsDiagnosticsError::None;
+ }
+ 
+-// This block uses nt::PEHeaders and thus depends on NativeNt.h.
+-#  if !defined(IMPL_MFBT)
+-
+ template <int NMaxSteps, int NMaxErrorStates>
+ struct ModuleSingleStepData {
+   uint32_t mStepsLog[NMaxSteps]{};
+@@ -286,7 +288,7 @@ WindowsDiagnosticsError CollectModuleSingleStepData(
+ 
+ #  endif  // !IMPL_MFBT
+ 
+-#endif  // _M_AMD64
++#endif  // MOZ_DIAGNOSTIC_ASSERT_ENABLED && _M_X64
+ 
+ }  // namespace mozilla
+ 
+diff --git a/testing/cppunittest.toml b/testing/cppunittest.toml
+index bd7d6d85102e..6885140c8b54 100644
+--- a/testing/cppunittest.toml
++++ b/testing/cppunittest.toml
+@@ -159,9 +159,6 @@ run-if = ["os == 'win'"]
+ ["TestStackCookie"]
+ run-if = ["os == 'win'"]
+ 
+-["TestStackWalkInitialization"]
+-run-if = ["os == 'win' && processor == 'x86_64'"]
+-
+ ["TestTextUtils"]
+ 
+ ["TestThreadSafeWeakPtr"]
+diff --git a/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.cpp b/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.cpp
+index 19da9b307b9b..348bd785ac41 100644
+--- a/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.cpp
++++ b/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.cpp
+@@ -9,7 +9,6 @@
+ #include "nsWindowsDllInterceptor.h"
+ #include "mozilla/NativeNt.h"
+ #include "mozilla/StackWalk_windows.h"
+-#include "mozilla/WindowsDiagnostics.h"
+ #include "mozilla/WindowsVersion.h"
+ 
+ namespace mozilla {
+@@ -53,203 +52,14 @@ void WindowsStackWalkInitialization() {
+   }
+   ran = true;
+ 
+-  // Attempt to initialize strategy (1) for avoiding deadlocks. See comments in
+-  // StackWalk.cpp near InitializeStackWalkLocks().
+-  Array<void*, 2> stackWalkLocks;
+-  if (CollectStackWalkLocks(stackWalkLocks)) {
+-    bool locksArePlausible = ValidateStackWalkLocks(stackWalkLocks);
+-
+-    // If this crashes then most likely our lock collection code is broken.
+-    MOZ_ASSERT(locksArePlausible);
+-
+-    if (locksArePlausible) {
+-      InitializeStackWalkLocks(stackWalkLocks);
+-      return;
+-    }
+-  }
+-
+-  // Strategy (2): We will rely on stack walk suppressions. We use hooking
+-  // to install stack walk suppression on specific Windows calls which are
+-  // known to acquire the locks exclusively. Some of these calls, e.g.
+-  // LdrLoadDll, are already hooked by other parts of our code base; in this
+-  // case the stack walk suppressions are already added there directly.
+   NtDllIntercept.Init("ntdll.dll");
+   stub_LdrUnloadDll.Set(NtDllIntercept, "LdrUnloadDll", &patched_LdrUnloadDll);
+   if (IsWin8OrLater()) {  // LdrResolveDelayLoadedAPI was introduced in Win8
+     stub_LdrResolveDelayLoadedAPI.Set(NtDllIntercept,
+                                       "LdrResolveDelayLoadedAPI",
+                                       &patched_LdrResolveDelayLoadedAPI);
+   }
+ }
+-
+-[[clang::optnone]] void UnoptimizedLookup() {
+-  DWORD64 imageBase;
+-  ::RtlLookupFunctionEntry(0, &imageBase, nullptr);
+-}
+-
+-MFBT_API
+-bool CollectStackWalkLocks(Array<void*, 2>& aStackWalkLocks) {
+-// At the moment we are only capable of enabling strategy (1) for x86-64
+-// because WindowsDiagnostics.h does not implement single-stepping for arm64.
+-#  if defined(_M_AMD64)
+-  struct LockCollectionData {
+-    Array<void*, 2> mCollectedLocks;
+-    int mCollectedLocksCount;
+-    DebugOnly<bool> mLookupCalled;
+-  };
+-
+-  LockCollectionData data{};
+-
+-  // Do a single-stepped call to RtlLookupFunctionEntry, and monitor the calls
+-  // to RtlAcquireSRWLockShared and RtlReleaseSRWLockShared.
+-  WindowsDiagnosticsError error = CollectSingleStepData(
+-      UnoptimizedLookup,
+-      [](void* aState, CONTEXT* aContext) {
+-        LockCollectionData& data =
+-            *reinterpret_cast<LockCollectionData*>(aState);
+-
+-#    ifdef DEBUG
+-        if (aContext->Rip ==
+-            reinterpret_cast<DWORD64>(::RtlLookupFunctionEntry)) {
+-          data.mLookupCalled = true;
+-        }
+-#    endif
+-
+-        void* lock = ExtractLockFromCurrentCpuContext(aContext);
+-        if (lock) {
+-          bool alreadyCollected = false;
+-          for (auto collectedLock : data.mCollectedLocks) {
+-            if (collectedLock == lock) {
+-              alreadyCollected = true;
+-              break;
+-            }
+-          }
+-          if (!alreadyCollected) {
+-            if (data.mCollectedLocksCount <
+-                std::numeric_limits<
+-                    decltype(data.mCollectedLocksCount)>::max()) {
+-              ++data.mCollectedLocksCount;
+-            }
+-            if (data.mCollectedLocksCount <= 2) {
+-              data.mCollectedLocks[data.mCollectedLocksCount - 1] = lock;
+-            }
+-          }
+-        }
+-
+-        // Continue single-stepping
+-        return true;
+-      },
+-      &data);
+-
+-  // We only expect to fail if a debugger is present.
+-  MOZ_ASSERT(error == WindowsDiagnosticsError::None ||
+-             error == WindowsDiagnosticsError::DebuggerPresent);
+-
+-  if (error != WindowsDiagnosticsError::None) {
+-    return false;
+-  }
+-
+-  // Crashing here most likely means that the optimizer was too aggressive.
+-  MOZ_ASSERT(data.mLookupCalled);
+-
+-  // If we managed to collect exactly two locks, then we assume that these
+-  // are the locks we are looking for.
+-  bool isAcquisitionSuccessful = data.mCollectedLocksCount == 2;
+-
+-  // We always expect that RtlLookupFunctionEntry's behavior results in a
+-  // successful acquisition. If this crashes then we likely failed to detect
+-  // the instructions that acquire and release the locks in our function
+-  // ExtractLockFromCurrentCpuContext.
+-  MOZ_ASSERT(isAcquisitionSuccessful);
+-  if (!isAcquisitionSuccessful) {
+-    return false;
+-  }
+-
+-  aStackWalkLocks[0] = data.mCollectedLocks[0];
+-  aStackWalkLocks[1] = data.mCollectedLocks[1];
+-  return true;
+-#  else
+-  return false;
+-#  endif  // _M_AMD64
+-}
+-
+-// Based on a single-step CPU context, extract a pointer to a lock that is
+-// being acquired or released (if any).
+-MFBT_API
+-void* ExtractLockFromCurrentCpuContext(void* aContext) {
+-#  if defined(_M_AMD64)
+-  // rex bits
+-  constexpr BYTE kMaskHighNibble = 0xF0;
+-  constexpr BYTE kRexOpcode = 0x40;
+-  constexpr BYTE kMaskRexW = 0x08;
+-  constexpr BYTE kMaskRexB = 0x01;
+-
+-  // mod r/m bits
+-  constexpr BYTE kMaskMod = 0xC0;
+-  constexpr BYTE kMaskRm = 0x07;
+-  constexpr BYTE kModNoRegDisp = 0x00;
+-  constexpr BYTE kRmNeedSib = 0x04;
+-  constexpr BYTE kRmNoRegDispDisp32 = 0x05;
+-
+-  auto context = reinterpret_cast<CONTEXT*>(aContext);
+-  auto opcode = reinterpret_cast<uint8_t*>(context->Rip);
+-  // lock rex.w(?rxb) cmpxchg r/m64, r64
+-  if (opcode[0] == 0xf0 &&
+-      (opcode[1] & (kMaskHighNibble | kMaskRexW)) == (kRexOpcode | kMaskRexW) &&
+-      opcode[2] == 0x0f && opcode[3] == 0xb1) {
+-    if ((opcode[4] & kMaskMod) == kModNoRegDisp) {
+-      BYTE const rm = opcode[4] & kMaskRm;  // low 3 bits, no offset
+-
+-      if (rm == kRmNeedSib) {
+-        // uses SIB byte; decoding not implemented
+-        return nullptr;
+-      }
+-
+-      if (rm == kRmNoRegDispDisp32) {
+-        // rip-relative
+-        return reinterpret_cast<void*>(
+-            static_cast<int64_t>(context->Rip) + 9i64 +
+-            static_cast<int64_t>(*reinterpret_cast<int32_t*>(opcode + 5)));
+-      }
+-
+-      // otherwise, this reads/writes from [reg] -- and conveniently, the
+-      // registers in the CONTEXT struct form an indexable subarray in "opcode
+-      // order"
+-      BYTE const regIndex = ((opcode[1] & kMaskRexB) << 3) | rm;
+-      DWORD64 const regValue = (&context->Rax)[regIndex];
+-      return reinterpret_cast<void*>(regValue);
+-    }
+-  }
+-  return nullptr;
+-#  else
+-  return nullptr;
+-#  endif  // _M_AMD64
+-}
+-
+-MFBT_API
+-bool ValidateStackWalkLocks(const Array<void*, 2>& aStackWalkLocks) {
+-  if (!aStackWalkLocks[0] || !aStackWalkLocks[1]) {
+-    return false;
+-  }
+-
+-  // We check that the pointers live in ntdll's .data section as a best effort.
+-  mozilla::nt::PEHeaders ntdllImage(::GetModuleHandleW(L"ntdll.dll"));
+-  if (!ntdllImage) {
+-    return false;
+-  }
+-
+-  auto dataSection = ntdllImage.GetDataSectionInfo();
+-  if (dataSection.isNothing()) {
+-    return false;
+-  }
+-
+-  return dataSection.isSome() &&
+-         &*dataSection->cbegin() <= aStackWalkLocks[0] &&
+-         aStackWalkLocks[0] <= &*(dataSection->cend() - 1) &&
+-         &*dataSection->cbegin() <= aStackWalkLocks[1] &&
+-         aStackWalkLocks[1] <= &*(dataSection->cend() - 1);
+-}
+-
+ #endif  // _M_AMD64 || _M_ARM64
+ 
+ }  // namespace mozilla
+diff --git a/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.h b/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.h
+index 6639da71bcff..7a0c1a44f714 100644
+--- a/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.h
++++ b/toolkit/xre/dllservices/mozglue/WindowsStackWalkInitialization.h
+@@ -7,19 +7,12 @@
+ #ifndef mozilla_WindowsStackWalkInitialization_h
+ #define mozilla_WindowsStackWalkInitialization_h
+ 
+-#include "mozilla/Array.h"
+ #include "mozilla/Types.h"
+ 
+ namespace mozilla {
+ 
+ #if defined(_M_AMD64) || defined(_M_ARM64)
+ MFBT_API void WindowsStackWalkInitialization();
+-
+-MFBT_API bool CollectStackWalkLocks(Array<void*, 2>& aStackWalkLocks);
+-
+-MFBT_API void* ExtractLockFromCurrentCpuContext(void* aContext);
+-
+-MFBT_API bool ValidateStackWalkLocks(const Array<void*, 2>& aStackWalkLocks);
+ #endif  // _M_AMD64 || _M_ARM64
+ 
+ }  // namespace mozilla
+diff --git a/toolkit/xre/dllservices/tests/TestStackWalkInitialization.cpp b/toolkit/xre/dllservices/tests/TestStackWalkInitialization.cpp
+deleted file mode 100644
+index b2f3bef3c345..000000000000
+--- a/toolkit/xre/dllservices/tests/TestStackWalkInitialization.cpp
++++ /dev/null
+@@ -1,221 +0,0 @@
+-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
+-/* This Source Code Form is subject to the terms of the Mozilla Public
+- * License, v. 2.0. If a copy of the MPL was not distributed with this
+- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+-
+-#include "nsWindowsHelpers.h"
+-#include "mozilla/Array.h"
+-#include "mozilla/Attributes.h"
+-#include "mozilla/ScopeExit.h"
+-#include "mozilla/WindowsStackWalkInitialization.h"
+-
+-#include <windows.h>
+-
+-#include <cstdio>
+-
+-#define TEST_FAILED(format, ...)                                               \
+-  do {                                                                         \
+-    wprintf(L"TEST-FAILED | TestStackWalkInitialization | " format __VA_OPT__( \
+-        , ) __VA_ARGS__);                                                      \
+-    ::exit(1);                                                                 \
+-  } while (0)
+-
+-#define TEST_PASS(format, ...)                                               \
+-  do {                                                                       \
+-    wprintf(L"TEST-PASS | TestStackWalkInitialization | " format __VA_OPT__( \
+-        , ) __VA_ARGS__);                                                    \
+-  } while (0)
+-
+-#define MAX_TIMEOUT_MS 5000
+-
+-extern "C" __declspec(dllexport) uint64_t gPseudoLock{};
+-
+-MOZ_NEVER_INLINE MOZ_NAKED __declspec(dllexport) void LockThroughRegisterRsi() {
+-  asm volatile(
+-      // Found in RtlAcquireSRWLockShared
+-      "lock cmpxchgq %rcx, (%rsi)");
+-}
+-
+-MOZ_NEVER_INLINE MOZ_NAKED __declspec(dllexport) void LockThroughRegisterRcx() {
+-  asm volatile(
+-      // Found in RtlReleaseSRWLockShared
+-      "lock cmpxchgq %r10, (%rcx)");
+-}
+-
+-MOZ_NEVER_INLINE MOZ_NAKED __declspec(dllexport) void LockThroughRegisterR10() {
+-  asm volatile("lock cmpxchgq %rcx, (%r10)");
+-}
+-
+-MOZ_NEVER_INLINE MOZ_NAKED __declspec(dllexport) void
+-LockThroughRipRelativeAddr() {
+-  asm volatile(
+-      // Found in an inlined call to RtlAcquireSRWLockShared in
+-      // RtlpxLookupFunctionTable on Windows 10
+-      "lock cmpxchgq %r11, gPseudoLock(%rip)");
+-}
+-
+-void TestLockExtraction() {
+-  void* extractedLock{};
+-  CONTEXT context{};
+-
+-  context.Rip = reinterpret_cast<DWORD64>(LockThroughRegisterRsi);
+-  context.Rsi = reinterpret_cast<DWORD64>(&gPseudoLock);
+-  extractedLock = mozilla::ExtractLockFromCurrentCpuContext(&context);
+-  context.Rsi = 0;
+-  if (extractedLock != &gPseudoLock) {
+-    TEST_FAILED(
+-        L"Failed to extract the lock through register RSI (expected: %p, got: "
+-        L"%p)\n",
+-        &gPseudoLock, extractedLock);
+-  }
+-
+-  context.Rip = reinterpret_cast<DWORD64>(LockThroughRegisterRcx);
+-  context.Rcx = reinterpret_cast<DWORD64>(&gPseudoLock);
+-  extractedLock = mozilla::ExtractLockFromCurrentCpuContext(&context);
+-  context.Rcx = 0;
+-  if (extractedLock != &gPseudoLock) {
+-    TEST_FAILED(
+-        L"Failed to extract the lock through register RCX (expected: %p, got: "
+-        L"%p)\n",
+-        &gPseudoLock, extractedLock);
+-  }
+-
+-  context.Rip = reinterpret_cast<DWORD64>(LockThroughRegisterR10);
+-  context.R10 = reinterpret_cast<DWORD64>(&gPseudoLock);
+-  extractedLock = mozilla::ExtractLockFromCurrentCpuContext(&context);
+-  context.R10 = 0;
+-  if (extractedLock != &gPseudoLock) {
+-    TEST_FAILED(
+-        L"Failed to extract the lock through register R10 (expected: %p, got: "
+-        L"%p)\n",
+-        &gPseudoLock, extractedLock);
+-  }
+-
+-  context.Rip = reinterpret_cast<DWORD64>(LockThroughRipRelativeAddr);
+-  extractedLock = mozilla::ExtractLockFromCurrentCpuContext(&context);
+-  if (extractedLock != &gPseudoLock) {
+-    TEST_FAILED(
+-        L"Failed to extract the lock through RIP-relative address (expected: "
+-        L"%p, got: %p)\n",
+-        &gPseudoLock, extractedLock);
+-  }
+-
+-  TEST_PASS(L"Managed to extract the lock with all test patterns\n");
+-}
+-
+-void TestLockCollectionAndValidation(
+-    mozilla::Array<void*, 2>& aStackWalkLocks) {
+-  if (!mozilla::CollectStackWalkLocks(aStackWalkLocks)) {
+-    TEST_FAILED(L"Failed to collect stack walk locks\n");
+-  }
+-
+-  if (!mozilla::ValidateStackWalkLocks(aStackWalkLocks)) {
+-    TEST_FAILED(L"Failed to validate stack walk locks\n");
+-  }
+-
+-  TEST_PASS(L"Collected and validated locks successfully\n");
+-}
+-
+-DWORD WINAPI LookupThreadProc(LPVOID aEvents) {
+-  auto events = reinterpret_cast<nsAutoHandle*>(aEvents);
+-  auto& lookupThreadReady = events[0];
+-  auto& initiateLookup = events[1];
+-  auto& lookupThreadDone = events[2];
+-
+-  // Signal that we are ready to enter lookup.
+-  ::SetEvent(lookupThreadReady);
+-
+-  // Wait for the main thread to acquire the locks exclusively.
+-  if (::WaitForSingleObject(initiateLookup, MAX_TIMEOUT_MS) == WAIT_OBJECT_0) {
+-    // Do a lookup. We are supposed to get stuck until the locks are released.
+-    DWORD64 imageBase;
+-    ::RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(LookupThreadProc),
+-                             &imageBase, nullptr);
+-
+-    // Signal that we are not or no longer stuck.
+-    ::SetEvent(lookupThreadDone);
+-  }
+-
+-  return 0;
+-}
+-
+-// This test checks that the locks in aStackWalkLocks cause
+-// RtlLookupFunctionEntry to get stuck if they are held exclusively, i.e. there
+-// is a good chance that these are indeed the locks we are looking for.
+-void TestLocksPreventLookup(const mozilla::Array<void*, 2>& aStackWalkLocks) {
+-  nsAutoHandle events[3]{};
+-  for (int i = 0; i < 3; ++i) {
+-    nsAutoHandle event(::CreateEventW(nullptr, /* bManualReset */ TRUE,
+-                                      /* bInitialState */ FALSE, nullptr));
+-    if (!event) {
+-      TEST_FAILED(L"Failed to create event %d\n", i);
+-    }
+-    events[i].swap(event);
+-  }
+-
+-  auto& lookupThreadReady = events[0];
+-  auto& initiateLookup = events[1];
+-  auto& lookupThreadDone = events[2];
+-
+-  nsAutoHandle lookupThread(::CreateThread(nullptr, 0, LookupThreadProc,
+-                                           reinterpret_cast<void*>(events), 0,
+-                                           nullptr));
+-  if (!lookupThread) {
+-    TEST_FAILED(L"Failed to create lookup thread\n");
+-  }
+-
+-  if (::WaitForSingleObject(lookupThreadReady, MAX_TIMEOUT_MS) !=
+-      WAIT_OBJECT_0) {
+-    TEST_FAILED(L"Lookup thread did not signal the lookupThreadReady event\n");
+-  }
+-
+-  mozilla::Array<SRWLOCK*, 2> stackWalkLocks{
+-      reinterpret_cast<SRWLOCK*>(aStackWalkLocks[0]),
+-      reinterpret_cast<SRWLOCK*>(aStackWalkLocks[1])};
+-  if (!::TryAcquireSRWLockExclusive(stackWalkLocks[0])) {
+-    TEST_FAILED(L"Failed to acquire lock 0\n");
+-  }
+-  if (!::TryAcquireSRWLockExclusive(stackWalkLocks[1])) {
+-    ::ReleaseSRWLockExclusive(stackWalkLocks[0]);
+-    TEST_FAILED(L"Failed to acquire lock 1\n");
+-  }
+-
+-  {
+-    auto onExitScope = mozilla::MakeScopeExit([&stackWalkLocks]() {
+-      ::ReleaseSRWLockExclusive(stackWalkLocks[1]);
+-      ::ReleaseSRWLockExclusive(stackWalkLocks[0]);
+-    });
+-
+-    if (!::SetEvent(initiateLookup)) {
+-      TEST_FAILED(L"Failed to signal the initiateLookup event\n");
+-    }
+-
+-    if (::WaitForSingleObject(lookupThreadDone, MAX_TIMEOUT_MS) !=
+-        WAIT_TIMEOUT) {
+-      TEST_FAILED(
+-          L"Lookup thread was not stuck during lookup while we acquired the "
+-          L"locks exclusively\n");
+-    }
+-  }
+-
+-  if (::WaitForSingleObject(lookupThreadDone, MAX_TIMEOUT_MS) !=
+-      WAIT_OBJECT_0) {
+-    TEST_FAILED(
+-        L"Lookup thread did not signal the lookupThreadDone event after locks "
+-        L"were released\n");
+-  }
+-
+-  TEST_PASS(L"Locks prevented lookup while acquired exclusively\n");
+-}
+-
+-int wmain(int argc, wchar_t* argv[]) {
+-  TestLockExtraction();
+-
+-  mozilla::Array<void*, 2> stackWalkLocks;
+-  TestLockCollectionAndValidation(stackWalkLocks);
+-
+-  TestLocksPreventLookup(stackWalkLocks);
+-
+-  return 0;
+-}
+diff --git a/toolkit/xre/dllservices/tests/moz.build b/toolkit/xre/dllservices/tests/moz.build
+index e43b26e9d15e..802754ccfe69 100644
+--- a/toolkit/xre/dllservices/tests/moz.build
++++ b/toolkit/xre/dllservices/tests/moz.build
+@@ -24,15 +24,6 @@ if CONFIG["TARGET_CPU"] in ("x86", "x86_64"):
+         linkage=None,
+     )
+ 
+-if CONFIG["TARGET_CPU"] == "x86_64":
+-    # Single-stepped lock acquisition not yet supported on aarch64
+-    GeckoCppUnitTests(
+-        [
+-            "TestStackWalkInitialization",
+-        ],
+-        linkage=None,
+-    )
+-
+ if CONFIG["TARGET_CPU"] == "aarch64":
+     GeckoCppUnitTests(
+         [

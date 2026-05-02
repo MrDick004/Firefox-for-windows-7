@@ -1,0 +1,26 @@
+diff --git a/browser/installer/windows/nsis/defines.nsi.in b/browser/installer/windows/nsis/defines.nsi.in
+index b28dd4f78ec7..017a2bb81ffd 100644
+--- a/browser/installer/windows/nsis/defines.nsi.in
++++ b/browser/installer/windows/nsis/defines.nsi.in
+@@ -64,7 +64,7 @@
+ !define MinSupportedVer "Microsoft Windows 10 for ARM"
+ #else
+ !define ARCH "x64"
+-!define MinSupportedVer "Microsoft Windows 7 x64"
++!define MinSupportedVer "Microsoft Windows Vista x64"
+ #endif
+ #else
+ !define MinSupportedVer "Microsoft Windows XP SP2"
+diff --git a/browser/installer/windows/nsis/installer.nsi b/browser/installer/windows/nsis/installer.nsi
+index 070d6010f886..53761dedb79f 100755
+--- a/browser/installer/windows/nsis/installer.nsi
++++ b/browser/installer/windows/nsis/installer.nsi
+@@ -1875,7 +1875,7 @@ Function .onInit
+ !ifdef HAVE_64BIT_BUILD
+   ; Restrict x64 builds from being installed on x86 and pre Win7
+   ${Unless} ${RunningX64}
+-  ${OrUnless} ${AtLeastWin7}
++  ${OrUnless} ${AtLeastWinVista}
+     ${If} "$R7" == "0"
+       strCpy $R7 "$(WARN_MIN_SUPPORTED_OSVER_CPU_MSG)"
+     ${Else}

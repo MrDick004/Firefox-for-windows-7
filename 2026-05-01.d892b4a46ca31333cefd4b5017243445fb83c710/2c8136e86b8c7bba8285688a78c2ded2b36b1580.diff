@@ -1,0 +1,949 @@
+diff --git a/browser/themes/osx/places/organizer.css b/browser/themes/osx/places/organizer.css
+index ae32edae57ee..fc2698aff1f0 100644
+--- a/browser/themes/osx/places/organizer.css
++++ b/browser/themes/osx/places/organizer.css
+@@ -184,21 +184,15 @@
+ #placeContent {
+   appearance: none;
+   border: none;
++}
+ 
+-  > treechildren::-moz-tree-cell,
+-  > treechildren::-moz-tree-column {
+-    border-inline-start: 1px solid color-mix(in srgb, FieldText 30%, transparent);
+-  }
+-
+-  > treechildren::-moz-tree-column(first-column),
+-  > treechildren::-moz-tree-cell(first-column) {
+-    /* This matches the treecol separator in tree.css */
+-    border-inline-start: none;
+-  }
++#placeContent > treechildren::-moz-tree-cell,
++#placeContent > treechildren::-moz-tree-column {
++  border-inline-end: 1px solid color-mix(in srgb, FieldText 30%, transparent);
++}
+ 
+-  > treechildren::-moz-tree-cell(separator) {
+-    border-color: transparent;
+-  }
++#placeContent > treechildren::-moz-tree-cell(separator) {
++  border-color: transparent;
+ }
+ 
+ /**
+diff --git a/layout/xul/tree/nsTreeBodyFrame.cpp b/layout/xul/tree/nsTreeBodyFrame.cpp
+index a7eba30f8be3..f5850096004d 100644
+--- a/layout/xul/tree/nsTreeBodyFrame.cpp
++++ b/layout/xul/tree/nsTreeBodyFrame.cpp
+@@ -47,11 +47,13 @@
+ #include "nsContainerFrame.h"
+ #include "nsView.h"
+ #include "nsViewManager.h"
++#include "nsVariant.h"
+ #include "nsWidgetsCID.h"
+ #include "nsIFrameInlines.h"
+ #include "nsTreeContentView.h"
+ #include "nsTreeUtils.h"
+ #include "nsStyleConsts.h"
++#include "nsITheme.h"
+ #include "imgIRequest.h"
+ #include "imgIContainer.h"
+ #include "mozilla/dom/NodeInfo.h"
+@@ -1709,133 +1711,115 @@ void nsTreeBodyFrame::PrefillPropertyArray(int32_t aRowIndex,
+   mScratchArray.Clear();
+ 
+   // focus
+-  if (mFocused) {
+-    mScratchArray.AppendElement(nsGkAtoms::focus);
+-  } else {
+-    mScratchArray.AppendElement(nsGkAtoms::blur);
+-  }
++  if (mFocused)
++    mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::focus);
++  else
++    mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::blur);
+ 
+   // sort
+   bool sorted = false;
+   mView->IsSorted(&sorted);
+-  if (sorted) {
+-    mScratchArray.AppendElement(nsGkAtoms::sorted);
+-  }
++  if (sorted) mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::sorted);
+ 
+   // drag session
+-  if (mSlots && mSlots->mIsDragging) {
+-    mScratchArray.AppendElement(nsGkAtoms::dragSession);
+-  }
++  if (mSlots && mSlots->mIsDragging)
++    mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::dragSession);
+ 
+   if (aRowIndex != -1) {
+-    if (aRowIndex == mMouseOverRow) {
+-      mScratchArray.AppendElement(nsGkAtoms::hover);
+-    }
++    if (aRowIndex == mMouseOverRow)
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::hover);
+ 
+     nsCOMPtr<nsITreeSelection> selection = GetSelection();
+     if (selection) {
+       // selected
+       bool isSelected;
+       selection->IsSelected(aRowIndex, &isSelected);
+-      if (isSelected) {
+-        mScratchArray.AppendElement(nsGkAtoms::selected);
+-      }
++      if (isSelected)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::selected);
+ 
+       // current
+       int32_t currentIndex;
+       selection->GetCurrentIndex(&currentIndex);
+-      if (aRowIndex == currentIndex) {
+-        mScratchArray.AppendElement(nsGkAtoms::current);
+-      }
++      if (aRowIndex == currentIndex)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::current);
+     }
+ 
+     // container or leaf
+     bool isContainer = false;
+     mView->IsContainer(aRowIndex, &isContainer);
+     if (isContainer) {
+-      mScratchArray.AppendElement(nsGkAtoms::container);
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::container);
+ 
+       // open or closed
+       bool isOpen = false;
+       mView->IsContainerOpen(aRowIndex, &isOpen);
+-      if (isOpen) {
+-        mScratchArray.AppendElement(nsGkAtoms::open);
+-      } else {
+-        mScratchArray.AppendElement(nsGkAtoms::closed);
+-      }
++      if (isOpen)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::open);
++      else
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::closed);
+     } else {
+-      mScratchArray.AppendElement(nsGkAtoms::leaf);
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::leaf);
+     }
+ 
+     // drop orientation
+     if (mSlots && mSlots->mDropAllowed && mSlots->mDropRow == aRowIndex) {
+-      if (mSlots->mDropOrient == nsITreeView::DROP_BEFORE) {
+-        mScratchArray.AppendElement(nsGkAtoms::dropBefore);
+-      } else if (mSlots->mDropOrient == nsITreeView::DROP_ON) {
+-        mScratchArray.AppendElement(nsGkAtoms::dropOn);
+-      } else if (mSlots->mDropOrient == nsITreeView::DROP_AFTER) {
+-        mScratchArray.AppendElement(nsGkAtoms::dropAfter);
+-      }
++      if (mSlots->mDropOrient == nsITreeView::DROP_BEFORE)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::dropBefore);
++      else if (mSlots->mDropOrient == nsITreeView::DROP_ON)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::dropOn);
++      else if (mSlots->mDropOrient == nsITreeView::DROP_AFTER)
++        mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::dropAfter);
+     }
+ 
+     // odd or even
+-    if (aRowIndex % 2) {
+-      mScratchArray.AppendElement(nsGkAtoms::odd);
+-    } else {
+-      mScratchArray.AppendElement(nsGkAtoms::even);
+-    }
++    if (aRowIndex % 2)
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::odd);
++    else
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::even);
+ 
+     XULTreeElement* tree = GetBaseElement();
+     if (tree && tree->HasAttr(nsGkAtoms::editing)) {
+-      mScratchArray.AppendElement(nsGkAtoms::editing);
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::editing);
+     }
+ 
+     // multiple columns
+-    if (mColumns->GetColumnAt(1)) {
+-      mScratchArray.AppendElement(nsGkAtoms::multicol);
+-    }
++    if (mColumns->GetColumnAt(1))
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::multicol);
+   }
+ 
+   if (aCol) {
+     mScratchArray.AppendElement(aCol->GetAtom());
+ 
+-    if (aCol->IsPrimary()) {
+-      mScratchArray.AppendElement(nsGkAtoms::primary);
+-    }
++    if (aCol->IsPrimary())
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::primary);
+ 
+     if (aCol->GetType() == TreeColumn_Binding::TYPE_CHECKBOX) {
+-      mScratchArray.AppendElement(nsGkAtoms::checkbox);
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::checkbox);
+ 
+       if (aRowIndex != -1) {
+         nsAutoString value;
+         mView->GetCellValue(aRowIndex, aCol, value);
+-        if (value.EqualsLiteral("true")) {
+-          mScratchArray.AppendElement(nsGkAtoms::checked);
+-        }
++        if (value.EqualsLiteral("true"))
++          mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::checked);
+       }
+     }
+ 
+-    if (aCol->mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::ordinal,
+-                                    u"1"_ns, eIgnoreCase)) {
+-      mScratchArray.AppendElement(nsGkAtoms::firstColumn);
+-    }
+-
+     // Read special properties from attributes on the column content node
+     if (aCol->mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::insertbefore,
+-                                    nsGkAtoms::_true, eCaseMatters)) {
+-      mScratchArray.AppendElement(nsGkAtoms::insertbefore);
+-    }
++                                    nsGkAtoms::_true, eCaseMatters))
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::insertbefore);
+     if (aCol->mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::insertafter,
+-                                    nsGkAtoms::_true, eCaseMatters)) {
+-      mScratchArray.AppendElement(nsGkAtoms::insertafter);
+-    }
++                                    nsGkAtoms::_true, eCaseMatters))
++      mScratchArray.AppendElement((nsStaticAtom*)nsGkAtoms::insertafter);
+   }
+ }
+ 
+-void nsTreeBodyFrame::GetTwistyRect(int32_t aRowIndex, nsTreeColumn* aColumn,
+-                                    nsRect& aImageRect, nsRect& aTwistyRect,
+-                                    nsPresContext* aPresContext,
+-                                    ComputedStyle* aTwistyContext) {
++nsITheme* nsTreeBodyFrame::GetTwistyRect(int32_t aRowIndex,
++                                         nsTreeColumn* aColumn,
++                                         nsRect& aImageRect,
++                                         nsRect& aTwistyRect,
++                                         nsPresContext* aPresContext,
++                                         ComputedStyle* aTwistyContext) {
+   // The twisty rect extends all the way to the end of the cell.  This is
+   // incorrect.  We need to determine the twisty rect's true width.  This is
+   // done by examining the ComputedStyle for a width first.  If it has one, we
+@@ -1844,14 +1828,40 @@ void nsTreeBodyFrame::GetTwistyRect(int32_t aRowIndex, nsTreeColumn* aColumn,
+   // a -moz-appearance involved, adjust the rect by the minimum widget size
+   // provided by the theme implementation.
+   aImageRect = GetImageSize(aRowIndex, aColumn, true, aTwistyContext);
+-  if (aImageRect.height > aTwistyRect.height) {
++  if (aImageRect.height > aTwistyRect.height)
+     aImageRect.height = aTwistyRect.height;
+-  }
+-  if (aImageRect.width > aTwistyRect.width) {
++  if (aImageRect.width > aTwistyRect.width)
+     aImageRect.width = aTwistyRect.width;
+-  } else {
++  else
+     aTwistyRect.width = aImageRect.width;
++
++  bool useTheme = false;
++  nsITheme* theme = nullptr;
++  StyleAppearance appearance =
++      aTwistyContext->StyleDisplay()->EffectiveAppearance();
++  if (appearance != StyleAppearance::None) {
++    theme = aPresContext->Theme();
++    if (theme->ThemeSupportsWidget(aPresContext, nullptr, appearance))
++      useTheme = true;
++  }
++
++  if (useTheme) {
++    LayoutDeviceIntSize minTwistySizePx =
++        theme->GetMinimumWidgetSize(aPresContext, this, appearance);
++
++    // GMWS() returns size in pixels, we need to convert it back to app units
++    nsSize minTwistySize;
++    minTwistySize.width =
++        aPresContext->DevPixelsToAppUnits(minTwistySizePx.width);
++    minTwistySize.height =
++        aPresContext->DevPixelsToAppUnits(minTwistySizePx.height);
++
++    if (aTwistyRect.width < minTwistySize.width) {
++      aTwistyRect.width = minTwistySize.width;
++    }
+   }
++
++  return useTheme ? theme : nullptr;
+ }
+ 
+ already_AddRefed<imgIContainer> nsTreeBodyFrame::GetImage(
+@@ -2683,8 +2693,21 @@ ImgDrawResult nsTreeBodyFrame::PaintRow(int32_t aRowIndex,
+   ImgDrawResult result = ImgDrawResult::SUCCESS;
+ 
+   // Paint our borders and background for our row rect.
+-  result &= PaintBackgroundLayer(rowContext, aPresContext, aRenderingContext,
+-                                 rowRect, aDirtyRect);
++  nsITheme* theme = nullptr;
++  auto appearance = rowContext->StyleDisplay()->EffectiveAppearance();
++  if (appearance != StyleAppearance::None) {
++    theme = aPresContext->Theme();
++  }
++
++  if (theme && theme->ThemeSupportsWidget(aPresContext, nullptr, appearance)) {
++    nsRect dirty;
++    dirty.IntersectRect(rowRect, aDirtyRect);
++    theme->DrawWidgetBackground(&aRenderingContext, this, appearance, rowRect,
++                                dirty);
++  } else {
++    result &= PaintBackgroundLayer(rowContext, aPresContext, aRenderingContext,
++                                   rowRect, aDirtyRect);
++  }
+ 
+   // Adjust the rect for its border and padding.
+   nsRect originalRowRect = rowRect;
+@@ -2797,34 +2820,56 @@ ImgDrawResult nsTreeBodyFrame::PaintSeparator(int32_t aRowIndex,
+   // Resolve style for the separator.
+   ComputedStyle* separatorContext =
+       GetPseudoComputedStyle(nsCSSAnonBoxes::mozTreeSeparator());
++  bool useTheme = false;
++  nsITheme* theme = nullptr;
++  StyleAppearance appearance =
++      separatorContext->StyleDisplay()->EffectiveAppearance();
++  if (appearance != StyleAppearance::None) {
++    theme = aPresContext->Theme();
++    if (theme->ThemeSupportsWidget(aPresContext, nullptr, appearance))
++      useTheme = true;
++  }
+ 
+-  const nsStylePosition* stylePosition = separatorContext->StylePosition();
+   const auto positionProperty = separatorContext->StyleDisplay()->mPosition;
++  ImgDrawResult result = ImgDrawResult::SUCCESS;
+ 
+-  // Obtain the height for the separator or use the default value.
+-  nscoord height;
+-  const auto styleHeight = stylePosition->GetHeight(positionProperty);
+-  if (styleHeight->ConvertsToLength()) {
+-    height = styleHeight->ToLength();
++  // use -moz-appearance if provided.
++  if (useTheme) {
++    nsRect dirty;
++    dirty.IntersectRect(aSeparatorRect, aDirtyRect);
++    theme->DrawWidgetBackground(&aRenderingContext, this, appearance,
++                                aSeparatorRect, dirty);
+   } else {
+-    // Use default height 2px.
+-    height = nsPresContext::CSSPixelsToAppUnits(2);
+-  }
++    const nsStylePosition* stylePosition = separatorContext->StylePosition();
++
++    // Obtain the height for the separator or use the default value.
++    nscoord height;
++    const auto styleHeight = stylePosition->GetHeight(positionProperty);
++    if (styleHeight->ConvertsToLength()) {
++      height = styleHeight->ToLength();
++    } else {
++      // Use default height 2px.
++      height = nsPresContext::CSSPixelsToAppUnits(2);
++    }
++
++    // Obtain the margins for the separator and then deflate our rect by that
++    // amount. The separator is assumed to be contained within the deflated
++    // rect.
++    nsRect separatorRect(aSeparatorRect.x, aSeparatorRect.y,
++                         aSeparatorRect.width, height);
++    nsMargin separatorMargin;
++    separatorContext->StyleMargin()->GetMargin(separatorMargin);
++    separatorRect.Deflate(separatorMargin);
+ 
+-  // Obtain the margins for the separator and then deflate our rect by that
+-  // amount. The separator is assumed to be contained within the deflated
+-  // rect.
+-  nsRect separatorRect(aSeparatorRect.x, aSeparatorRect.y, aSeparatorRect.width,
+-                       height);
+-  nsMargin separatorMargin;
+-  separatorContext->StyleMargin()->GetMargin(separatorMargin);
+-  separatorRect.Deflate(separatorMargin);
++    // Center the separator.
++    separatorRect.y += (aSeparatorRect.height - height) / 2;
+ 
+-  // Center the separator.
+-  separatorRect.y += (aSeparatorRect.height - height) / 2;
++    result &=
++        PaintBackgroundLayer(separatorContext, aPresContext, aRenderingContext,
++                             separatorRect, aDirtyRect);
++  }
+ 
+-  return PaintBackgroundLayer(separatorContext, aPresContext, aRenderingContext,
+-                              separatorRect, aDirtyRect);
++  return result;
+ }
+ 
+ ImgDrawResult nsTreeBodyFrame::PaintCell(
+@@ -3039,59 +3084,68 @@ ImgDrawResult nsTreeBodyFrame::PaintTwisty(
+   twistyRect.Deflate(twistyMargin);
+ 
+   nsRect imageSize;
+-  GetTwistyRect(aRowIndex, aColumn, imageSize, twistyRect, aPresContext,
+-                twistyContext);
++  nsITheme* theme = GetTwistyRect(aRowIndex, aColumn, imageSize, twistyRect,
++                                  aPresContext, twistyContext);
+ 
+   // Subtract out the remaining width.  This is done even when we don't actually
+   // paint a twisty in this cell, so that cells in different rows still line up.
+   nsRect copyRect(twistyRect);
+   copyRect.Inflate(twistyMargin);
+   aRemainingWidth -= copyRect.width;
+-  if (!isRTL) {
+-    aCurrX += copyRect.width;
+-  }
++  if (!isRTL) aCurrX += copyRect.width;
+ 
+-  auto result = ImgDrawResult::SUCCESS;
+-  if (!shouldPaint) {
+-    return result;
+-  }
+-  // Paint our borders and background for our image rect.
+-  result &= PaintBackgroundLayer(twistyContext, aPresContext, aRenderingContext,
+-                                 twistyRect, aDirtyRect);
++  ImgDrawResult result = ImgDrawResult::SUCCESS;
+ 
+-  // Time to paint the twisty.
+-  // Adjust the rect for its border and padding.
+-  nsMargin bp;
+-  GetBorderPadding(twistyContext, bp);
+-  twistyRect.Deflate(bp);
+-  if (isRTL) {
+-    twistyRect.x = rightEdge - twistyRect.width;
+-  }
+-  imageSize.Deflate(bp);
++  if (shouldPaint) {
++    // Paint our borders and background for our image rect.
++    result &= PaintBackgroundLayer(twistyContext, aPresContext,
++                                   aRenderingContext, twistyRect, aDirtyRect);
++
++    if (theme) {
++      if (isRTL) twistyRect.x = rightEdge - twistyRect.width;
++      // yeah, I know it says we're drawing a background, but a twisty is really
++      // a fg object since it doesn't have anything that gecko would want to
++      // draw over it. Besides, we have to prevent imagelib from drawing it.
++      nsRect dirty;
++      dirty.IntersectRect(twistyRect, aDirtyRect);
++      theme->DrawWidgetBackground(
++          &aRenderingContext, this,
++          twistyContext->StyleDisplay()->EffectiveAppearance(), twistyRect,
++          dirty);
++    } else {
++      // Time to paint the twisty.
++      // Adjust the rect for its border and padding.
++      nsMargin bp(0, 0, 0, 0);
++      GetBorderPadding(twistyContext, bp);
++      twistyRect.Deflate(bp);
++      if (isRTL) twistyRect.x = rightEdge - twistyRect.width;
++      imageSize.Deflate(bp);
++
++      // Get the image for drawing.
++      nsCOMPtr<imgIContainer> image =
++          GetImage(aRowIndex, aColumn, true, twistyContext);
++      if (image) {
++        nsPoint anchorPoint = twistyRect.TopLeft();
++
++        // Center the image. XXX Obey vertical-align style prop?
++        if (imageSize.height < twistyRect.height) {
++          anchorPoint.y += (twistyRect.height - imageSize.height) / 2;
++        }
+ 
+-  // Get the image for drawing.
+-  nsCOMPtr<imgIContainer> image =
+-      GetImage(aRowIndex, aColumn, true, twistyContext);
+-  if (!image) {
+-    return result;
+-  }
+-  nsPoint anchorPoint = twistyRect.TopLeft();
++        // Apply context paint if applicable
++        SVGImageContext svgContext;
++        SVGImageContext::MaybeStoreContextPaint(svgContext, *aPresContext,
++                                                *twistyContext, image);
+ 
+-  // Center the image. XXX Obey vertical-align style prop?
+-  if (imageSize.height < twistyRect.height) {
+-    anchorPoint.y += (twistyRect.height - imageSize.height) / 2;
++        // Paint the image.
++        result &= nsLayoutUtils::DrawSingleUnscaledImage(
++            aRenderingContext, aPresContext, image, SamplingFilter::POINT,
++            anchorPoint, &aDirtyRect, svgContext, imgIContainer::FLAG_NONE,
++            &imageSize);
++      }
++    }
+   }
+ 
+-  // Apply context paint if applicable
+-  SVGImageContext svgContext;
+-  SVGImageContext::MaybeStoreContextPaint(svgContext, *aPresContext,
+-                                          *twistyContext, image);
+-
+-  // Paint the image.
+-  result &= nsLayoutUtils::DrawSingleUnscaledImage(
+-      aRenderingContext, aPresContext, image, SamplingFilter::POINT,
+-      anchorPoint, &aDirtyRect, svgContext, imgIContainer::FLAG_NONE,
+-      &imageSize);
+   return result;
+ }
+ 
+diff --git a/layout/xul/tree/nsTreeBodyFrame.h b/layout/xul/tree/nsTreeBodyFrame.h
+index d7a9498cedb8..dd38644ad9a8 100644
+--- a/layout/xul/tree/nsTreeBodyFrame.h
++++ b/layout/xul/tree/nsTreeBodyFrame.h
+@@ -295,10 +295,10 @@ class nsTreeBodyFrame final : public mozilla::SimpleXULLeafFrame,
+                  nsCSSAnonBoxPseudoStaticAtom** aChildElt);
+ 
+   // Retrieve the area for the twisty for a cell.
+-  void GetTwistyRect(int32_t aRowIndex, nsTreeColumn* aColumn,
+-                     nsRect& aImageRect, nsRect& aTwistyRect,
+-                     nsPresContext* aPresContext,
+-                     ComputedStyle* aTwistyContext);
++  nsITheme* GetTwistyRect(int32_t aRowIndex, nsTreeColumn* aColumn,
++                          nsRect& aImageRect, nsRect& aTwistyRect,
++                          nsPresContext* aPresContext,
++                          ComputedStyle* aTwistyContext);
+ 
+   // Fetch an image from the image cache, or request it.
+   already_AddRefed<imgIContainer> GetImage(int32_t aRowIndex,
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index 9b871030482d..6d3a20582466 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1579,6 +1579,27 @@ pub enum Appearance {
+     /// Sidebar appearance.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     MozSidebar,
++    /// A listbox or tree widget header
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treeheader,
++    /// An individual header cell
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treeheadercell,
++    /// A tree item.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treeitem,
++    /// A tree widget branch line
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treeline,
++    /// A tree widget twisty.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treetwisty,
++    /// Open tree widget twisty.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treetwistyopen,
++    /// A tree widget.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Treeview,
+ 
+     /// Mac help button.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+diff --git a/toolkit/content/widgets.css b/toolkit/content/widgets.css
+index 16b6d5cb94d8..d7f1b686029e 100644
+--- a/toolkit/content/widgets.css
++++ b/toolkit/content/widgets.css
+@@ -22,4 +22,4 @@
+ @import url("chrome://global/skin/tabbox.css");
+ @import url("chrome://global/skin/toolbar.css");
+ @import url("chrome://global/skin/toolbarbutton.css");
+-@import url("chrome://global/skin/tree/tree.css");
++@import url("chrome://global/skin/tree.css");
+diff --git a/toolkit/content/xul.css b/toolkit/content/xul.css
+index 7f5b7aa295f6..908132d59808 100644
+--- a/toolkit/content/xul.css
++++ b/toolkit/content/xul.css
+@@ -600,6 +600,20 @@ menulist[popuponly] {
+   padding: 0 !important;
+ }
+ 
++/********** splitter **********/
++
++.tree-splitter {
++  margin-inline: -4px;
++  width: 8px;
++  max-width: 8px;
++  min-width: 8px;
++  appearance: none !important;
++  border: none !important;
++  background: none !important;
++  order: 2147483646;
++  z-index: 2147483646;
++}
++
+ /******** scrollbar ********/
+ 
+ slider {
+diff --git a/toolkit/themes/shared/desktop-jar.inc.mn b/toolkit/themes/shared/desktop-jar.inc.mn
+index 5907a9773fe6..2ba976a60330 100644
+--- a/toolkit/themes/shared/desktop-jar.inc.mn
++++ b/toolkit/themes/shared/desktop-jar.inc.mn
+@@ -46,7 +46,7 @@
+   skin/classic/global/splitter.css                         (../../shared/splitter.css)
+   skin/classic/global/tabbox.css                           (../../shared/tabbox.css)
+   skin/classic/global/toolbarbutton.css                    (../../shared/toolbarbutton.css)
+-  skin/classic/global/tree/tree.css                        (../../shared/tree/tree.css)
++  skin/classic/global/tree.css                             (../../shared/tree.css)
+   skin/classic/global/dirListing/dirListing.css            (../../shared/dirListing/dirListing.css)
+ #ifdef XP_MACOSX
+   skin/classic/global/dirListing/folder.png                (../../shared/dirListing/folder-osx.png)
+@@ -160,5 +160,3 @@
+   skin/classic/global/reader/character-spacing-20.svg      (../../shared/reader/character-spacing-20.svg)
+   skin/classic/global/reader/line-spacing-20.svg           (../../shared/reader/line-spacing-20.svg)
+   skin/classic/global/reader/content-width-20.svg          (../../shared/reader/content-width-20.svg)
+-  skin/classic/global/tree/sort-asc.svg                    (../../shared/tree/sort-asc.svg)
+-  skin/classic/global/tree/sort-dsc.svg                    (../../shared/tree/sort-dsc.svg)
+diff --git a/toolkit/themes/shared/desktop-non-mac.jar.inc.mn b/toolkit/themes/shared/desktop-non-mac.jar.inc.mn
+index afa8123140e3..c976798df5c6 100644
+--- a/toolkit/themes/shared/desktop-non-mac.jar.inc.mn
++++ b/toolkit/themes/shared/desktop-non-mac.jar.inc.mn
+@@ -20,4 +20,7 @@
+ 
+   skin/classic/mozapps/handling/handling.css               (../../windows/mozapps/handling/handling.css)
+ 
++  skin/classic/global/tree/sort-asc.svg                    (../../windows/global/tree/sort-asc.svg)
++  skin/classic/global/tree/sort-dsc.svg                    (../../windows/global/tree/sort-dsc.svg)
++
+ % override chrome://mozapps/skin/xpinstall/xpinstallItemGeneric.png       chrome://mozapps/skin/extensions/extensionGeneric.svg
+diff --git a/toolkit/themes/shared/tree/tree.css b/toolkit/themes/shared/tree.css
+similarity index 88%
+rename from toolkit/themes/shared/tree/tree.css
+rename to toolkit/themes/shared/tree.css
+index aa4ffa899c15..9c56af4db414 100644
+--- a/toolkit/themes/shared/tree/tree.css
++++ b/toolkit/themes/shared/tree.css
+@@ -23,21 +23,6 @@ tree {
+   }
+ }
+ 
+-/********** splitter **********/
+-
+-.tree-splitter {
+-  margin-inline: -4px;
+-  width: 8px;
+-  max-width: 8px;
+-  min-width: 8px;
+-  appearance: none !important;
+-  border: none !important;
+-  background: none !important;
+-  order: 2147483646;
+-  z-index: 2147483646;
+-}
+-
+-
+ /* ::::: tree rows ::::: */
+ 
+ treechildren::-moz-tree-row {
+@@ -138,15 +123,20 @@ treechildren::-moz-tree-drop-feedback {
+ 
+ treecol,
+ .tree-columnpicker-button {
++  appearance: auto;
++  -moz-default-appearance: treeheadercell;
+   background-color: -moz-ColHeader;
+   color: -moz-ColHeaderText;
+   align-items: center;
+   justify-content: center;
+   padding: 0 4px;
+   margin: 0;
+-
+   border-inline-start: 1px solid ThreeDLightShadow;
+-  box-shadow: inset 0 -1px ThreeDLightShadow;
++
++  @media (-moz-platform: linux) or ((-moz-platform: windows) and (prefers-color-scheme: dark)) {
++    appearance: none;
++    box-shadow: inset 0 -1px ThreeDLightShadow;
++  }
+ 
+   &:where(:hover) {
+     background-color: -moz-ColHeaderHover;
+@@ -260,20 +250,22 @@ html|input.tree-input {
+   z-index: 2147483647;
+ }
+ 
+-/* ::::: sort direction indicator :::::  */
+-.treecol-sortdirection {
+-  list-style-image: url("chrome://global/skin/tree/sort-asc.svg");
+-  -moz-context-properties: fill;
+-  fill: currentColor;
+-  visibility: hidden;
++@media not (-moz-platform: macos) {
++  /* ::::: sort direction indicator :::::  */
++  .treecol-sortdirection {
++    list-style-image: url("chrome://global/skin/tree/sort-asc.svg");
++    -moz-context-properties: fill;
++    fill: currentColor;
++    visibility: hidden;
+ 
+-  treecol[sortDirection="ascending"]:not([hideheader="true"]) > & {
+-    visibility: inherit;
+-  }
++    treecol[sortDirection="ascending"]:not([hideheader="true"]) > & {
++      visibility: inherit;
++    }
+ 
+-  treecol[sortDirection="descending"]:not([hideheader="true"]) > & {
+-    visibility: inherit;
+-    list-style-image: url("chrome://global/skin/tree/sort-dsc.svg");
++    treecol[sortDirection="descending"]:not([hideheader="true"]) > & {
++      visibility: inherit;
++      list-style-image: url("chrome://global/skin/tree/sort-dsc.svg");
++    }
+   }
+ }
+ 
+diff --git a/toolkit/themes/shared/tree/sort-asc.svg b/toolkit/themes/windows/global/tree/sort-asc.svg
+similarity index 100%
+rename from toolkit/themes/shared/tree/sort-asc.svg
+rename to toolkit/themes/windows/global/tree/sort-asc.svg
+diff --git a/toolkit/themes/shared/tree/sort-dsc.svg b/toolkit/themes/windows/global/tree/sort-dsc.svg
+similarity index 100%
+rename from toolkit/themes/shared/tree/sort-dsc.svg
+rename to toolkit/themes/windows/global/tree/sort-dsc.svg
+diff --git a/widget/cocoa/nsNativeThemeCocoa.h b/widget/cocoa/nsNativeThemeCocoa.h
+index 66e5aec1df83..da8c3049c393 100644
+--- a/widget/cocoa/nsNativeThemeCocoa.h
++++ b/widget/cocoa/nsNativeThemeCocoa.h
+@@ -40,6 +40,8 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     eSquareBezelPushButton,
+     eArrowButton,
+     eHelpButton,
++    eTreeTwistyPointingRight,
++    eTreeTwistyPointingDown,
+     eDisclosureButtonClosed,
+     eDisclosureButtonOpen
+   };
+@@ -129,6 +131,12 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     bool rtl = false;
+   };
+ 
++  struct TreeHeaderCellParams {
++    ControlParams controlParams;
++    TreeSortDirection sortDirection = eTreeSortDirection_Natural;
++    bool lastTreeHeaderCell = false;
++  };
++
+   struct ScaleParams {
+     int32_t value = 0;
+     int32_t min = 0;
+@@ -157,6 +165,7 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     eSearchField,         // TextFieldParams
+     eProgressBar,         // ProgressParams
+     eMeter,               // MeterParams
++    eTreeHeaderCell,      // TreeHeaderCellParams
+     eScale,               // ScaleParams
+     eMultilineTextField,  // bool
+     eListBox,
+@@ -212,6 +221,9 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     static WidgetInfo Meter(const MeterParams& aParams) {
+       return WidgetInfo(Widget::eMeter, aParams);
+     }
++    static WidgetInfo TreeHeaderCell(const TreeHeaderCellParams& aParams) {
++      return WidgetInfo(Widget::eTreeHeaderCell, aParams);
++    }
+     static WidgetInfo Scale(const ScaleParams& aParams) {
+       return WidgetInfo(Widget::eScale, aParams);
+     }
+@@ -239,7 +251,7 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     mozilla::Variant<mozilla::gfx::sRGBColor, CheckboxOrRadioParams,
+                      ButtonParams, DropdownParams, SpinButtonParams,
+                      SegmentParams, TextFieldParams, ProgressParams,
+-                     MeterParams, ScaleParams, bool>
++                     MeterParams, TreeHeaderCellParams, ScaleParams, bool>
+         mVariant;
+ 
+     enum Widget mWidget;
+@@ -303,6 +315,8 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+   ProgressParams ComputeProgressParams(nsIFrame*, mozilla::dom::ElementState,
+                                        bool aIsHorizontal);
+   MeterParams ComputeMeterParams(nsIFrame*);
++  TreeHeaderCellParams ComputeTreeHeaderCellParams(nsIFrame*,
++                                                   mozilla::dom::ElementState);
+   mozilla::Maybe<ScaleParams> ComputeHTMLScaleParams(
+       nsIFrame*, mozilla::dom::ElementState);
+ 
+@@ -340,6 +354,8 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+                          const ControlParams& aParams);
+   void DrawButton(CGContextRef context, const HIRect& inBoxRect,
+                   const ButtonParams& aParams);
++  void DrawTreeHeaderCell(CGContextRef context, const HIRect& inBoxRect,
++                          const TreeHeaderCellParams& aParams);
+   void DrawDropdown(CGContextRef context, const HIRect& inBoxRect,
+                     const DropdownParams& aParams);
+   HIThemeButtonDrawInfo SpinButtonDrawInfo(ThemeButtonKind aKind,
+@@ -371,6 +387,7 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+   NSComboBoxCell* mComboBoxCell;
+   NSProgressBarCell* mProgressBarCell;
+   NSLevelIndicatorCell* mMeterBarCell;
++  NSTableHeaderCell* mTreeHeaderCell;
+   MOZCellDrawWindow* mCellDrawWindow = nil;
+   MOZCellDrawView* mCellDrawView;
+ };
+diff --git a/widget/gtk/WidgetStyleCache.cpp b/widget/gtk/WidgetStyleCache.cpp
+index b3d9bfcbbd13..13b194a64e9a 100644
+--- a/widget/gtk/WidgetStyleCache.cpp
++++ b/widget/gtk/WidgetStyleCache.cpp
+@@ -1079,6 +1079,11 @@ static GtkStyleContext* GetCssNodeStyleInternal(WidgetNodeType aNodeType) {
+     case MOZ_GTK_FRAME_BORDER:
+       style = CreateChildCSSNode("border", MOZ_GTK_FRAME);
+       break;
++    case MOZ_GTK_TREEVIEW_EXPANDER:
++      // TODO - create from CSS node
++      style =
++          CreateSubStyleWithClass(MOZ_GTK_TREEVIEW, GTK_STYLE_CLASS_EXPANDER);
++      break;
+     case MOZ_GTK_WINDOW_DECORATION: {
+       GtkStyleContext* parentStyle =
+           CreateSubStyleWithClass(MOZ_GTK_HEADERBAR_WINDOW, "csd");
+@@ -1213,6 +1218,10 @@ static GtkStyleContext* GetWidgetStyleInternal(WidgetNodeType aNodeType) {
+       break;
+     case MOZ_GTK_FRAME_BORDER:
+       return GetWidgetRootStyle(MOZ_GTK_FRAME);
++    case MOZ_GTK_TREEVIEW_EXPANDER:
++      style =
++          CreateSubStyleWithClass(MOZ_GTK_TREEVIEW, GTK_STYLE_CLASS_EXPANDER);
++      break;
+     default:
+       return GetWidgetRootStyle(aNodeType);
+   }
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index b988fb4ec58a..d766e2550676 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -501,7 +501,12 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
+       return Some(eUXTrackbar);
+     case StyleAppearance::Menulist:
+       return Some(eUXCombobox);
++    case StyleAppearance::Treeheadercell:
++      return Some(eUXHeader);
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
++    case StyleAppearance::Treetwistyopen:
++    case StyleAppearance::Treeitem:
+       return Some(eUXListview);
+     default:
+       return Nothing();
+@@ -713,11 +718,23 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
+       }
+       return NS_OK;
+     }
++    case StyleAppearance::Treeview:
+     case StyleAppearance::Listbox: {
+       aPart = TREEVIEW_BODY;
+       aState = TS_NORMAL;
+       return NS_OK;
+     }
++    case StyleAppearance::Treeheadercell: {
++      aPart = 1;
++      if (!aFrame) {
++        aState = TS_NORMAL;
++        return NS_OK;
++      }
++
++      aState = StandardGetState(aFrame, aAppearance, true);
++
++      return NS_OK;
++    }
+     case StyleAppearance::Menulist: {
+       nsIContent* content = aFrame->GetContent();
+       bool useDropBorder = content && content->IsHTMLElement();
+@@ -1230,6 +1247,7 @@ LayoutDeviceIntSize nsNativeThemeWin::GetMinimumWidgetSize(
+     case StyleAppearance::Textfield:
+     case StyleAppearance::Progresschunk:
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
+       return {};  // Don't worry about it.
+     default:
+       break;
+@@ -1435,6 +1453,7 @@ bool nsNativeThemeWin::ClassicThemeSupportsWidget(nsIFrame* aFrame,
+     case StyleAppearance::RangeThumb:
+     case StyleAppearance::Menulist:
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
+     case StyleAppearance::ProgressBar:
+     case StyleAppearance::Progresschunk:
+       return true;
+@@ -1454,6 +1473,7 @@ LayoutDeviceIntMargin nsNativeThemeWin::ClassicGetWidgetBorder(
+       result.top = result.left = result.bottom = result.right = 2;
+       break;
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
+     case StyleAppearance::Menulist:
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+@@ -1505,6 +1525,7 @@ LayoutDeviceIntSize nsNativeThemeWin::ClassicGetMinimumWidgetSize(
+     case StyleAppearance::Menulist:
+     case StyleAppearance::Button:
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+     case StyleAppearance::Textfield:
+@@ -1563,6 +1584,7 @@ nsresult nsNativeThemeWin::ClassicGetThemePartAndState(
+       return NS_OK;
+     }
+     case StyleAppearance::Listbox:
++    case StyleAppearance::Treeview:
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+     case StyleAppearance::Textfield:
+@@ -1777,6 +1799,15 @@ RENDER_AGAIN:
+ 
+       break;
+     }
++    case StyleAppearance::Treeview: {
++      // Draw inset edge
++      ::DrawEdge(hdc, &widgetRect, EDGE_SUNKEN, BF_RECT | BF_ADJUST);
++
++      // Fill in window color background
++      ::FillRect(hdc, &widgetRect, (HBRUSH)(COLOR_WINDOW + 1));
++
++      break;
++    }
+     // Draw 3D face background controls
+     case StyleAppearance::ProgressBar:
+       // Draw 3D border
+diff --git a/widget/windows/nsUXThemeData.cpp b/widget/windows/nsUXThemeData.cpp
+index 88546b01c6f0..ce8b0f347996 100644
+--- a/widget/windows/nsUXThemeData.cpp
++++ b/widget/windows/nsUXThemeData.cpp
+@@ -72,6 +72,8 @@ const wchar_t* nsUXThemeData::GetClassName(nsUXThemeClass cls) {
+       return L"Trackbar";
+     case eUXCombobox:
+       return L"Combobox";
++    case eUXHeader:
++      return L"Header";
+     case eUXListview:
+       return L"Listview";
+     case eUXMenu:
+diff --git a/widget/windows/nsUXThemeData.h b/widget/windows/nsUXThemeData.h
+index b59c2aae045e..24fe07d12805 100644
+--- a/widget/windows/nsUXThemeData.h
++++ b/widget/windows/nsUXThemeData.h
+@@ -24,6 +24,7 @@ enum nsUXThemeClass {
+   eUXTab,
+   eUXTrackbar,
+   eUXCombobox,
++  eUXHeader,
+   eUXListview,
+   eUXMenu,
+   eUXNumClasses
+diff --git a/xpcom/ds/StaticAtoms.py b/xpcom/ds/StaticAtoms.py
+index f3d054af846c..ddcf19de27b7 100644
+--- a/xpcom/ds/StaticAtoms.py
++++ b/xpcom/ds/StaticAtoms.py
+@@ -450,7 +450,6 @@ STATIC_ATOMS = [
+     Atom("figcaption", "figcaption"),
+     Atom("figure", "figure"),
+     Atom("findbar", "findbar"),
+-    Atom("firstColumn", "first-column"),
+     Atom("firstInput", "first-input"),
+     Atom("fixed", "fixed"),
+     Atom("flags", "flags"),
+@@ -972,7 +971,6 @@ STATIC_ATOMS = [
+     Atom("option", "option"),
+     Atom("_or", "or"),
+     Atom("order", "order"),
+-    Atom("ordinal", "ordinal"),
+     Atom("orient", "orient"),
+     Atom("orientation", "orientation"),
+     Atom("origin_trial", "origin-trial"),

@@ -1,0 +1,27 @@
+diff --git a/gfx/2d/HelpersD2D.h b/gfx/2d/HelpersD2D.h
+index 1c24edeaf0cd..440202cec4ab 100644
+--- a/gfx/2d/HelpersD2D.h
++++ b/gfx/2d/HelpersD2D.h
+@@ -12,6 +12,7 @@
+ #include <vector>
+ 
+ #include <dwrite.h>
++#include <versionhelpers.h>
+ #include <float.h>
+ #include "2D.h"
+ #include "Logging.h"
+@@ -282,10 +283,11 @@ static inline D2D1_BLEND_MODE D2DBlendMode(CompositionOp aOp) {
+ static inline bool D2DSupportsPrimitiveBlendMode(CompositionOp aOp) {
+   switch (aOp) {
+     case CompositionOp::OP_OVER:
+-    // case CompositionOp::OP_SOURCE:
+-    // case CompositionOp::OP_DARKEN:
+-    case CompositionOp::OP_ADD:
++      //  case CompositionOp::OP_SOURCE:
+       return true;
++      //  case CompositionOp::OP_DARKEN:
++    case CompositionOp::OP_ADD:
++      return IsWindows8Point1OrGreater();
+     default:
+       return false;
+   }

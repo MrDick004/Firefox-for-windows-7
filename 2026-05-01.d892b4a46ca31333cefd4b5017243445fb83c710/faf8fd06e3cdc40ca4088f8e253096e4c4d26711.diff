@@ -1,0 +1,100 @@
+diff --git a/js/src/gc/moz.build b/js/src/gc/moz.build
+index 5facaa7b63d5..04ec5e236ae8 100644
+--- a/js/src/gc/moz.build
++++ b/js/src/gc/moz.build
+@@ -62,3 +62,6 @@ SOURCES += [
+     #   bundled with.
+     "StoreBuffer.cpp",
+ ]
++OS_LIBS += ["psapi"]
++
++DEFINES["PSAPI_VERSION"] = "1"
+diff --git a/mozglue/baseprofiler/moz.build b/mozglue/baseprofiler/moz.build
+index 5974d454ee15..7670c931a38e 100644
+--- a/mozglue/baseprofiler/moz.build
++++ b/mozglue/baseprofiler/moz.build
+@@ -133,3 +133,6 @@ if CONFIG["CC_TYPE"] in ("clang", "gcc"):
+ 
+ with Files("**"):
+     BUG_COMPONENT = ("Core", "Gecko Profiler")
++OS_LIBS += ["psapi"]
++
++DEFINES["PSAPI_VERSION"] = "1"
+diff --git a/toolkit/components/processtools/moz.build b/toolkit/components/processtools/moz.build
+index d5c0aca9de14..2b9ae4facd79 100644
+--- a/toolkit/components/processtools/moz.build
++++ b/toolkit/components/processtools/moz.build
+@@ -51,3 +51,6 @@ elif toolkit in ("cocoa", "uikit"):
+     UNIFIED_SOURCES += ["ProcInfo.mm"]
+ 
+ include("/ipc/chromium/chromium-config.mozbuild")
++OS_LIBS += ["psapi"]
++
++DEFINES["PSAPI_VERSION"] = "1"
+diff --git a/toolkit/crashreporter/moz.build b/toolkit/crashreporter/moz.build
+index 340c90ff804c..08a2ce220157 100644
+--- a/toolkit/crashreporter/moz.build
++++ b/toolkit/crashreporter/moz.build
+@@ -142,3 +142,6 @@ GeneratedFile(
+ 
+ with Files("**"):
+     BUG_COMPONENT = ("Toolkit", "Crash Reporting")
++OS_LIBS += ["psapi"]
++
++DEFINES["PSAPI_VERSION"] = "1"
+diff --git a/widget/windows/moz.build b/widget/windows/moz.build
+index 20e3b6e1706d..945ec0833a04 100644
+--- a/widget/windows/moz.build
++++ b/widget/windows/moz.build
+@@ -213,3 +213,6 @@ if CONFIG["CC_TYPE"] == "clang-cl":
+     ]
+ 
+ SPHINX_TREES["/widget/windows"] = "docs"
++OS_LIBS += ["psapi"]
++
++DEFINES["PSAPI_VERSION"] = "1"
+diff --git a/xpcom/base/moz.build b/xpcom/base/moz.build
+index 5f01b7b13643..e3081cbe62cc 100644
+--- a/xpcom/base/moz.build
++++ b/xpcom/base/moz.build
+@@ -278,3 +278,6 @@ if CONFIG["MOZ_PHC"]:
+ 
+ with Files("PHCManager.*"):
+     BUG_COMPONENT = ("Core", "Memory Allocator")
++OS_LIBS += ["psapi"]
++
++DEFINES["PSAPI_VERSION"] = "1"
+diff --git a/xpcom/io/moz.build b/xpcom/io/moz.build
+index e746878316a7..a6a19ec7b938 100644
+--- a/xpcom/io/moz.build
++++ b/xpcom/io/moz.build
+@@ -166,3 +166,6 @@ LOCAL_INCLUDES += [
+     "!..",
+     "../build",
+ ]
++OS_LIBS += ["psapi"]
++
++DEFINES["PSAPI_VERSION"] = "1"
+diff --git a/toolkit/crashreporter/crash_helper/moz.build b/toolkit/crashreporter/crash_helper/moz.build
+index d5af66b076f9..2b826f8681b1 100644
+--- a/toolkit/crashreporter/crash_helper/moz.build
++++ b/toolkit/crashreporter/crash_helper/moz.build
+@@ -40,3 +40,6 @@ else:
+     ]
+ 
+     GeckoProgram("crashhelper", linkage=None)
++OS_LIBS += ["psapi"]
++
++DEFINES["PSAPI_VERSION"] = "1"
+diff --git a/toolkit/crashreporter/mozwer-rust/moz.build b/toolkit/crashreporter/mozwer-rust/moz.build
+index 098a191914c3..da607a920fe2 100644
+--- a/toolkit/crashreporter/mozwer-rust/moz.build
++++ b/toolkit/crashreporter/mozwer-rust/moz.build
+@@ -6,6 +6,7 @@ OS_LIBS += [
+     "kernel32",
+     "ntdll",
+     "ole32",
++    "psapi",
+     "shell32",
+     "user32",
+     "userenv",

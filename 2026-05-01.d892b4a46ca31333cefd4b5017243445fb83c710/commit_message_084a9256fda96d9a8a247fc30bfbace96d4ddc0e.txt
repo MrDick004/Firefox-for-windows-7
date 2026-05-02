@@ -1,0 +1,1 @@
+Bug 1956626 - Merge nsUXThemeData into nsLookAndFeel. r=dshin    2025-03-28 23:54:26    084a9256fda96d9a8a247fc30bfbace96d4ddc0e

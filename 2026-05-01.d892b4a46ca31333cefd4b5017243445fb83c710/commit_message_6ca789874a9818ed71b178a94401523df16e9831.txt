@@ -1,0 +1,1 @@
+Bug 1958711 - Unify fallback and regular painting codepaths in nsWindow::OnPaint. r=win-reviewers,handyman    2025-04-16 05:03:00    6ca789874a9818ed71b178a94401523df16e9831

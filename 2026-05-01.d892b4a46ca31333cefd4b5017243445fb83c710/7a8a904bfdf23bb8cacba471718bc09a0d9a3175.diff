@@ -1,0 +1,92 @@
+diff --git a/ipc/chromium/src/base/condition_variable.h b/ipc/chromium/src/base/condition_variable.h
+index 0b82824ce6e1..5d81f3bebd40 100644
+--- a/ipc/chromium/src/base/condition_variable.h
++++ b/ipc/chromium/src/base/condition_variable.h
+@@ -104,7 +104,7 @@ class ConditionVariable {
+  private:
+ #if defined(XP_WIN)
+   CONDITION_VARIABLE cv_;
+-  SRWLOCK* const srwlock_;
++  CRITICAL_SECTION* const crit_sec_;
+ #else
+   pthread_cond_t condition_;
+   pthread_mutex_t* user_mutex_;
+diff --git a/ipc/chromium/src/base/condition_variable_win.cc b/ipc/chromium/src/base/condition_variable_win.cc
+index 35d79ba2ec20..78cf547c672c 100644
+--- a/ipc/chromium/src/base/condition_variable_win.cc
++++ b/ipc/chromium/src/base/condition_variable_win.cc
+@@ -11,7 +11,7 @@
+ #include "base/time.h"
+ 
+ ConditionVariable::ConditionVariable(Lock* user_lock)
+-    : srwlock_(user_lock->lock_.native_handle()) {
++    : crit_sec_(user_lock->lock_.native_handle()) {
+   DCHECK(user_lock);
+   InitializeConditionVariable(&cv_);
+ }
+@@ -25,7 +25,7 @@ void ConditionVariable::Wait() {
+ void ConditionVariable::TimedWait(const base::TimeDelta& max_time) {
+   DWORD timeout = static_cast<DWORD>(max_time.InMilliseconds());
+ 
+-  if (!SleepConditionVariableSRW(&cv_, srwlock_, timeout, 0)) {
++  if (!SleepConditionVariableCS(&cv_, crit_sec_, timeout)) {
+     // On failure, we only expect the CV to timeout. Any other error value means
+     // that we've unexpectedly woken up.
+     // Note that WAIT_TIMEOUT != ERROR_TIMEOUT. WAIT_TIMEOUT is used with the
+diff --git a/ipc/chromium/src/base/lock_impl.h b/ipc/chromium/src/base/lock_impl.h
+index 95588bcca26c..e10b4551d909 100644
+--- a/ipc/chromium/src/base/lock_impl.h
++++ b/ipc/chromium/src/base/lock_impl.h
+@@ -24,7 +24,7 @@ namespace internal {
+ class LockImpl {
+  public:
+ #if defined(XP_WIN)
+-  using NativeHandle = SRWLOCK;
++  using NativeHandle = CRITICAL_SECTION;
+ #else
+   using NativeHandle = pthread_mutex_t;
+ #endif
+diff --git a/ipc/chromium/src/base/lock_impl_win.cc b/ipc/chromium/src/base/lock_impl_win.cc
+index fc16b3a464c8..c5d8d2ff8e87 100644
+--- a/ipc/chromium/src/base/lock_impl_win.cc
++++ b/ipc/chromium/src/base/lock_impl_win.cc
+@@ -9,15 +9,30 @@
+ namespace base {
+ namespace internal {
+ 
+-LockImpl::LockImpl() : native_handle_(SRWLOCK_INIT) {}
+-
+-LockImpl::~LockImpl() = default;
+-
+-bool LockImpl::Try() { return !!::TryAcquireSRWLockExclusive(&native_handle_); }
+-
+-void LockImpl::Lock() { ::AcquireSRWLockExclusive(&native_handle_); }
+-
+-void LockImpl::Unlock() { ::ReleaseSRWLockExclusive(&native_handle_); }
++LockImpl::LockImpl() {
++  // The second parameter is the spin count, for short-held locks it avoid the
++  // contending thread from going to sleep which helps performance greatly.
++  ::InitializeCriticalSectionAndSpinCount(&native_handle_, 2000);
++}
++
++LockImpl::~LockImpl() {
++  ::DeleteCriticalSection(&native_handle_);
++}
++
++bool LockImpl::Try() {
++  if (::TryEnterCriticalSection(&native_handle_) != FALSE) {
++    return true;
++  }
++  return false;
++}
++
++void LockImpl::Lock() {
++  ::EnterCriticalSection(&native_handle_);
++}
++
++void LockImpl::Unlock() {
++  ::LeaveCriticalSection(&native_handle_);
++}
+ 
+ }  // namespace internal
+ }  // namespace base

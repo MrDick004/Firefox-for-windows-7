@@ -1,0 +1,1 @@
+Bug 1362907 - Make select use nsHTMLButtonControlFrame for layout. r=jfkthame,dholbert    2024-02-29 19:15:52    14c69b26721a27c6db51a28a1e4f22e4603e6aea

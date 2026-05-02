@@ -1,0 +1,13 @@
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 9bb14f092447..ed58d5ee7d4d 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -6517,7 +6517,7 @@
+ 
+ - name: gfx.canvas.remote.use-draw-image-fast-path-d3d
+   type: RelaxedAtomicBool
+-  value: true
++  value: false
+   mirror: always
+ 
+ - name: gfx.canvas.remote.recycle-used-data-surface

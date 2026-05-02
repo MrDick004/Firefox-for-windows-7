@@ -1,0 +1,1 @@
+Bug 1001332 - Set subsystem version to 5.01 to make VS2013 builds run on XP. r=glandium    2014-08-27 17:20:10    7a7fe7f7b1035e0cd47b9f3e3243b3bc62bee37a

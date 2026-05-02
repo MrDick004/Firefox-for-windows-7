@@ -1,0 +1,161 @@
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index 26e248ad9a9d..92fa2b662c28 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1575,15 +1575,26 @@ pub enum Appearance {
+     /// A separator.  Can be horizontal or vertical.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Separator,
++    /// A spin control (up/down control for time/date pickers).
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Spinner,
+     /// The up button of a spin control.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     SpinnerUpbutton,
+     /// The down button of a spin control.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     SpinnerDownbutton,
++    /// The textfield of a spin control
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    SpinnerTextfield,
+     /// A status bar in a main application window.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Statusbar,
++    /// The tabs scroll arrows (left/right).
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    TabScrollArrowBack,
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    TabScrollArrowForward,
+     /// A single toolbar button (with no associated dropdown).
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Toolbarbutton,
+diff --git a/toolkit/themes/shared/checkbox.css b/toolkit/themes/shared/checkbox.css
+index 63dc95ecc855..9f9a135b023b 100644
+--- a/toolkit/themes/shared/checkbox.css
++++ b/toolkit/themes/shared/checkbox.css
+@@ -62,8 +62,6 @@ checkbox {
+   }
+ 
+   @media (-moz-platform: linux) {
+-    width: 1.3em;
+-    height: 1.3em;
+     margin: 2px;
+     margin-inline-end: 4px;
+   }
+diff --git a/widget/cocoa/nsNativeThemeCocoa.h b/widget/cocoa/nsNativeThemeCocoa.h
+index 4aed2ae655fe..fca7672979ce 100644
+--- a/widget/cocoa/nsNativeThemeCocoa.h
++++ b/widget/cocoa/nsNativeThemeCocoa.h
+@@ -44,6 +44,8 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     eDisclosureButtonOpen
+   };
+ 
++  enum class SpinButton : uint8_t { eUp, eDown };
++
+   enum class SegmentType : uint8_t { eToolbarButton };
+ 
+   enum class OptimumState : uint8_t { eOptimum, eSubOptimum, eSubSubOptimum };
+@@ -80,6 +82,12 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     bool editable = false;
+   };
+ 
++  struct SpinButtonParams {
++    mozilla::Maybe<SpinButton> pressedButton;
++    bool disabled = false;
++    bool insideActiveWindow = false;
++  };
++
+   struct SegmentParams {
+     SegmentType segmentType = SegmentType::eToolbarButton;
+     bool insideActiveWindow = false;
+@@ -133,12 +141,15 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+   };
+ 
+   enum Widget : uint8_t {
+-    eColorFill,  // mozilla::gfx::sRGBColor
+-    eCheckbox,   // CheckboxOrRadioParams
+-    eRadio,      // CheckboxOrRadioParams
+-    eButton,     // ButtonParams
+-    eDropdown,   // DropdownParams
+-    eSegment,    // SegmentParams
++    eColorFill,       // mozilla::gfx::sRGBColor
++    eCheckbox,        // CheckboxOrRadioParams
++    eRadio,           // CheckboxOrRadioParams
++    eButton,          // ButtonParams
++    eDropdown,        // DropdownParams
++    eSpinButtons,     // SpinButtonParams
++    eSpinButtonUp,    // SpinButtonParams
++    eSpinButtonDown,  // SpinButtonParams
++    eSegment,         // SegmentParams
+     eSeparator,
+     eStatusBar,  // bool
+     eGroupBox,
+@@ -168,6 +179,15 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+     static WidgetInfo Dropdown(const DropdownParams& aParams) {
+       return WidgetInfo(Widget::eDropdown, aParams);
+     }
++    static WidgetInfo SpinButtons(const SpinButtonParams& aParams) {
++      return WidgetInfo(Widget::eSpinButtons, aParams);
++    }
++    static WidgetInfo SpinButtonUp(const SpinButtonParams& aParams) {
++      return WidgetInfo(Widget::eSpinButtonUp, aParams);
++    }
++    static WidgetInfo SpinButtonDown(const SpinButtonParams& aParams) {
++      return WidgetInfo(Widget::eSpinButtonDown, aParams);
++    }
+     static WidgetInfo Segment(const SegmentParams& aParams) {
+       return WidgetInfo(Widget::eSegment, aParams);
+     }
+@@ -217,9 +237,9 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+         : mVariant(aParams), mWidget(aWidget) {}
+ 
+     mozilla::Variant<mozilla::gfx::sRGBColor, CheckboxOrRadioParams,
+-                     ButtonParams, DropdownParams, SegmentParams,
+-                     TextFieldParams, ProgressParams, MeterParams, ScaleParams,
+-                     bool>
++                     ButtonParams, DropdownParams, SpinButtonParams,
++                     SegmentParams, TextFieldParams, ProgressParams,
++                     MeterParams, ScaleParams, bool>
+         mVariant;
+ 
+     enum Widget mWidget;
+@@ -321,6 +341,12 @@ class nsNativeThemeCocoa : public mozilla::widget::ThemeCocoa {
+                   const ButtonParams& aParams);
+   void DrawDropdown(CGContextRef context, const HIRect& inBoxRect,
+                     const DropdownParams& aParams);
++  HIThemeButtonDrawInfo SpinButtonDrawInfo(ThemeButtonKind aKind,
++                                           const SpinButtonParams& aParams);
++  void DrawSpinButtons(CGContextRef context, const HIRect& inBoxRect,
++                       const SpinButtonParams& aParams);
++  void DrawSpinButton(CGContextRef context, const HIRect& inBoxRect,
++                      SpinButton aDrawnButton, const SpinButtonParams& aParams);
+   void DrawToolbar(CGContextRef cgContext, const CGRect& inBoxRect,
+                    bool aIsMain);
+   void DrawStatusBar(CGContextRef cgContext, const HIRect& inBoxRect,
+diff --git a/widget/nsNativeTheme.cpp b/widget/nsNativeTheme.cpp
+index a2fa0d883f01..60e94b35d343 100644
+--- a/widget/nsNativeTheme.cpp
++++ b/widget/nsNativeTheme.cpp
+@@ -581,7 +581,5 @@ bool nsNativeTheme::IsWidgetAlwaysNonNative(nsIFrame* aFrame,
+                                             StyleAppearance aAppearance) {
+   return IsWidgetScrollbarPart(aAppearance) ||
+          aAppearance == StyleAppearance::FocusOutline ||
+-         aAppearance == StyleAppearance::SpinnerUpbutton ||
+-         aAppearance == StyleAppearance::SpinnerDownbutton ||
+          (aFrame && aFrame->StyleUI()->mMozTheme == StyleMozTheme::NonNative);
+ }
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index bdfc5809a433..fb4ef0142a39 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -65,7 +65,9 @@ bool nsNativeThemeWin::IsWidgetAlwaysNonNative(nsIFrame* aFrame,
+   return Theme::IsWidgetAlwaysNonNative(aFrame, aAppearance) ||
+          aAppearance == StyleAppearance::Checkbox ||
+          aAppearance == StyleAppearance::Radio ||
+-         aAppearance == StyleAppearance::MozMenulistArrowButton;
++         aAppearance == StyleAppearance::MozMenulistArrowButton ||
++         aAppearance == StyleAppearance::SpinnerUpbutton ||
++         aAppearance == StyleAppearance::SpinnerDownbutton;
+ }
+ 
+ auto nsNativeThemeWin::IsWidgetNonNative(nsIFrame* aFrame,

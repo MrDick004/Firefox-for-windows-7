@@ -1,0 +1,1 @@
+Bug 1957194 - remove blocklist entry for mixed refresh rate monitors on Windows 10 with NVIDIA GPU as it is obsolete r=gfx-reviewers,lsalzman    2025-04-08 15:46:48    962859a0f42e5edc11543917adea2d30f0d345a2

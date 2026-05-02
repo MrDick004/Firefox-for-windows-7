@@ -1,0 +1,486 @@
+diff --git a/gfx/thebes/gfxWindowsPlatform.cpp b/gfx/thebes/gfxWindowsPlatform.cpp
+index f02e3708c314..42876d3a299c 100644
+--- a/gfx/thebes/gfxWindowsPlatform.cpp
++++ b/gfx/thebes/gfxWindowsPlatform.cpp
+@@ -46,6 +46,8 @@
+ #include "mozilla/layers/CanvasChild.h"
+ #include "mozilla/layers/CompositorThread.h"
+ 
++#include "WinUtils.h"
++
+ #include "gfxDWriteFontList.h"
+ #include "gfxDWriteFonts.h"
+ #include "gfxDWriteCommon.h"
+@@ -412,7 +414,7 @@ void gfxWindowsPlatform::InitAcceleration() {
+ 
+   if (XRE_IsParentProcess()) {
+     BOOL dwmEnabled = FALSE;
+-    if (FAILED(::DwmIsCompositionEnabled(&dwmEnabled)) || !dwmEnabled) {
++    if (!WinUtils::dwmIsCompositionEnabledPtr || FAILED(WinUtils::dwmIsCompositionEnabledPtr(&dwmEnabled)) || !dwmEnabled) {
+       gfxVars::SetDwmCompositionEnabled(false);
+     } else {
+       gfxVars::SetDwmCompositionEnabled(true);
+@@ -1800,7 +1802,7 @@ class D3DVsyncSource final : public VsyncSource {
+     DWM_TIMING_INFO vblankTime;
+     // Make sure to init the cbSize, otherwise GetCompositionTiming will fail
+     vblankTime.cbSize = sizeof(DWM_TIMING_INFO);
+-    HRESULT hr = DwmGetCompositionTimingInfo(0, &vblankTime);
++    HRESULT hr = WinUtils::dwmGetCompositionTimingInfoPtr(0, &vblankTime);
+     if (SUCCEEDED(hr)) {
+       UNSIGNED_RATIO refreshRate = vblankTime.rateRefresh;
+       // We get the rate in hertz / time, but we want the rate in ms.
+@@ -1877,7 +1879,7 @@ class D3DVsyncSource final : public VsyncSource {
+     // Make sure to init the cbSize, otherwise
+     // GetCompositionTiming will fail
+     vblankTime.cbSize = sizeof(DWM_TIMING_INFO);
+-    HRESULT hr = DwmGetCompositionTimingInfo(0, &vblankTime);
++    HRESULT hr = WinUtils::dwmGetCompositionTimingInfoPtr(0, &vblankTime);
+     if (!SUCCEEDED(hr)) {
+       return vsync;
+     }
+@@ -1980,7 +1982,7 @@ class D3DVsyncSource final : public VsyncSource {
+         // To mitigate bug 1924932 we only want to use DwmFlush if WaitForVBlank
+         // is disabled, WaitForVBlank is the standard since Vista so we should
+         // probably remove this option entirely.
+-        hr = DwmFlush();
++        hr = WinUtils::dwmFlushProcPtr();
+       }
+       if (!SUCCEEDED(hr)) {
+         // DWMFlush isn't working, fallback to software vsync.
+diff --git a/widget/windows/LegacyJumpListItem.cpp b/widget/windows/LegacyJumpListItem.cpp
+index 8bbe96afb943..adf68e9d954d 100644
+--- a/widget/windows/LegacyJumpListItem.cpp
++++ b/widget/windows/LegacyJumpListItem.cpp
+@@ -500,7 +500,7 @@ nsresult LegacyJumpListLink::GetShellItem(nsCOMPtr<nsILegacyJumpListItem>& item,
+   NS_ENSURE_SUCCESS(rv, rv);
+ 
+   // Create the IShellItem
+-  if (FAILED(SHCreateItemFromParsingName(NS_ConvertASCIItoUTF16(spec).get(),
++  if (FAILED(WinUtils::SHCreateItemFromParsingName(NS_ConvertASCIItoUTF16(spec).get(),
+                                          nullptr, IID_PPV_ARGS(&psi)))) {
+     return NS_ERROR_INVALID_ARG;
+   }
+diff --git a/widget/windows/OSKTabTipManager.cpp b/widget/windows/OSKTabTipManager.cpp
+index a5e8243a82e6..0ec44090aecb 100644
+--- a/widget/windows/OSKTabTipManager.cpp
++++ b/widget/windows/OSKTabTipManager.cpp
+@@ -9,6 +9,7 @@
+ #include "nsDebug.h"
+ #include "mozilla/widget/WinRegistry.h"
+ 
++#include "WinUtils.h"
+ #include <shellapi.h>
+ #include <shlobj.h>
+ #include <windows.h>
+@@ -77,7 +78,7 @@ void OSKTabTipManager::ShowOnScreenKeyboard() {
+             std::wstring(commonProgramFilesPathW6432.data());
+       } else {
+         PWSTR path = nullptr;
+-        HRESULT hres = SHGetKnownFolderPath(FOLDERID_ProgramFilesCommon, 0,
++        HRESULT hres = WinUtils::SHGetKnownFolderPath(FOLDERID_ProgramFilesCommon, 0,
+                                             nullptr, &path);
+         if (FAILED(hres) || !path) {
+           return;
+diff --git a/widget/windows/TaskbarPreview.cpp b/widget/windows/TaskbarPreview.cpp
+index a5d2aeb54016..067f99bf7222 100644
+--- a/widget/windows/TaskbarPreview.cpp
++++ b/widget/windows/TaskbarPreview.cpp
+@@ -144,7 +144,7 @@ TaskbarPreview::Invalidate() {
+   if (!gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled()) return NS_OK;
+ 
+   HWND previewWindow = PreviewWindow();
+-  return FAILED(DwmInvalidateIconicBitmaps(previewWindow)) ? NS_ERROR_FAILURE
++  return FAILED(WinUtils::dwmInvalidateIconicBitmapsPtr(previewWindow)) ? NS_ERROR_FAILURE
+                                                            : NS_OK;
+ }
+ 
+@@ -277,10 +277,10 @@ WindowHook* TaskbarPreview::GetWindowHook() {
+ 
+ void TaskbarPreview::EnableCustomDrawing(HWND aHWND, bool aEnable) {
+   BOOL enabled = aEnable;
+-  DwmSetWindowAttribute(aHWND, DWMWA_FORCE_ICONIC_REPRESENTATION, &enabled,
++  WinUtils::dwmSetWindowAttributePtr(aHWND, DWMWA_FORCE_ICONIC_REPRESENTATION, &enabled,
+                         sizeof(enabled));
+ 
+-  DwmSetWindowAttribute(aHWND, DWMWA_HAS_ICONIC_BITMAP, &enabled,
++  WinUtils::dwmSetWindowAttributePtr(aHWND, DWMWA_HAS_ICONIC_BITMAP, &enabled,
+                         sizeof(enabled));
+ }
+ 
+@@ -375,10 +375,10 @@ TaskbarPreviewCallback::Done(nsISupports* aCanvas, bool aDrawBorder) {
+   HRESULT hr;
+   if (!mIsThumbnail) {
+     POINT pptClient = {0, 0};
+-    hr = DwmSetIconicLivePreviewBitmap(mPreview->PreviewWindow(), hBitmap,
++    hr = WinUtils::dwmSetIconicLivePreviewBitmapPtr(mPreview->PreviewWindow(), hBitmap,
+                                        &pptClient, flags);
+   } else {
+-    hr = DwmSetIconicThumbnail(mPreview->PreviewWindow(), hBitmap, flags);
++    hr = WinUtils::dwmSetIconicThumbnailPtr(mPreview->PreviewWindow(), hBitmap, flags);
+   }
+   MOZ_ASSERT(SUCCEEDED(hr));
+   mozilla::Unused << hr;
+diff --git a/widget/windows/WinUtils.cpp b/widget/windows/WinUtils.cpp
+index f524184daedf..4ef665b004ef 100644
+--- a/widget/windows/WinUtils.cpp
++++ b/widget/windows/WinUtils.cpp
+@@ -81,6 +81,28 @@ NS_IMPL_ISUPPORTS(AsyncDeleteAllFaviconsFromDisk, nsIRunnable)
+ const char FaviconHelper::kJumpListCacheDir[] = "jumpListCache";
+ const char FaviconHelper::kShortcutCacheDir[] = "shortcutCache";
+ 
++// apis available on vista and up.
++WinUtils::SHCreateItemFromParsingNamePtr WinUtils::sCreateItemFromParsingName = nullptr;
++WinUtils::SHGetKnownFolderPathPtr WinUtils::sGetKnownFolderPath = nullptr;
++
++// We just leak these DLL HMODULEs. There's no point in calling FreeLibrary
++// on them during shutdown anyway.
++static const wchar_t kShellLibraryName[] =  L"shell32.dll";
++static HMODULE sShellDll = nullptr;
++static const wchar_t kDwmLibraryName[] = L"dwmapi.dll";
++static HMODULE sDwmDll = nullptr;
++
++WinUtils::DwmExtendFrameIntoClientAreaProc WinUtils::dwmExtendFrameIntoClientAreaPtr = nullptr;
++WinUtils::DwmIsCompositionEnabledProc WinUtils::dwmIsCompositionEnabledPtr = nullptr;
++WinUtils::DwmSetIconicThumbnailProc WinUtils::dwmSetIconicThumbnailPtr = nullptr;
++WinUtils::DwmSetIconicLivePreviewBitmapProc WinUtils::dwmSetIconicLivePreviewBitmapPtr = nullptr;
++WinUtils::DwmGetWindowAttributeProc WinUtils::dwmGetWindowAttributePtr = nullptr;
++WinUtils::DwmSetWindowAttributeProc WinUtils::dwmSetWindowAttributePtr = nullptr;
++WinUtils::DwmInvalidateIconicBitmapsProc WinUtils::dwmInvalidateIconicBitmapsPtr = nullptr;
++WinUtils::DwmDefWindowProcProc WinUtils::dwmDwmDefWindowProcPtr = nullptr;
++WinUtils::DwmGetCompositionTimingInfoProc WinUtils::dwmGetCompositionTimingInfoPtr = nullptr;
++WinUtils::DwmFlushProc WinUtils::dwmFlushProcPtr = nullptr;
++
+ struct CoTaskMemFreePolicy {
+   void operator()(void* aPtr) { ::CoTaskMemFree(aPtr); }
+ };
+@@ -95,6 +117,23 @@ static GetDpiForWindowProc sGetDpiForWindow = NULL;
+ 
+ /* static */
+ void WinUtils::Initialize() {
++  if (!sDwmDll) {
++    sDwmDll = ::LoadLibraryW(kDwmLibraryName);
++
++    if (sDwmDll) {
++      dwmExtendFrameIntoClientAreaPtr = (DwmExtendFrameIntoClientAreaProc)::GetProcAddress(sDwmDll, "DwmExtendFrameIntoClientArea");
++      dwmIsCompositionEnabledPtr = (DwmIsCompositionEnabledProc)::GetProcAddress(sDwmDll, "DwmIsCompositionEnabled");
++      dwmSetIconicThumbnailPtr = (DwmSetIconicThumbnailProc)::GetProcAddress(sDwmDll, "DwmSetIconicThumbnail");
++      dwmSetIconicLivePreviewBitmapPtr = (DwmSetIconicLivePreviewBitmapProc)::GetProcAddress(sDwmDll, "DwmSetIconicLivePreviewBitmap");
++      dwmGetWindowAttributePtr = (DwmGetWindowAttributeProc)::GetProcAddress(sDwmDll, "DwmGetWindowAttribute");
++      dwmSetWindowAttributePtr = (DwmSetWindowAttributeProc)::GetProcAddress(sDwmDll, "DwmSetWindowAttribute");
++      dwmInvalidateIconicBitmapsPtr = (DwmInvalidateIconicBitmapsProc)::GetProcAddress(sDwmDll, "DwmInvalidateIconicBitmaps");
++      dwmDwmDefWindowProcPtr = (DwmDefWindowProcProc)::GetProcAddress(sDwmDll, "DwmDefWindowProc");
++      dwmGetCompositionTimingInfoPtr = (DwmGetCompositionTimingInfoProc)::GetProcAddress(sDwmDll, "DwmGetCompositionTimingInfo");
++      dwmFlushProcPtr = (DwmFlushProc)::GetProcAddress(sDwmDll, "DwmFlush");
++    }
++  }
++
+   // Dpi-Awareness is not supported with Win32k Lockdown enabled, so we don't
+   // initialize DPI-related members and assert later that nothing accidently
+   // uses these static members
+@@ -684,6 +723,56 @@ MSG WinUtils::InitMSG(UINT aMessage, WPARAM wParam, LPARAM lParam, HWND aWnd) {
+   return msg;
+ }
+ 
++/* static */
++HRESULT
++WinUtils::SHCreateItemFromParsingName(PCWSTR pszPath, IBindCtx *pbc,
++                                      REFIID riid, void **ppv)
++{
++  if (sCreateItemFromParsingName) {
++    return sCreateItemFromParsingName(pszPath, pbc, riid, ppv);
++  }
++
++  if (!sShellDll) {
++    sShellDll = ::LoadLibraryW(kShellLibraryName);
++    if (!sShellDll) {
++      return false;
++    }
++  }
++
++  sCreateItemFromParsingName = (SHCreateItemFromParsingNamePtr)
++    GetProcAddress(sShellDll, "SHCreateItemFromParsingName");
++  if (!sCreateItemFromParsingName)
++    return E_FAIL;
++
++  return sCreateItemFromParsingName(pszPath, pbc, riid, ppv);
++}
++
++/* static */
++HRESULT 
++WinUtils::SHGetKnownFolderPath(REFKNOWNFOLDERID rfid,
++                               DWORD dwFlags,
++                               HANDLE hToken,
++                               PWSTR *ppszPath)
++{
++  if (sGetKnownFolderPath) {
++    return sGetKnownFolderPath(rfid, dwFlags, hToken, ppszPath);
++  }
++
++  if (!sShellDll) {
++    sShellDll = ::LoadLibraryW(kShellLibraryName);
++    if (!sShellDll) {
++      return false;
++    }
++  }
++
++  sGetKnownFolderPath = (SHGetKnownFolderPathPtr)
++    GetProcAddress(sShellDll, "SHGetKnownFolderPath");
++  if (!sGetKnownFolderPath)
++    return E_FAIL;
++
++  return sGetKnownFolderPath(rfid, dwFlags, hToken, ppszPath);
++}
++
+ #ifdef MOZ_PLACES
+ NS_IMETHODIMP
+ myDownloadObserver::OnDownloadComplete(nsIDownloader* downloader,
+diff --git a/widget/windows/WinUtils.h b/widget/windows/WinUtils.h
+index 5c82c777cdfc..b4a29ffc412d 100644
+--- a/widget/windows/WinUtils.h
++++ b/widget/windows/WinUtils.h
+@@ -401,6 +401,21 @@ class WinUtils {
+ 
+   static bool GetIsMouseFromTouch(EventMessage aEventType);
+ 
++  /**
++   * SHCreateItemFromParsingName() calls native SHCreateItemFromParsingName()
++   * API which is available on Vista and up.
++   */
++  static HRESULT SHCreateItemFromParsingName(PCWSTR pszPath, IBindCtx *pbc,
++                                             REFIID riid, void **ppv);
++
++  /**
++   * SHGetKnownFolderPath() calls native SHGetKnownFolderPath()
++   * API which is available on Vista and up.
++   */
++  static HRESULT SHGetKnownFolderPath(REFKNOWNFOLDERID rfid,
++                                      DWORD dwFlags,
++                                      HANDLE hToken,
++                                      PWSTR *ppszPath);
+   /**
+    * ConvertHRGNToRegion converts a Windows HRGN to an LayoutDeviceIntRegion.
+    *
+@@ -484,6 +499,31 @@ class WinUtils {
+    */
+   static bool RunningFromANetworkDrive();
+ 
++  /**
++  * dwmapi.dll function typedefs and declarations
++  */
++  typedef HRESULT (WINAPI*DwmExtendFrameIntoClientAreaProc)(HWND hWnd, const MARGINS *pMarInset);
++  typedef HRESULT (WINAPI*DwmIsCompositionEnabledProc)(BOOL *pfEnabled);
++  typedef HRESULT (WINAPI*DwmSetIconicThumbnailProc)(HWND hWnd, HBITMAP hBitmap, DWORD dwSITFlags);
++  typedef HRESULT (WINAPI*DwmSetIconicLivePreviewBitmapProc)(HWND hWnd, HBITMAP hBitmap, POINT *pptClient, DWORD dwSITFlags);
++  typedef HRESULT (WINAPI*DwmGetWindowAttributeProc)(HWND hWnd, DWORD dwAttribute, LPCVOID pvAttribute, DWORD cbAttribute);
++  typedef HRESULT (WINAPI*DwmSetWindowAttributeProc)(HWND hWnd, DWORD dwAttribute, LPCVOID pvAttribute, DWORD cbAttribute);
++  typedef HRESULT (WINAPI*DwmInvalidateIconicBitmapsProc)(HWND hWnd);
++  typedef HRESULT (WINAPI*DwmDefWindowProcProc)(HWND hWnd, UINT msg, LPARAM lParam, WPARAM wParam, LRESULT *aRetValue);
++  typedef HRESULT (WINAPI*DwmGetCompositionTimingInfoProc)(HWND hWnd, DWM_TIMING_INFO *info);
++  typedef HRESULT (WINAPI*DwmFlushProc)(void);
++
++  static DwmExtendFrameIntoClientAreaProc dwmExtendFrameIntoClientAreaPtr;
++  static DwmIsCompositionEnabledProc dwmIsCompositionEnabledPtr;
++  static DwmSetIconicThumbnailProc dwmSetIconicThumbnailPtr;
++  static DwmSetIconicLivePreviewBitmapProc dwmSetIconicLivePreviewBitmapPtr;
++  static DwmGetWindowAttributeProc dwmGetWindowAttributePtr;
++  static DwmSetWindowAttributeProc dwmSetWindowAttributePtr;
++  static DwmInvalidateIconicBitmapsProc dwmInvalidateIconicBitmapsPtr;
++  static DwmDefWindowProcProc dwmDwmDefWindowProcPtr;
++  static DwmGetCompositionTimingInfoProc dwmGetCompositionTimingInfoPtr;
++  static DwmFlushProc dwmFlushProcPtr;
++
+   static void Initialize();
+ 
+   static nsresult WriteBitmap(nsIFile* aFile,
+@@ -574,6 +614,17 @@ class WinUtils {
+   static nsresult GetProcessImageName(DWORD aProcessId, nsAString& aName);
+ 
+  private:
++  typedef HRESULT (WINAPI * SHCreateItemFromParsingNamePtr)(PCWSTR pszPath,
++                                                            IBindCtx *pbc,
++                                                            REFIID riid,
++                                                            void **ppv);
++  static SHCreateItemFromParsingNamePtr sCreateItemFromParsingName;
++  typedef HRESULT (WINAPI * SHGetKnownFolderPathPtr)(REFKNOWNFOLDERID rfid,
++                                                     DWORD dwFlags,
++                                                     HANDLE hToken,
++                                                     PWSTR *ppszPath);
++  static SHGetKnownFolderPathPtr sGetKnownFolderPath;
++
+   static WhitelistVec BuildWhitelist();
+ 
+  public:
+diff --git a/widget/windows/WinWindowOcclusionTracker.cpp b/widget/windows/WinWindowOcclusionTracker.cpp
+index 0178ac0716db..bfc8d4cdd281 100644
+--- a/widget/windows/WinWindowOcclusionTracker.cpp
++++ b/widget/windows/WinWindowOcclusionTracker.cpp
+@@ -582,7 +582,7 @@ bool WinWindowOcclusionTracker::IsWindowVisibleAndFullyOpaque(
+   // size of the desktop. It's usually behind Chrome windows in the z-order,
+   // but using a remote desktop can move it up in the z-order. So, ignore them.
+   DWORD reason;
+-  if (SUCCEEDED(::DwmGetWindowAttribute(aHwnd, DWMWA_CLOAKED, &reason,
++  if (WinUtils::dwmGetWindowAttributePtr && SUCCEEDED(WinUtils::dwmGetWindowAttributePtr(aHwnd, DWMWA_CLOAKED, &reason,
+                                         sizeof(reason))) &&
+       reason != 0) {
+     return false;
+diff --git a/widget/windows/filedialog/WinFileDialogCommands.cpp b/widget/windows/filedialog/WinFileDialogCommands.cpp
+index 00ab165d519d..197fbe693bd2 100644
+--- a/widget/windows/filedialog/WinFileDialogCommands.cpp
++++ b/widget/windows/filedialog/WinFileDialogCommands.cpp
+@@ -85,7 +85,7 @@ struct Applicator {
+   }
+   HRESULT Apply(SetFolder const& c) {
+     RefPtr<IShellItem> folder;
+-    if (SUCCEEDED(SHCreateItemFromParsingName(
++    if (SUCCEEDED(WinUtils::SHCreateItemFromParsingName(
+             c.path().get(), nullptr, IID_IShellItem, getter_AddRefs(folder)))) {
+       return dialog->SetFolder(folder);
+     }
+diff --git a/widget/windows/nsUXThemeData.cpp b/widget/windows/nsUXThemeData.cpp
+index 861ba632e79d..ddee1788e8f6 100644
+--- a/widget/windows/nsUXThemeData.cpp
++++ b/widget/windows/nsUXThemeData.cpp
+@@ -194,7 +194,7 @@ void nsUXThemeData::UpdateTitlebarInfo(HWND aWnd) {
+   if (!sTitlebarInfoPopulatedAero &&
+       gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled()) {
+     RECT captionButtons;
+-    if (SUCCEEDED(DwmGetWindowAttribute(aWnd, DWMWA_CAPTION_BUTTON_BOUNDS,
++    if (SUCCEEDED(WinUtils::dwmGetWindowAttributePtr(aWnd, DWMWA_CAPTION_BUTTON_BOUNDS,
+                                         &captionButtons,
+                                         sizeof(captionButtons)))) {
+       sCommandButtonBoxMetrics.cx =
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 7e33b5c0cce3..2e8d2a59d834 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -668,7 +668,10 @@ class InitializeVirtualDesktopManagerTask : public Task {
+ // Ground-truth query: does Windows claim the window is cloaked right now?
+ static bool IsCloaked(HWND hwnd) {
+   DWORD cloakedState;
+-  HRESULT hr = ::DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloakedState,
++  if (!WinUtils::dwmGetWindowAttributePtr) {
++    return false;
++  }
++  HRESULT hr = WinUtils::dwmGetWindowAttributePtr(hwnd, DWMWA_CLOAKED, &cloakedState,
+                                        sizeof(cloakedState));
+ 
+   if (FAILED(hr)) {
+@@ -1113,16 +1116,16 @@ const wchar_t kShellLibraryName[] =  L"shell32.dll";
+   // that we have a mWnd.
+   mDefaultScale = -1.0;
+ 
+-  if (mIsRTL) {
++  if (mIsRTL && WinUtils::dwmSetWindowAttributePtr) {
+     DWORD dwAttribute = TRUE;
+-    DwmSetWindowAttribute(mWnd, DWMWA_NONCLIENT_RTL_LAYOUT, &dwAttribute,
++    WinUtils::dwmSetWindowAttributePtr(mWnd, DWMWA_NONCLIENT_RTL_LAYOUT, &dwAttribute,
+                           sizeof dwAttribute);
+   }
+ 
+   // Default to the system color scheme unless getting told otherwise.
+   SetColorScheme(Nothing());
+ 
+-  if (mOpeningAnimationSuppressed) {
++  if (mOpeningAnimationSuppressed && WinUtils::dwmSetWindowAttributePtr) {
+     SuppressAnimation(true);
+   }
+ 
+@@ -1211,9 +1214,9 @@ const wchar_t kShellLibraryName[] =  L"shell32.dll";
+ 
+ void nsWindow::LocalesChanged() {
+   bool isRTL = intl::LocaleService::GetInstance()->IsAppLocaleRTL();
+-  if (mIsRTL != isRTL) {
++  if (mIsRTL != isRTL && WinUtils::dwmSetWindowAttributePtr) {
+     DWORD dwAttribute = isRTL;
+-    DwmSetWindowAttribute(mWnd, DWMWA_NONCLIENT_RTL_LAYOUT, &dwAttribute,
++    WinUtils::dwmSetWindowAttributePtr(mWnd, DWMWA_NONCLIENT_RTL_LAYOUT, &dwAttribute,
+                           sizeof dwAttribute);
+     mIsRTL = isRTL;
+   }
+@@ -1763,7 +1766,7 @@ void nsWindow::Show(bool aState) {
+     }
+   }
+ 
+-  if (mOpeningAnimationSuppressed) {
++  if (mOpeningAnimationSuppressed && WinUtils::dwmSetWindowAttributePtr) {
+     SuppressAnimation(false);
+   }
+ }
+@@ -2268,7 +2271,7 @@ void nsWindow::MoveToWorkspace(const nsAString& workspaceID) {
+ 
+ void nsWindow::SuppressAnimation(bool aSuppress) {
+   DWORD dwAttribute = aSuppress ? TRUE : FALSE;
+-  DwmSetWindowAttribute(mWnd, DWMWA_TRANSITIONS_FORCEDISABLED, &dwAttribute,
++  WinUtils::dwmSetWindowAttributePtr(mWnd, DWMWA_TRANSITIONS_FORCEDISABLED, &dwAttribute,
+                         sizeof dwAttribute);
+ }
+ 
+@@ -2629,9 +2632,9 @@ void nsWindow::SetColorScheme(const Maybe<ColorScheme>& aScheme) {
+   }
+   BOOL dark =
+       aScheme.valueOrFrom(LookAndFeel::SystemColorScheme) == ColorScheme::Dark;
+-  DwmSetWindowAttribute(mWnd, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, &dark,
++  WinUtils::dwmSetWindowAttributePtr(mWnd, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, &dark,
+                         sizeof dark);
+-  DwmSetWindowAttribute(mWnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark,
++  WinUtils::dwmSetWindowAttributePtr(mWnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark,
+                         sizeof dark);
+ }
+ 
+@@ -2640,6 +2643,9 @@ void nsWindow::SetMicaBackdrop(bool aEnabled) {
+     return;
+   }
+ 
++  if (!WinUtils::dwmSetWindowAttributePtr) {
++    return;
++  }
+   mMicaBackdrop = aEnabled;
+   UpdateMicaBackdrop();
+ }
+@@ -2659,7 +2665,7 @@ void nsWindow::UpdateMicaBackdrop(bool aForce) {
+         return DWMSBT_TABBEDWINDOW;
+     }
+   }();
+-  ::DwmSetWindowAttribute(mWnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop,
++  WinUtils::dwmSetWindowAttributePtr(mWnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop,
+                           sizeof backdrop);
+   if (IsPopup()) {
+     // For popups, we need a couple extra tweaks:
+@@ -2670,7 +2676,7 @@ void nsWindow::UpdateMicaBackdrop(bool aForce) {
+     //    acrylic). See also the WM_NCACTIVATE implementation.
+     const DWM_WINDOW_CORNER_PREFERENCE corner =
+         useBackdrop ? DWMWCP_ROUND : DWMWCP_DEFAULT;
+-    ::DwmSetWindowAttribute(mWnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner,
++    WinUtils::dwmSetWindowAttributePtr(mWnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner,
+                             sizeof corner);
+     ::PostMessageW(mWnd, WM_NCACTIVATE, TRUE, -1);
+   }
+@@ -3277,8 +3283,8 @@ void nsWindow::UpdateGlass() {
+ 
+   // Extends the window frame behind the client area
+   if (gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled()) {
+-    DwmExtendFrameIntoClientArea(mWnd, &margins);
+-    DwmSetWindowAttribute(mWnd, DWMWA_NCRENDERING_POLICY, &policy,
++    WinUtils::dwmExtendFrameIntoClientAreaPtr(mWnd, &margins);
++    WinUtils::dwmSetWindowAttributePtr(mWnd, DWMWA_NCRENDERING_POLICY, &policy,
+                           sizeof policy);
+   }
+ }
+@@ -5140,7 +5146,7 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+       /* We don't do this for win10 glass with a custom titlebar,
+        * in order to avoid the caption buttons breaking. */
+       !(IsWin10OrLater() && HasGlass()) &&
+-      DwmDefWindowProc(mWnd, msg, wParam, lParam, &dwmHitResult)) {
++      WinUtils::dwmDwmDefWindowProcPtr(mWnd, msg, wParam, lParam, &dwmHitResult)) {
+     *aRetValue = dwmHitResult;
+     return true;
+   }
+@@ -6250,7 +6256,7 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+       // updates when the value actually changes
+       if (XRE_IsParentProcess()) {
+         BOOL dwmEnabled = FALSE;
+-        if (FAILED(::DwmIsCompositionEnabled(&dwmEnabled)) || !dwmEnabled) {
++        if (!WinUtils::dwmIsCompositionEnabledPtr || FAILED(WinUtils::dwmIsCompositionEnabledPtr(&dwmEnabled)) || !dwmEnabled) {
+           gfxVars::SetDwmCompositionEnabled(false);
+         } else {
+           gfxVars::SetDwmCompositionEnabled(true);

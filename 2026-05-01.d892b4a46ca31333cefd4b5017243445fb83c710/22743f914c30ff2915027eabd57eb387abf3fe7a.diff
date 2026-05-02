@@ -1,0 +1,278 @@
+diff --git a/layout/xul/nsMenuPopupFrame.cpp b/layout/xul/nsMenuPopupFrame.cpp
+index 8ebb8b01d5fe..b41a66670782 100644
+--- a/layout/xul/nsMenuPopupFrame.cpp
++++ b/layout/xul/nsMenuPopupFrame.cpp
+@@ -220,16 +220,21 @@ widget::PopupLevel nsMenuPopupFrame::GetPopupLevel(bool aIsNoAutoHide) const {
+   }
+ 
+   // If the level attribute has been set, use that.
+-  static Element::AttrValuesArray strings[] = {nsGkAtoms::top,
+-                                               nsGkAtoms::parent, nullptr};
++  static Element::AttrValuesArray strings[] = {
++      nsGkAtoms::top, nsGkAtoms::parent, nsGkAtoms::floating, nullptr};
+   switch (mContent->AsElement()->FindAttrValueIn(
+       kNameSpaceID_None, nsGkAtoms::level, strings, eCaseMatters)) {
+     case 0:
+       return PopupLevel::Top;
+     case 1:
+       return PopupLevel::Parent;
+-    default:
+-      break;
++    case 2:
++      return PopupLevel::Floating;
++  }
++
++  // Panels with titlebars most likely want to be floating popups.
++  if (mContent->AsElement()->HasAttr(nsGkAtoms::titlebar)) {
++    return PopupLevel::Floating;
+   }
+ 
+   // If this panel is a noautohide panel, the default is the parent level.
+@@ -276,6 +281,20 @@ nsresult nsMenuPopupFrame::CreateWidgetForView(nsView* aView) {
+     }
+   }
+ 
++  nsAutoString title;
++  if (IsNoAutoHide() &&
++      mContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::titlebar,
++                                         nsGkAtoms::normal, eCaseMatters)) {
++    widgetData.mBorderStyle = widget::BorderStyle::Title;
++
++    mContent->AsElement()->GetAttr(nsGkAtoms::label, title);
++    if (mContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::close,
++                                           nsGkAtoms::_true, eCaseMatters)) {
++      widgetData.mBorderStyle =
++          widgetData.mBorderStyle | widget::BorderStyle::Close;
++    }
++  }
++
+   const bool remote = HasRemoteContent();
+ 
+   const auto mode = nsLayoutUtils::GetFrameTransparency(this, this);
+@@ -309,6 +328,12 @@ nsresult nsMenuPopupFrame::CreateWidgetForView(nsView* aView) {
+   widget->SetTransparencyMode(mode);
+   PropagateStyleToWidget();
+ 
++  // most popups don't have a title so avoid setting the title if there isn't
++  // one
++  if (!title.IsEmpty()) {
++    widget->SetTitle(title);
++  }
++
+   return NS_OK;
+ }
+ 
+diff --git a/layout/xul/test/chrome.toml b/layout/xul/test/chrome.toml
+index f2262b3086ab..6588db2ea4bb 100644
+--- a/layout/xul/test/chrome.toml
++++ b/layout/xul/test/chrome.toml
+@@ -11,6 +11,7 @@ support-files = [
+   "windowminmaxsize8.xhtml",
+   "windowminmaxsize9.xhtml",
+   "windowminmaxsize10.xhtml",
++  "titledpanelwindow.xhtml",
+ ]
+ 
+ ["test_bug159346.xhtml"]
+diff --git a/layout/xul/test/test_windowminmaxsize.xhtml b/layout/xul/test/test_windowminmaxsize.xhtml
+index 20f2109c80fb..187732dd3d63 100644
+--- a/layout/xul/test/test_windowminmaxsize.xhtml
++++ b/layout/xul/test/test_windowminmaxsize.xhtml
+@@ -125,29 +125,59 @@ function doPanelTest(panel)
+ function nextPopupTest(panel)
+ {
+   if (++gTestId >= popupTests.length) {
+-    SimpleTest.finish();
+-    return;
++    // Next, check a panel that has a titlebar to ensure that it is accounted for
++    // properly in the size.
++    var titledPanelWindow = window.browsingContext.topChromeWindow.open("titledpanelwindow.xhtml", "_blank", "chrome,resizable=yes");
++    SimpleTest.waitForFocus(titledPanelWindowOpened, titledPanelWindow);
+   }
+-
+-  function setStyle(attr) {
+-    if (attr in popupTests[gTestId])
+-      panel.style[attr] = popupTests[gTestId][attr] + "px";
+-    else
+-      panel.style[attr] = "";
++  else {
++    function setStyle(attr) {
++      if (attr in popupTests[gTestId])
++        panel.style[attr] = popupTests[gTestId][attr] + "px";
++      else
++        panel.style[attr] = "";
++    }
++    setStyle("minWidth");
++    setStyle("minHeight");
++    setStyle("maxWidth");
++    setStyle("maxHeight");
++
++    // Prevent event loop starvation as a result of popup events being
++    // synchronous. See bug 1131576.
++    SimpleTest.executeSoon(() => {
++      // Non-chrome shells require focus to open a popup.
++      SimpleTest.waitForFocus(() => { panel.openPopup() });
++    });
+   }
+-  setStyle("minWidth");
+-  setStyle("minHeight");
+-  setStyle("maxWidth");
+-  setStyle("maxHeight");
++}
+ 
+-  // Prevent event loop starvation as a result of popup events being
+-  // synchronous. See bug 1131576.
++function titledPanelWindowOpened(panelwindow)
++{
++  info("titledPanelWindowOpened");
++  var panel = panelwindow.document.documentElement.firstChild;
++  panel.addEventListener("popupshown", () => doTitledPanelTest(panel));
++  panel.addEventListener("popuphidden", () => done(panelwindow));
++  // See above as for why.
+   SimpleTest.executeSoon(() => {
+-    // Non-chrome shells require focus to open a popup.
+-    SimpleTest.waitForFocus(() => { panel.openPopup() });
++    SimpleTest.waitForFocus(() => { panel.openPopup() }, panelwindow);
+   });
+ }
+ 
++function doTitledPanelTest(panel)
++{
++  info("doTitledPanelTest");
++  var rect = panel.getBoundingClientRect();
++  is(rect.width, 120, "panel with titlebar width");
++  is(rect.height, 140, "panel with titlebar height");
++  panel.hidePopup();
++}
++
++function done(panelwindow)
++{
++  panelwindow.close();
++  SimpleTest.finish();
++}
++
+ ]]>
+ </script>
+ 
+diff --git a/layout/xul/test/titledpanelwindow.xhtml b/layout/xul/test/titledpanelwindow.xhtml
+new file mode 100644
+index 000000000000..4289f8deab92
+--- /dev/null
++++ b/layout/xul/test/titledpanelwindow.xhtml
+@@ -0,0 +1,5 @@
++<?xml-stylesheet href='chrome://global/skin' type='text/css'?>
++<window xmlns='http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul' align='start' pack='start' style='-moz-appearance: none; margin: 0; padding: 0; border: 0;'>
++  <panel noautohide='true' titlebar='normal' style="background: white; min-width: 120px; min-height: 140px"/>
++  <label value='Test'/>
++</window>
+diff --git a/widget/InitData.h b/widget/InitData.h
+index aed5e0a55135..1498feed9aef 100644
+--- a/widget/InitData.h
++++ b/widget/InitData.h
+@@ -37,6 +37,11 @@ enum class PopupLevel : uint8_t {
+   // The popup appears just above its parent and maintains its position
+   // relative to the parent.
+   Parent,
++  // The popup is a floating popup used for tool palettes. A parent window must
++  // be specified, but a platform implementation need not use this. On Windows,
++  // floating is generally equivalent to parent. On Mac, floating puts the
++  // popup at toplevel, but it will hide when the application is deactivated.
++  Floating,
+   // The popup appears on top of other windows, including those of other
+   // applications.
+   Top,
+diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
+index 4b135e75658f..1f6038369ee0 100644
+--- a/widget/cocoa/nsCocoaWindow.mm
++++ b/widget/cocoa/nsCocoaWindow.mm
+@@ -2860,10 +2860,18 @@ void nsCocoaWindow::SetPopupWindowLevel() {
+   if (!mWindow) {
+     return;
+   }
+-  // Otherwise, this is a top-level or parent popup. Parent popups always
+-  // appear just above their parent and essentially ignore the level.
+-  mWindow.level = NSPopUpMenuWindowLevel;
+-  mWindow.hidesOnDeactivate = NO;
++
++  // Floating popups are at the floating level and hide when the window is
++  // deactivated.
++  if (mPopupLevel == PopupLevel::Floating) {
++    mWindow.level = NSFloatingWindowLevel;
++    mWindow.hidesOnDeactivate = YES;
++  } else {
++    // Otherwise, this is a top-level or parent popup. Parent popups always
++    // appear just above their parent and essentially ignore the level.
++    mWindow.level = NSPopUpMenuWindowLevel;
++    mWindow.hidesOnDeactivate = NO;
++  }
+ }
+ 
+ bool nsCocoaWindow::GetEditCommands(NativeKeyBindingsType aType,
+diff --git a/widget/nsBaseWidget.h b/widget/nsBaseWidget.h
+index 756f2ab7ebc7..b16d25ee7c8e 100644
+--- a/widget/nsBaseWidget.h
++++ b/widget/nsBaseWidget.h
+@@ -367,6 +367,13 @@ class nsBaseWidget : public nsIWidget, public nsSupportsWeakReference {
+ 
+   PopupLevel GetPopupLevel() { return mPopupLevel; }
+ 
++  // return true if this is a popup widget with a native titlebar
++  bool IsPopupWithTitleBar() const {
++    return (mWindowType == WindowType::Popup &&
++            mBorderStyle != BorderStyle::Default &&
++            mBorderStyle & BorderStyle::Title);
++  }
++
+   const SizeConstraints GetSizeConstraints() override;
+   void SetSizeConstraints(const SizeConstraints& aConstraints) override;
+ 
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index a1d2e5fbc962..bc6a2af3a172 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -1310,6 +1310,16 @@ DWORD nsWindow::WindowStyle() {
+   }
+ 
+   style &= ~WindowStylesRemovedForBorderStyle(mBorderStyle);
++
++  if (mBorderStyle != BorderStyle::Default &&
++      mBorderStyle != BorderStyle::All) {
++    if (IsPopupWithTitleBar()) {
++      style |= WS_CAPTION;
++      if (mBorderStyle & BorderStyle::Close) {
++        style |= WS_SYSMENU;
++      }
++    }
++  }
+ 
+   if (mIsChildWindow) {
+     style |= WS_CLIPCHILDREN;
+@@ -3657,7 +3664,7 @@ LayoutDeviceIntPoint nsWindow::WidgetToScreenOffset() {
+ }
+ 
+ LayoutDeviceIntMargin nsWindow::NormalSizeModeClientToWindowMargin() {
+-  if (mWindowType == WindowType::Popup) {
++  if (mWindowType == WindowType::Popup && !IsPopupWithTitleBar()) {
+     return {};
+   }
+ 
+diff --git a/xpcom/ds/StaticAtoms.py b/xpcom/ds/StaticAtoms.py
+index b0864081c0e7..684959f338eb 100644
+--- a/xpcom/ds/StaticAtoms.py
++++ b/xpcom/ds/StaticAtoms.py
+@@ -453,6 +453,7 @@ STATIC_ATOMS = [
+     Atom("flags", "flags"),
+     Atom("flex", "flex"),
+     Atom("flip", "flip"),
++    Atom("floating", "floating"),
+     Atom("floor", "floor"),
+     Atom("flowlength", "flowlength"),
+     Atom("focus", "focus"),
+@@ -1243,6 +1244,7 @@ STATIC_ATOMS = [
+     Atom("thumb", "thumb"),
+     Atom("time", "time"),
+     Atom("title", "title"),
++    Atom("titlebar", "titlebar"),
+     Atom("titletip", "titletip"),
+     Atom("toggle", "toggle"),
+     Atom("togglepopover", "togglepopover"),

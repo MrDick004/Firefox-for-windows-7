@@ -1,0 +1,1 @@
+Bug 1934375 - Take over whole non-client area for PiP windows again, for now. r=win-reviewers,gstoll    2025-01-31 02:36:09    39c490cb6d24a650d294eaa7ad7da037d1b1bdd5

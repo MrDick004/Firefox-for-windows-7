@@ -1,0 +1,13 @@
+diff --git a/gfx/webrender_bindings/DCLayerTree.cpp b/gfx/webrender_bindings/DCLayerTree.cpp
+index ed5c27f04152..bc8eee613ba1 100644
+--- a/gfx/webrender_bindings/DCLayerTree.cpp
++++ b/gfx/webrender_bindings/DCLayerTree.cpp
+@@ -817,7 +817,7 @@ bool RenderCompositorANGLE::UseCompositor() const {
+ 
+ bool DCLayerTree::UseLayerCompositor() const {
+ // Only allow the layer compositor in nightly builds, for now.
+-#ifdef NIGHTLY_BUILD
++#if 0
+   return UseNativeCompositor() &&
+          StaticPrefs::gfx_webrender_layer_compositor_AtStartup();
+ #else

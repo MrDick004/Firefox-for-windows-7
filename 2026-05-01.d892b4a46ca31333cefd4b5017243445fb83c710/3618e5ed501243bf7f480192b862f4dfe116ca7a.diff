@@ -1,0 +1,963 @@
+diff --git a/dom/base/nsContentUtils.cpp b/dom/base/nsContentUtils.cpp
+index 940ed6a51b20..a30b9a639727 100644
+--- a/dom/base/nsContentUtils.cpp
++++ b/dom/base/nsContentUtils.cpp
+@@ -1044,9 +1044,6 @@ nsresult nsContentUtils::Init() {
+     RunOnShutdown(
+         [&] { glean_pings::UseCounters.Submit("app_shutdown_confirmed"_ns); },
+         ShutdownPhase::AppShutdownConfirmed);
+-
+-    // On child process, this is initialized in ContentChild.
+-    LookAndFeel::EnsureInit();
+   }
+ 
+   RefPtr<UserInteractionObserver> uio = new UserInteractionObserver();
+diff --git a/dom/ipc/ContentChild.cpp b/dom/ipc/ContentChild.cpp
+index a06429259401..f6f2ff577349 100644
+--- a/dom/ipc/ContentChild.cpp
++++ b/dom/ipc/ContentChild.cpp
+@@ -666,7 +666,6 @@ mozilla::ipc::IPCResult ContentChild::RecvSetXPCOMProcessAttributes(
+ 
+   gfx::gfxVars::SetValuesForInitialize(aXPCOMInit.gfxNonDefaultVarUpdates());
+   PerfStats::SetCollectionMask(aXPCOMInit.perfStatsMask());
+-  LookAndFeel::EnsureInit();
+   InitSharedUASheets(std::move(aSharedUASheetHandle), aSharedUASheetAddress);
+   InitXPCOM(std::move(aXPCOMInit), aInitialData,
+             aIsReadyForBackgroundProcessing);
+@@ -681,6 +680,16 @@ mozilla::ipc::IPCResult ContentChild::RecvSetXPCOMProcessAttributes(
+   return IPC_OK();
+ }
+ 
++class nsGtkNativeInitRunnable : public Runnable {
++ public:
++  nsGtkNativeInitRunnable() : Runnable("nsGtkNativeInitRunnable") {}
++
++  NS_IMETHOD Run() override {
++    LookAndFeel::NativeInit();
++    return NS_OK;
++  }
++};
++
+ void ContentChild::Init(mozilla::ipc::UntypedEndpoint&& aEndpoint,
+                         const char* aParentBuildID, bool aIsForBrowser) {
+ #ifdef MOZ_WIDGET_GTK
+@@ -1342,6 +1351,14 @@ void ContentChild::InitXPCOM(
+     XPCOMInitData&& aXPCOMInit,
+     const mozilla::dom::ipc::StructuredCloneData& aInitialData,
+     bool aIsReadyForBackgroundProcessing) {
++#ifdef MOZ_WIDGET_GTK
++  // LookAndFeel::NativeInit takes a long time to run on Linux, here we schedule
++  // it as soon as possible after BackgroundChild::Startup to give
++  // it chance to run ahead of ConstructBrowser
++  nsCOMPtr<nsIRunnable> event = new nsGtkNativeInitRunnable();
++  NS_DispatchToMainThreadQueue(event.forget(), EventQueuePriority::Idle);
++#endif
++
+ #if defined(XP_WIN)
+   // DLL services untrusted modules processing depends on
+   // BackgroundChild::Startup having been called
+diff --git a/layout/style/GeckoBindings.cpp b/layout/style/GeckoBindings.cpp
+index f23bb2725265..4549d81ecf36 100644
+--- a/layout/style/GeckoBindings.cpp
++++ b/layout/style/GeckoBindings.cpp
+@@ -310,6 +310,7 @@ bool Gecko_AnimationNameMayBeReferencedFromStyle(
+ 
+ float Gecko_GetScrollbarInlineSize(const nsPresContext* aPc) {
+   MOZ_ASSERT(aPc);
++  AutoWriteLock guard(*sServoFFILock);  // We read some look&feel values.
+   auto overlay = aPc->UseOverlayScrollbars() ? nsITheme::Overlay::Yes
+                                              : nsITheme::Overlay::No;
+   LayoutDeviceIntCoord size =
+@@ -748,16 +749,20 @@ nscolor Gecko_ComputeSystemColor(StyleSystemColor aColor, const Document* aDoc,
+   }
+ 
+   auto useStandins = LookAndFeel::ShouldUseStandins(*aDoc, aColor);
++
++  AutoWriteLock guard(*sServoFFILock);
+   return LookAndFeel::Color(aColor, colorScheme, useStandins);
+ }
+ 
+ int32_t Gecko_GetLookAndFeelInt(int32_t aId) {
+   auto intId = static_cast<LookAndFeel::IntID>(aId);
++  AutoWriteLock guard(*sServoFFILock);
+   return LookAndFeel::GetInt(intId);
+ }
+ 
+ float Gecko_GetLookAndFeelFloat(int32_t aId) {
+   auto id = static_cast<LookAndFeel::FloatID>(aId);
++  AutoWriteLock guard(*sServoFFILock);
+   return LookAndFeel::GetFloat(id);
+ }
+ 
+@@ -935,6 +940,7 @@ void Gecko_nsFont_InitSystem(nsFont* aDest, StyleSystemFont aFontId,
+   // itself, so this will do.
+   new (aDest) nsFont(defaultVariableFont);
+ 
++  AutoWriteLock guard(*sServoFFILock);
+   nsLayoutUtils::ComputeSystemFont(aDest, aFontId, defaultVariableFont,
+                                    aDocument);
+ }
+diff --git a/layout/style/ServoStyleSet.cpp b/layout/style/ServoStyleSet.cpp
+index 6087f02d96e4..c1c3c5cecbee 100644
+--- a/layout/style/ServoStyleSet.cpp
++++ b/layout/style/ServoStyleSet.cpp
+@@ -338,6 +338,8 @@ void ServoStyleSet::PreTraverseSync() {
+ 
+   mDocument->ResolveScheduledPresAttrs();
+ 
++  LookAndFeel::NativeInit();
++
+   mDocument->CacheAllKnownLangPrefs();
+ 
+   if (gfxUserFontSet* userFontSet = mDocument->GetUserFontSet()) {
+diff --git a/widget/LookAndFeel.h b/widget/LookAndFeel.h
+index f88440218ea3..f57a4517c55c 100644
+--- a/widget/LookAndFeel.h
++++ b/widget/LookAndFeel.h
+@@ -33,7 +33,6 @@ class Document;
+ 
+ namespace widget {
+ class FullLookAndFeel;
+-class LookAndFeelFont;
+ }  // namespace widget
+ 
+ enum class StyleSystemColor : uint8_t;
+@@ -507,7 +506,6 @@ class LookAndFeel {
+    * @param aStyle Styling to apply to the font.
+    */
+   static bool GetFont(FontID aID, nsString& aName, gfxFontStyle& aStyle);
+-  static void GetFont(FontID, widget::LookAndFeelFont&);
+ 
+   /**
+    * GetPasswordCharacter() returns a unicode character which should be used
+@@ -569,10 +567,14 @@ class LookAndFeel {
+   static void Refresh();
+ 
+   /**
+-   * LookAndFeel initialization must be done on the main thread. If you need
+-   * LookAndFeel to be initialized OMT then you need to call this first.
++   * GTK's initialization code can't be run off main thread, call this
++   * if you plan on using LookAndFeel off main thread later.
++   *
++   * This initialized state may get reset due to theme changes, so it
++   * must be called prior to each potential off-main-thread LookAndFeel
++   * call, not just once.
+    */
+-  static void EnsureInit();
++  static void NativeInit();
+ 
+   static void SetData(widget::FullLookAndFeel&& aTables);
+   static void NotifyChangedAllWindows(widget::ThemeChangeKind);
+diff --git a/widget/RemoteLookAndFeel.cpp b/widget/RemoteLookAndFeel.cpp
+index 8b2350c02e7b..5eea54496b92 100644
+--- a/widget/RemoteLookAndFeel.cpp
++++ b/widget/RemoteLookAndFeel.cpp
+@@ -47,6 +47,17 @@ void RemoteLookAndFeel::SetDataImpl(FullLookAndFeel&& aData) {
+ 
+ namespace {
+ 
++// Some lnf values are somewhat expensive to get, and are not needed in child
++// processes, so we can avoid querying them.
++bool IsNeededInChildProcess(LookAndFeel::IntID aId) {
++  switch (aId) {
++    case LookAndFeel::IntID::AlertNotificationOrigin:
++      return false;  // see bug 1703205
++    default:
++      return true;
++  }
++}
++
+ template <typename Item, typename UInt, typename ID>
+ Result<const Item*, nsresult> MapLookup(const nsTArray<Item>& aItems,
+                                         const nsTArray<UInt>& aMap, ID aID) {
+@@ -102,6 +113,10 @@ nsresult RemoteLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+ }
+ 
+ nsresult RemoteLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
++  MOZ_DIAGNOSTIC_ASSERT(
++      IsNeededInChildProcess(aID),
++      "Querying value that we didn't bother getting from the parent process!");
++
+   const int32_t* result;
+   MOZ_TRY_VAR(result, MapLookup(mTables.ints(), mTables.intMap(), aID));
+   aResult = *result;
+@@ -131,42 +146,53 @@ char16_t RemoteLookAndFeel::GetPasswordCharacterImpl() {
+ 
+ bool RemoteLookAndFeel::GetEchoPasswordImpl() { return mTables.passwordEcho(); }
+ 
+-// TODO(emilio): Maybe reuse more of nsXPLookAndFeel's stores...
+-static bool AddIDsToMap(FullLookAndFeel* aLf) {
++static bool AddIDsToMap(nsXPLookAndFeel* aImpl, FullLookAndFeel* aLf) {
+   using IntID = LookAndFeel::IntID;
+   using FontID = LookAndFeel::FontID;
+   using FloatID = LookAndFeel::FloatID;
+   using ColorID = LookAndFeel::ColorID;
+   using ColorScheme = LookAndFeel::ColorScheme;
+-  using UseStandins = LookAndFeel::UseStandins;
+ 
+   bool anyFromOtherTheme = false;
+   for (auto id : MakeEnumeratedRange(IntID::End)) {
++    if (!IsNeededInChildProcess(id)) {
++      continue;
++    }
+     int32_t theInt;
+-    nsresult rv = LookAndFeel::GetInt(id, &theInt);
++    nsresult rv = aImpl->NativeGetInt(id, theInt);
+     AddToMap(aLf->tables().ints(), aLf->tables().intMap(), id,
+              NS_SUCCEEDED(rv) ? Some(theInt) : Nothing{});
+   }
+ 
+   for (auto id : MakeEnumeratedRange(ColorID::End)) {
++    nscolor theColor;
++    nsresult rv = aImpl->NativeGetColor(id, ColorScheme::Light, theColor);
+     AddToMap(aLf->tables().lightColors(), aLf->tables().lightColorMap(), id,
+-             LookAndFeel::GetColor(id, ColorScheme::Light, UseStandins::No));
++             NS_SUCCEEDED(rv) ? Some(theColor) : Nothing{});
++    rv = aImpl->NativeGetColor(id, ColorScheme::Dark, theColor);
+     AddToMap(aLf->tables().darkColors(), aLf->tables().darkColorMap(), id,
+-             LookAndFeel::GetColor(id, ColorScheme::Dark, UseStandins::No));
++             NS_SUCCEEDED(rv) ? Some(theColor) : Nothing{});
+   }
+ 
+   for (auto id : MakeEnumeratedRange(FloatID::End)) {
+     float theFloat;
+-    nsresult rv = LookAndFeel::GetFloat(id, &theFloat);
++    nsresult rv = aImpl->NativeGetFloat(id, theFloat);
+     AddToMap(aLf->tables().floats(), aLf->tables().floatMap(), id,
+              NS_SUCCEEDED(rv) ? Some(theFloat) : Nothing{});
+   }
+ 
+   for (auto id : MakeEnumeratedRange(FontID::End)) {
+-    LookAndFeelFont font;
+-    LookAndFeel::GetFont(id, font);
++    gfxFontStyle fontStyle{};
++
++    nsString name;
++    bool rv = aImpl->NativeGetFont(id, name, fontStyle);
++    Maybe<LookAndFeelFont> maybeFont;
++    if (rv) {
++      maybeFont.emplace(
++          nsXPLookAndFeel::StyleToLookAndFeelFont(name, fontStyle));
++    }
+     AddToMap(aLf->tables().fonts(), aLf->tables().fontMap(), id,
+-             font.haveFont() ? Some(std::move(font)) : Nothing{});
++             std::move(maybeFont));
+   }
+ 
+   return anyFromOtherTheme;
+@@ -188,11 +214,12 @@ const FullLookAndFeel* RemoteLookAndFeel::ExtractData() {
+   }
+ 
+   FullLookAndFeel* lf = new FullLookAndFeel{};
++  nsXPLookAndFeel* impl = nsXPLookAndFeel::GetInstance();
+ 
+-  lf->tables().passwordChar() = LookAndFeel::GetPasswordCharacter();
+-  lf->tables().passwordEcho() = LookAndFeel::GetEchoPassword();
++  lf->tables().passwordChar() = impl->GetPasswordCharacterImpl();
++  lf->tables().passwordEcho() = impl->GetEchoPasswordImpl();
+ 
+-  AddIDsToMap(lf);
++  AddIDsToMap(impl, lf);
+ 
+   // This assignment to sCachedLookAndFeelData must be done after the
+   // WithThemeConfiguredForContent call, since it can end up calling RefreshImpl
+diff --git a/widget/gtk/nsLookAndFeel.cpp b/widget/gtk/nsLookAndFeel.cpp
+index 76e41f576255..abc16c60fa10 100644
+--- a/widget/gtk/nsLookAndFeel.cpp
++++ b/widget/gtk/nsLookAndFeel.cpp
+@@ -321,10 +321,6 @@ nsLookAndFeel::nsLookAndFeel() {
+   };
+ 
+   GtkSettings* settings = gtk_settings_get_default();
+-  if (MOZ_UNLIKELY(!settings)) {
+-    return;
+-  }
+-
+   for (const auto& setting : kObservedSettings) {
+     g_signal_connect_after(settings, setting.get(),
+                            G_CALLBACK(settings_changed_cb), nullptr);
+@@ -368,10 +364,8 @@ nsLookAndFeel::~nsLookAndFeel() {
+     mDBusID = 0;
+   }
+   UnwatchDBus();
+-  if (GtkSettings* settings = gtk_settings_get_default()) {
+-    g_signal_handlers_disconnect_by_func(
+-        settings, FuncToGpointer(settings_changed_cb), nullptr);
+-  }
++  g_signal_handlers_disconnect_by_func(
++      gtk_settings_get_default(), FuncToGpointer(settings_changed_cb), nullptr);
+ }
+ 
+ #if 0
+@@ -958,9 +952,8 @@ static int32_t CheckWidgetStyle(GtkWidget* aWidget, const char* aStyle,
+ 
+ static int32_t ConvertGTKStepperStyleToMozillaScrollArrowStyle(
+     GtkWidget* aWidget) {
+-  if (!aWidget) {
+-    return mozilla::LookAndFeel::eScrollArrowStyle_Single;
+-  }
++  if (!aWidget) return mozilla::LookAndFeel::eScrollArrowStyle_Single;
++
+   return CheckWidgetStyle(aWidget, "has-backward-stepper",
+                           mozilla::LookAndFeel::eScrollArrow_StartBackward) |
+          CheckWidgetStyle(aWidget, "has-forward-stepper",
+@@ -1001,32 +994,42 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
+       aResult = 1;
+       break;
+     case IntID::SelectTextfieldsOnKeyFocus: {
+-      GtkSettings* settings = gtk_settings_get_default();
+-      gboolean select_on_focus = FALSE;
+-      if (MOZ_LIKELY(settings)) {
+-        g_object_get(settings, "gtk-entry-select-on-focus", &select_on_focus,
+-                     nullptr);
+-      }
+-      aResult = select_on_focus;
++      GtkSettings* settings;
++      gboolean select_on_focus;
++
++      settings = gtk_settings_get_default();
++      g_object_get(settings, "gtk-entry-select-on-focus", &select_on_focus,
++                   nullptr);
++
++      if (select_on_focus)
++        aResult = 1;
++      else
++        aResult = 0;
++
+     } break;
+     case IntID::ScrollToClick: {
+-      GtkSettings* settings = gtk_settings_get_default();
++      GtkSettings* settings;
+       gboolean warps_slider = FALSE;
+-      if (MOZ_LIKELY(settings) &&
+-          g_object_class_find_property(G_OBJECT_GET_CLASS(settings),
++
++      settings = gtk_settings_get_default();
++      if (g_object_class_find_property(G_OBJECT_GET_CLASS(settings),
+                                        "gtk-primary-button-warps-slider")) {
+         g_object_get(settings, "gtk-primary-button-warps-slider", &warps_slider,
+                      nullptr);
+       }
+-      aResult = warps_slider;
++
++      if (warps_slider)
++        aResult = 1;
++      else
++        aResult = 0;
+     } break;
+     case IntID::SubmenuDelay: {
+-      GtkSettings* settings = gtk_settings_get_default();
+-      gint delay = 0;
+-      if (MOZ_LIKELY(settings)) {
+-        g_object_get(settings, "gtk-menu-popup-delay", &delay, nullptr);
+-      }
+-      aResult = int32_t(delay);
++      GtkSettings* settings;
++      gint delay;
++
++      settings = gtk_settings_get_default();
++      g_object_get(settings, "gtk-menu-popup-delay", &delay, nullptr);
++      aResult = (int32_t)delay;
+       break;
+     }
+     case IntID::MenusCanOverlapOSBar:
+@@ -1038,19 +1041,14 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
+     case IntID::DragThresholdX:
+     case IntID::DragThresholdY: {
+       gint threshold = 0;
+-      GtkSettings* settings = gtk_settings_get_default();
+-      if (MOZ_LIKELY(settings)) {
+-        g_object_get(settings, "gtk-dnd-drag-threshold", &threshold, nullptr);
+-      }
++      g_object_get(gtk_settings_get_default(), "gtk-dnd-drag-threshold",
++                   &threshold, nullptr);
++
+       aResult = threshold;
+     } break;
+     case IntID::ScrollArrowStyle: {
+-      aResult = eScrollArrowStyle_Single;
+-      GtkSettings* settings = gtk_settings_get_default();
+-      if (MOZ_LIKELY(settings)) {
+-        GtkWidget* scrollbar = GetWidget(MOZ_GTK_SCROLLBAR_VERTICAL);
+-        aResult = ConvertGTKStepperStyleToMozillaScrollArrowStyle(scrollbar);
+-      }
++      GtkWidget* scrollbar = GetWidget(MOZ_GTK_SCROLLBAR_VERTICAL);
++      aResult = ConvertGTKStepperStyleToMozillaScrollArrowStyle(scrollbar);
+       break;
+     }
+     case IntID::TreeOpenDelay:
+@@ -1101,7 +1099,7 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
+       break;
+     case IntID::GTKCSDTransparencyAvailable: {
+       auto* screen = gdk_screen_get_default();
+-      aResult = MOZ_LIKELY(screen) && gdk_screen_get_rgba_visual(screen) &&
++      aResult = gdk_screen_get_rgba_visual(screen) &&
+                 gdk_screen_is_composited(screen);
+       break;
+     }
+diff --git a/widget/nsXPLookAndFeel.cpp b/widget/nsXPLookAndFeel.cpp
+index 7a2a9c605860..3b92fdf4bba3 100644
+--- a/widget/nsXPLookAndFeel.cpp
++++ b/widget/nsXPLookAndFeel.cpp
+@@ -6,7 +6,6 @@
+ #include "mozilla/ArrayUtils.h"
+ 
+ #include "mozilla/LookAndFeel.h"
+-#include "mozilla/RWLock.h"
+ #include "nscore.h"
+ 
+ #include "nsXPLookAndFeel.h"
+@@ -57,34 +56,67 @@ using FloatID = mozilla::LookAndFeel::FloatID;
+ using ColorID = mozilla::LookAndFeel::ColorID;
+ using FontID = mozilla::LookAndFeel::FontID;
+ 
+-// Fully transparent red seems unlikely enough.
+-constexpr nscolor kNoColor = NS_RGBA(0xff, 0, 0, 0);
+-using ColorStore =
+-    EnumeratedArray<ColorID, RelaxedAtomicUint32, size_t(ColorID::End)>;
++template <typename Index, typename Value, Index kEnd>
++class EnumeratedCache {
++  mozilla::EnumeratedArray<Index, Value, size_t(kEnd)> mEntries;
++  std::bitset<size_t(kEnd)> mValidity;
+ 
+-struct ColorStores {
++ public:
++  constexpr EnumeratedCache() = default;
++
++  bool IsValid(Index aIndex) const { return mValidity[size_t(aIndex)]; }
++
++  const Value* Get(Index aIndex) const {
++    return IsValid(aIndex) ? &mEntries[aIndex] : nullptr;
++  }
++
++  void Insert(Index aIndex, Value aValue) {
++    mValidity[size_t(aIndex)] = true;
++    mEntries[aIndex] = aValue;
++  }
++
++  void Remove(Index aIndex) {
++    mValidity[size_t(aIndex)] = false;
++    mEntries[aIndex] = Value();
++  }
++
++  void Clear() {
++    mValidity.reset();
++    for (auto& entry : mEntries) {
++      entry = Value();
++    }
++  }
++};
++
++using ColorCache = EnumeratedCache<ColorID, Maybe<nscolor>, ColorID::End>;
++
++struct ColorCaches {
+   using UseStandins = LookAndFeel::UseStandins;
+ 
+-  ColorStore mStores[2][2];
++  ColorCache mCaches[2][2];
+ 
+-  constexpr ColorStores() = default;
++  constexpr ColorCaches() = default;
+ 
+-  ColorStore& Get(ColorScheme aScheme, UseStandins aUseStandins) {
+-    return mStores[aScheme == ColorScheme::Dark]
++  ColorCache& Get(ColorScheme aScheme, UseStandins aUseStandins) {
++    return mCaches[aScheme == ColorScheme::Dark]
+                   [aUseStandins == UseStandins::Yes];
+   }
++
++  void Clear() {
++    for (auto& c : mCaches) {
++      for (auto& cache : c) {
++        cache.Clear();
++      }
++    }
++  }
+ };
+ 
+-static ColorStores sColorStores;
+-constexpr uint32_t kNoFloat = 0xffffff;
+-static EnumeratedArray<FloatID, RelaxedAtomicUint32, size_t(FloatID::End)>
+-    sFloatStore;
+-constexpr int32_t kNoInt = INT32_MIN;
+-static EnumeratedArray<IntID, RelaxedAtomicInt32, size_t(IntID::End)> sIntStore;
+-StaticRWLock sFontStoreLock;
+-MOZ_RUNINIT static EnumeratedArray<FontID, widget::LookAndFeelFont,
+-                                   size_t(FontID::End)>
+-    sFontStore MOZ_GUARDED_BY(sFontStoreLock);
++static ColorCaches sColorCaches;
++
++static EnumeratedCache<FloatID, Maybe<float>, FloatID::End> sFloatCache;
++static EnumeratedCache<IntID, Maybe<int32_t>, IntID::End> sIntCache;
++MOZ_RUNINIT static EnumeratedCache<FontID, widget::LookAndFeelFont, FontID::End>
++    sFontCache;
+ 
+ // To make one of these prefs toggleable from a reftest add a user
+ // pref in testing/profiles/reftest/user.js. For example, to make
+@@ -316,6 +348,8 @@ const char* nsXPLookAndFeel::GetColorPrefName(ColorID aId) {
+   return sColorPrefs[size_t(aId)];
+ }
+ 
++bool nsXPLookAndFeel::sInitialized = false;
++
+ nsXPLookAndFeel* nsXPLookAndFeel::sInstance = nullptr;
+ bool nsXPLookAndFeel::sShutdown = false;
+ 
+@@ -368,54 +402,11 @@ nsXPLookAndFeel* nsXPLookAndFeel::GetInstance() {
+     *lnf = {};
+   }
+ 
+-  sInstance->Init();
+-  sInstance->NativeInit();
+-  FillStores(sInstance);
+   widget::Theme::Init();
+-  if (XRE_IsParentProcess()) {
+-    nsLayoutUtils::RecomputeSmoothScrollDefault();
+-  }
+   PreferenceSheet::Refresh();
+   return sInstance;
+ }
+ 
+-void nsXPLookAndFeel::FillStores(nsXPLookAndFeel* aInst) {
+-  MOZ_RELEASE_ASSERT(NS_IsMainThread());
+-  for (IntID id : MakeEnumeratedRange(IntID(0), IntID::End)) {
+-    int32_t value = 0;
+-    nsresult rv = aInst->GetIntValue(id, value);
+-    MOZ_ASSERT_IF(NS_SUCCEEDED(rv), value != kNoInt);
+-    sIntStore[id] = NS_SUCCEEDED(rv) ? value : kNoInt;
+-  }
+-
+-  for (FloatID id : MakeEnumeratedRange(FloatID(0), FloatID::End)) {
+-    float value = 0;
+-    nsresult rv = aInst->GetFloatValue(id, value);
+-    auto repr = BitwiseCast<uint32_t>(value);
+-    MOZ_ASSERT_IF(NS_SUCCEEDED(rv), repr != kNoFloat);
+-    sFloatStore[id] = NS_SUCCEEDED(rv) ? repr : kNoFloat;
+-  }
+-
+-  for (auto scheme : {ColorScheme::Light, ColorScheme::Dark}) {
+-    for (auto standins : {UseStandins::Yes, UseStandins::No}) {
+-      auto& store = sColorStores.Get(scheme, standins);
+-      for (ColorID id : MakeEnumeratedRange(ColorID(0), ColorID::End)) {
+-        auto uncached = aInst->GetUncachedColor(id, scheme, standins);
+-        MOZ_ASSERT_IF(uncached, uncached.value() != kNoColor);
+-        store[id] = uncached.valueOr(kNoColor);
+-      }
+-    }
+-  }
+-
+-  // NOTE(emilio): As of right now we depend on this being last, as fonts
+-  // depend on things like GetTextScaleFactor(). This is not great but it's
+-  // tested in test_textScaleFactor_system_font.html.
+-  StaticAutoWriteLock guard(sFontStoreLock);
+-  for (FontID id : MakeEnumeratedRange(FontID(0), FontID::End)) {
+-    sFontStore[id] = aInst->GetFontValue(id);
+-  }
+-}
+-
+ // static
+ void nsXPLookAndFeel::Shutdown() {
+   if (sShutdown) {
+@@ -422,12 +417,7 @@ void nsXPLookAndFeel::Shutdown() {
+   sInstance = nullptr;
+ 
+   // This keeps strings alive, so need to clear to make leak checking happy.
+-  {
+-    StaticAutoWriteLock guard(sFontStoreLock);
+-    for (auto& f : sFontStore) {
+-      f = {};
+-    }
+-  }
++  sFontCache.Clear();
+ 
+   widget::Theme::Shutdown();
+ }
+@@ -531,6 +521,14 @@ static constexpr struct {
+ void nsXPLookAndFeel::Init() {
+   MOZ_RELEASE_ASSERT(NS_IsMainThread());
+ 
++  // Say we're already initialized, and take the chance that it might fail;
++  // protects against some other process writing to our static variables.
++  sInitialized = true;
++
++  if (XRE_IsParentProcess()) {
++    nsLayoutUtils::RecomputeSmoothScrollDefault();
++  }
++
+   // XXX If we could reorganize the pref names, we should separate the branch
+   //     for each types.  Then, we could reduce the unnecessary loop from
+   //     nsXPLookAndFeel::OnPrefChanged().
+@@ -548,9 +546,8 @@ void nsXPLookAndFeel::Init() {
+ }
+ 
+ nsXPLookAndFeel::~nsXPLookAndFeel() {
+-  MOZ_ASSERT(NS_IsMainThread());
+-  MOZ_ASSERT(sInstance == this,
+-             "This destroying instance isn't the singleton instance");
++  NS_ASSERTION(sInstance == this,
++               "This destroying instance isn't the singleton instance");
+   sInstance = nullptr;
+ }
+ 
+@@ -957,13 +954,29 @@ static nsresult GetColorFromPref(LookAndFeel::ColorID aID, ColorScheme aScheme,
+ nsresult nsXPLookAndFeel::GetColorValue(ColorID aID, ColorScheme aScheme,
+                                         UseStandins aUseStandins,
+                                         nscolor& aResult) {
++  if (!sInitialized) {
++    Init();
++  }
++
+ #ifdef DEBUG_SYSTEM_COLOR_USE
+   if (NS_SUCCEEDED(SystemColorUseDebuggingColor(aID, aResult))) {
+     return NS_OK;
+   }
+ #endif
+ 
++  auto& cache = sColorCaches.Get(aScheme, aUseStandins);
++  if (const auto* cached = cache.Get(aID)) {
++    if (cached->isNothing()) {
++      return NS_ERROR_FAILURE;
++    }
++    aResult = cached->value();
++    return NS_OK;
++  }
++
++  // NOTE: Servo holds a lock and the main thread is paused, so writing to the
++  // global cache here is fine.
+   auto result = GetUncachedColor(aID, aScheme, aUseStandins);
++  cache.Insert(aID, result);
+   if (!result) {
+     return NS_ERROR_FAILURE;
+   }
+@@ -988,23 +1001,59 @@ Maybe<nscolor> nsXPLookAndFeel::GetUncachedColor(ColorID aID,
+ }
+ 
+ nsresult nsXPLookAndFeel::GetIntValue(IntID aID, int32_t& aResult) {
++  if (!sInitialized) {
++    Init();
++  }
++
++  if (const auto* cached = sIntCache.Get(aID)) {
++    if (cached->isNothing()) {
++      return NS_ERROR_FAILURE;
++    }
++    aResult = cached->value();
++    return NS_OK;
++  }
++
+   if (NS_SUCCEEDED(Preferences::GetInt(sIntPrefs[size_t(aID)], &aResult))) {
++    sIntCache.Insert(aID, Some(aResult));
+     return NS_OK;
+   }
+ 
+   if (NS_FAILED(NativeGetInt(aID, aResult))) {
++    sIntCache.Insert(aID, Nothing());
+     return NS_ERROR_FAILURE;
+   }
++
++  sIntCache.Insert(aID, Some(aResult));
+   return NS_OK;
+ }
+ 
+ nsresult nsXPLookAndFeel::GetFloatValue(FloatID aID, float& aResult) {
++  if (!sInitialized) {
++    Init();
++  }
++
++  if (const auto* cached = sFloatCache.Get(aID)) {
++    if (cached->isNothing()) {
++      return NS_ERROR_FAILURE;
++    }
++    aResult = cached->value();
++    return NS_OK;
++  }
++
+   int32_t pref = 0;
+   if (NS_SUCCEEDED(Preferences::GetInt(sFloatPrefs[size_t(aID)], &pref))) {
+     aResult = float(pref) / 100.0f;
++    sFloatCache.Insert(aID, Some(aResult));
+     return NS_OK;
+   }
+-  return NativeGetFloat(aID, aResult);
++
++  if (NS_FAILED(NativeGetFloat(aID, aResult))) {
++    sFloatCache.Insert(aID, Nothing());
++    return NS_ERROR_FAILURE;
++  }
++
++  sFloatCache.Insert(aID, Some(aResult));
++  return NS_OK;
+ }
+ 
+ bool nsXPLookAndFeel::LookAndFeelFontToStyle(const LookAndFeelFont& aFont,
+@@ -1049,14 +1098,20 @@ widget::LookAndFeelFont nsXPLookAndFeel::StyleToLookAndFeelFont(
+   return font;
+ }
+ 
+-widget::LookAndFeelFont nsXPLookAndFeel::GetFontValue(FontID aID) {
++bool nsXPLookAndFeel::GetFontValue(FontID aID, nsString& aName,
++                                   gfxFontStyle& aStyle) {
++  if (const LookAndFeelFont* cached = sFontCache.Get(aID)) {
++    return LookAndFeelFontToStyle(*cached, aName, aStyle);
++  }
++
+   LookAndFeelFont font;
+   auto GetFontsFromPrefs = [&]() -> bool {
+     nsDependentCString pref(sFontPrefs[size_t(aID)]);
+-    if (NS_FAILED(Preferences::GetString(pref.get(), font.name()))) {
++    if (NS_FAILED(Preferences::GetString(pref.get(), aName))) {
+       return false;
+     }
+     font.haveFont() = true;
++    font.name() = aName;
+     font.size() = Preferences::GetFloat(nsAutoCString(pref + ".size"_ns).get());
+     // This is written this way rather than using the fallback so that an empty
+     // pref (such like the one about:config creates) doesn't cause system fonts
+@@ -1070,19 +1125,32 @@ widget::LookAndFeelFont nsXPLookAndFeel::GetFontValue(FontID aID) {
+         Preferences::GetBool(nsAutoCString(pref + ".italic"_ns).get());
+     return true;
+   };
+-  if (!GetFontsFromPrefs()) {
+-    nsAutoString name;
+-    gfxFontStyle style;
+-    if (NativeGetFont(aID, name, style)) {
+-      font = StyleToLookAndFeelFont(name, style);
+-    } else {
+-      MOZ_ASSERT(!font.haveFont());
+-    }
++
++  if (GetFontsFromPrefs()) {
++    LookAndFeelFontToStyle(font, aName, aStyle);
++  } else if (NativeGetFont(aID, aName, aStyle)) {
++    font = StyleToLookAndFeelFont(aName, aStyle);
++  } else {
++    MOZ_ASSERT(!font.haveFont());
+   }
+-  return font;
++  bool success = font.haveFont();
++  sFontCache.Insert(aID, std::move(font));
++  return success;
+ }
+ 
+-void nsXPLookAndFeel::RefreshImpl() {}
++void nsXPLookAndFeel::RefreshImpl() {
++  // Wipe out our caches.
++  sColorCaches.Clear();
++  sFontCache.Clear();
++  sFloatCache.Clear();
++  sIntCache.Clear();
++
++  if (XRE_IsParentProcess()) {
++    nsLayoutUtils::RecomputeSmoothScrollDefault();
++    // Clear any cached FullLookAndFeel data, which is now invalid.
++    widget::RemoteLookAndFeel::ClearCachedData();
++  }
++}
+ 
+ static bool sRecordedLookAndFeelTelemetry = false;
+ 
+@@ -1298,12 +1366,13 @@ LookAndFeel::ColorScheme LookAndFeel::ColorSchemeForFrame(
+ // static
+ Maybe<nscolor> LookAndFeel::GetColor(ColorID aId, ColorScheme aScheme,
+                                      UseStandins aUseStandins) {
+-  MOZ_ASSERT(nsXPLookAndFeel::sInstance, "Not initialized");
+-  nscolor color = sColorStores.Get(aScheme, aUseStandins)[aId];
+-  if (color == kNoColor) {
++  nscolor result;
++  nsresult rv = nsLookAndFeel::GetInstance()->GetColorValue(
++      aId, aScheme, aUseStandins, result);
++  if (NS_FAILED(rv)) {
+     return Nothing();
+   }
+-  return Some(color);
++  return Some(result);
+ }
+ 
+ // Returns whether there is a CSS color name for this color.
+@@ -1363,37 +1432,17 @@ Maybe<nscolor> LookAndFeel::GetColor(ColorID aId, const nsIFrame* aFrame) {
+ 
+ // static
+ nsresult LookAndFeel::GetInt(IntID aID, int32_t* aResult) {
+-  MOZ_ASSERT(nsXPLookAndFeel::sInstance, "Not initialized?");
+-  int32_t result = sIntStore[aID];
+-  if (result == kNoInt) {
+-    return NS_ERROR_FAILURE;
+-  }
+-  *aResult = result;
+-  return NS_OK;
++  return nsLookAndFeel::GetInstance()->GetIntValue(aID, *aResult);
+ }
+ 
+ // static
+ nsresult LookAndFeel::GetFloat(FloatID aID, float* aResult) {
+-  uint32_t result = sFloatStore[aID];
+-  if (result == kNoFloat) {
+-    return NS_ERROR_FAILURE;
+-  }
+-  *aResult = BitwiseCast<float>(result);
+-  return NS_OK;
++  return nsLookAndFeel::GetInstance()->GetFloatValue(aID, *aResult);
+ }
+ 
+ // static
+-void LookAndFeel::GetFont(FontID aID, widget::LookAndFeelFont& aFont) {
+-  MOZ_ASSERT(nsXPLookAndFeel::sInstance, "Not initialized?");
+-  StaticAutoReadLock guard(sFontStoreLock);
+-  aFont = sFontStore[aID];
+-}
+-
+ bool LookAndFeel::GetFont(FontID aID, nsString& aName, gfxFontStyle& aStyle) {
+-  MOZ_ASSERT(nsXPLookAndFeel::sInstance, "Not initialized?");
+-  StaticAutoReadLock guard(sFontStoreLock);
+-  return nsXPLookAndFeel::LookAndFeelFontToStyle(sFontStore[aID], aName,
+-                                                 aStyle);
++  return nsLookAndFeel::GetInstance()->GetFontValue(aID, aName, aStyle);
+ }
+ 
+ // static
+@@ -1459,25 +1508,18 @@ Modifiers LookAndFeel::GetMenuAccessKeyModifiers() {
+   }
+ }
+ 
+-void LookAndFeel::EnsureInit() { Unused << nsXPLookAndFeel::GetInstance(); }
+-
+ // static
+ void LookAndFeel::Refresh() {
+-  auto* inst = nsLookAndFeel::GetInstance();
+-  inst->RefreshImpl();
+-  inst->NativeInit();
+-  nsXPLookAndFeel::FillStores(inst);
+-  if (XRE_IsParentProcess()) {
+-    nsLayoutUtils::RecomputeSmoothScrollDefault();
+-    // Clear any cached FullLookAndFeel data, which is now invalid.
+-    widget::RemoteLookAndFeel::ClearCachedData();
+-  }
++  nsLookAndFeel::GetInstance()->RefreshImpl();
+   widget::Theme::LookAndFeelChanged();
+   // Reset default background and foreground colors for the document since they
+   // may be using system colors, color scheme, etc.
+   PreferenceSheet::Refresh();
+ }
+ 
++// static
++void LookAndFeel::NativeInit() { nsLookAndFeel::GetInstance()->NativeInit(); }
++
+ // static
+ void LookAndFeel::SetData(widget::FullLookAndFeel&& aTables) {
+   nsLookAndFeel::GetInstance()->SetDataImpl(std::move(aTables));
+diff --git a/widget/nsXPLookAndFeel.h b/widget/nsXPLookAndFeel.h
+index 52dcf424cf92..c8e7893200e6 100644
+--- a/widget/nsXPLookAndFeel.h
++++ b/widget/nsXPLookAndFeel.h
+@@ -14,7 +14,6 @@
+ class nsLookAndFeel;
+ 
+ class nsXPLookAndFeel : public mozilla::LookAndFeel {
+-  friend class mozilla::LookAndFeel;
+ 
+  public:
+   using FullLookAndFeel = mozilla::widget::FullLookAndFeel;
+@@ -24,9 +23,24 @@ class nsXPLookAndFeel : public mozilla::LookAndFeel {
+   static nsXPLookAndFeel* GetInstance();
+   static void Shutdown();
+ 
++  void Init();
++
+   // Gets the pref name for a given color, just for debugging purposes.
+   static const char* GetColorPrefName(ColorID);
+ 
++  // These functions will return a value specified by an override pref, if it
++  // exists, and otherwise will call into the NativeGetXxx function to get the
++  // platform-specific value.
++  //
++  // NS_ERROR_NOT_AVAILABLE is returned if there is neither an override pref or
++  // a platform-specific value.
++  nsresult GetColorValue(ColorID, ColorScheme, UseStandins, nscolor& aResult);
++  nsresult GetIntValue(IntID aID, int32_t& aResult);
++  nsresult GetFloatValue(FloatID aID, float& aResult);
++  // Same, but returns false if there is no platform-specific value.
++  // (There are no override prefs for font values.)
++  bool GetFontValue(FontID aID, nsString& aName, gfxFontStyle& aStyle);
++
+   virtual nsresult NativeGetInt(IntID aID, int32_t& aResult) = 0;
+   virtual nsresult NativeGetFloat(FloatID aID, float& aResult) = 0;
+   virtual nsresult NativeGetColor(ColorID, ColorScheme, nscolor& aResult) = 0;
+@@ -65,23 +79,7 @@ class nsXPLookAndFeel : public mozilla::LookAndFeel {
+  protected:
+   nsXPLookAndFeel() = default;
+ 
+-  void Init();
+-
+   static nscolor GetStandinForNativeColor(ColorID, ColorScheme);
+-  static void FillStores(nsXPLookAndFeel* aInstance);
+-
+-  // These functions will return a value specified by an override pref, if it
+-  // exists, and otherwise will call into the NativeGetXxx function to get the
+-  // platform-specific value.
+-  //
+-  // NS_ERROR_NOT_AVAILABLE is returned if there is neither an override pref or
+-  // a platform-specific value.
+-  nsresult GetColorValue(ColorID, ColorScheme, UseStandins, nscolor& aResult);
+-  nsresult GetIntValue(IntID aID, int32_t& aResult);
+-  nsresult GetFloatValue(FloatID aID, float& aResult);
+-  // Same, but returns false if there is no platform-specific value.
+-  bool GetFontValue(FontID aID, nsString& aName, gfxFontStyle& aStyle);
+-  LookAndFeelFont GetFontValue(FontID aID);
+ 
+   // A platform-agnostic dark-color scheme, for platforms where we don't have
+   // "native" dark colors, like Windows and Android.
+diff --git a/widget/windows/nsLookAndFeel.cpp b/widget/windows/nsLookAndFeel.cpp
+index 063dee4dcab3..8533e9880d93 100644
+--- a/widget/windows/nsLookAndFeel.cpp
++++ b/widget/windows/nsLookAndFeel.cpp
+@@ -15,7 +15,6 @@
+ #include "WindowsUIUtils.h"
+ #include "mozilla/FontPropertyTypes.h"
+ #include "mozilla/glean/WidgetWindowsMetrics.h"
+-#include "mozilla/intl/LocaleService.h"
+ #include "mozilla/widget/WinRegistry.h"
+ 
+ #define AVG2(a, b) (((a) + (b) + 1) >> 1)
+@@ -519,10 +518,38 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
+       aResult = WinUtils::MicaPopupsEnabled();
+       break;
+     case IntID::AlertNotificationOrigin:
+-      aResult = 0;
+-      if (intl::LocaleService::GetInstance()->IsAppLocaleRTL()) {
+-        // If the task bar is right-to-left, move the origin to the left
+-        aResult |= NS_ALERT_LEFT;
++      aResult = 0;
++      {
++        // Get task bar window handle
++        HWND shellWindow = FindWindowW(L"Shell_TrayWnd", nullptr);
++
++        if (shellWindow != nullptr) {
++          // Determine position
++          APPBARDATA appBarData;
++          appBarData.hWnd = shellWindow;
++          appBarData.cbSize = sizeof(appBarData);
++          if (SHAppBarMessage(ABM_GETTASKBARPOS, &appBarData)) {
++            // Set alert origin as a bit field - see LookAndFeel.h
++            // 0 represents bottom right, sliding vertically.
++            switch (appBarData.uEdge) {
++              case ABE_LEFT:
++                aResult = NS_ALERT_HORIZONTAL | NS_ALERT_LEFT;
++                break;
++              case ABE_RIGHT:
++                aResult = NS_ALERT_HORIZONTAL;
++                break;
++              case ABE_TOP:
++                aResult = NS_ALERT_TOP;
++                [[fallthrough]];
++              case ABE_BOTTOM:
++                // If the task bar is right-to-left,
++                // move the origin to the left
++                if (::GetWindowLong(shellWindow, GWL_EXSTYLE) & WS_EX_LAYOUTRTL)
++                  aResult |= NS_ALERT_LEFT;
++                break;
++            }
++          }
++        }
+       }
+       break;
+     case IntID::IMERawInputUnderlineStyle:

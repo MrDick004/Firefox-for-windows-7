@@ -1,0 +1,353 @@
+diff --git a/gfx/webrender_bindings/RenderCompositorANGLE.cpp b/gfx/webrender_bindings/RenderCompositorANGLE.cpp
+index bc38d725a002..787d87eb90f8 100644
+--- a/gfx/webrender_bindings/RenderCompositorANGLE.cpp
++++ b/gfx/webrender_bindings/RenderCompositorANGLE.cpp
+@@ -226,7 +226,6 @@ bool RenderCompositorANGLE::CreateSwapChain(nsACString& aError) {
+   }
+ 
+   HWND hwnd = mWidget->AsWindows()->GetHwnd();
+-  const bool alpha = ShouldUseAlpha();
+   if (dxgiFactory2) {
+     RefPtr<IDXGISwapChain1> swapChain1;
+     bool useTripleBuffering = false;
+@@ -258,8 +258,6 @@ bool RenderCompositorANGLE::CreateSwapChain(nsACString& aError) {
+       desc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
+       desc.Scaling = DXGI_SCALING_STRETCH;
+     }
+-    desc.AlphaMode =
+-        alpha ? DXGI_ALPHA_MODE_PREMULTIPLIED : DXGI_ALPHA_MODE_IGNORE;
+     desc.Flags = 0;
+ 
+     hr = dxgiFactory2->CreateSwapChainForHwnd(
+@@ -270,7 +268,6 @@ bool RenderCompositorANGLE::CreateSwapChain(nsACString& aError) {
+       mSwapChain = swapChain1;
+       mSwapChain1 = swapChain1;
+       mUseTripleBuffering = useTripleBuffering;
+-      mSwapChainUsingAlpha = alpha;
+       return true;
+     }
+     if (useFlipSequential) {
+@@ -310,11 +307,10 @@ bool RenderCompositorANGLE::CreateSwapChain(nsACString& aError) {
+   hr =
+       mSwapChain->QueryInterface((IDXGISwapChain1**)getter_AddRefs(swapChain1));
+   if (SUCCEEDED(hr)) {
+-      mSwapChain1 = std::move(swapChain1);
++      mSwapChain1 = swapChain1;
+   } else {
+     mSwapChain1 = nullptr;
+   }
+-  mSwapChainUsingAlpha = alpha;
+   return true;
+ }
+ 
+@@ -399,10 +396,7 @@ RefPtr<IDXGISwapChain1> RenderCompositorANGLE::CreateSwapChainForDComp(
+   // DXGI_SCALING_NONE caused swap chain creation failure.
+   desc.Scaling = DXGI_SCALING_STRETCH;
+   desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+-  const bool alpha = ShouldUseAlpha();
+-  // See if we need to use transparency.
+-  desc.AlphaMode =
+-      alpha ? DXGI_ALPHA_MODE_PREMULTIPLIED : DXGI_ALPHA_MODE_IGNORE;
++  desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+   desc.Flags = 0;
+ 
+   hr = dxgiFactory2->CreateSwapChainForComposition(mDevice, &desc, nullptr,
+@@ -410,31 +404,17 @@ RefPtr<IDXGISwapChain1> RenderCompositorANGLE::CreateSwapChainForDComp(
+   if (SUCCEEDED(hr) && swapChain1) {
+     DXGI_RGBA color = {1.0f, 1.0f, 1.0f, 1.0f};
+     swapChain1->SetBackgroundColor(&color);
+-    mSwapChainUsingAlpha = alpha;
+     return swapChain1;
+   }
+ 
+   return nullptr;
+ }
+ 
+-bool RenderCompositorANGLE::ShouldUseAlpha() const {
+-  return mWidget->AsWindows()->TransparencyModeIs(
+-      widget::TransparencyMode::Transparent);
+-}
+-
+ bool RenderCompositorANGLE::BeginFrame() {
+   mWidget->AsWindows()->UpdateCompositorWndSizeIfNecessary();
+ 
+-  if (!UseCompositor()) {
+-    if (NS_WARN_IF(!mSwapChainUsingAlpha && ShouldUseAlpha())) {
+-      if (NS_WARN_IF(!RecreateNonNativeCompositorSwapChain())) {
+-        return false;
+-      }
+-      MOZ_ASSERT(mSwapChainUsingAlpha);
+-    }
+-    if (!ResizeBufferIfNeeded()) {
+-      return false;
+-    }
++  if (!UseCompositor() && !ResizeBufferIfNeeded()) {
++    return false;
+   }
+ 
+   if (!MakeCurrent()) {
+@@ -878,7 +878,7 @@ void RenderCompositorANGLE::GetCompositorCapabilities(
+ }
+ 
+ void RenderCompositorANGLE::GetWindowProperties(WindowProperties* aProperties) {
+-  aProperties->is_opaque = !ShouldUseAlpha();
++  aProperties->is_opaque = true;
+   const bool enable_screenshot =
+       mDCLayerTree && mDCLayerTree->GetAsyncScreenshotEnabled();
+   aProperties->enable_screenshot = enable_screenshot;
+@@ -900,42 +887,35 @@ void RenderCompositorANGLE::EnableNativeCompositor(bool aEnable) {
+ 
+   mDCLayerTree->DisableNativeCompositor();
+ 
+-  if (!RecreateNonNativeCompositorSwapChain()) {
+-    gfxCriticalNote << "Failed to re-create SwapChain";
+-    RenderThread::Get()->HandleWebRenderError(WebRenderError::NEW_SURFACE);
+-    return;
+-  }
+-
+-  mDisablingNativeCompositor = true;
+-}
+-
+-bool RenderCompositorANGLE::EnableAsyncScreenshot() {
+-  if (!UseLayerCompositor()) {
+-    return false;
+-  }
+-  mDCLayerTree->EnableAsyncScreenshot();
+-  return true;
+-}
+-
+-bool RenderCompositorANGLE::RecreateNonNativeCompositorSwapChain() {
+   DestroyEGLSurface();
+   mBufferSize.reset();
+ 
+   if (mDCLayerTree) {
+   RefPtr<IDXGISwapChain1> swapChain1 =
+       CreateSwapChainForDComp(mUseTripleBuffering);
+-  if (!swapChain1) {
+-    return false;
+-  }
+-  mSwapChain = swapChain1;
+-  mSwapChain1 = swapChain1;
++  if (swapChain1) {
++    mSwapChain = swapChain1;
+     mDCLayerTree->SetDefaultSwapChain(swapChain1);
++    ResizeBufferIfNeeded();
++  } else {
++    gfxCriticalNote << "Failed to re-create SwapChain";
++    RenderThread::Get()->HandleWebRenderError(WebRenderError::NEW_SURFACE);
++    return;
++   }
+   } else {
+     if (NS_WARN_IF(!CreateSwapChainForHWND())) {
+-      return false;
++      return;
+     }
+   }
+-  return ResizeBufferIfNeeded();
++  mDisablingNativeCompositor = true;
+ }
+ 
++bool RenderCompositorANGLE::EnableAsyncScreenshot() {
++  if (!UseLayerCompositor()) {
++    return false;
++  }
++  mDCLayerTree->EnableAsyncScreenshot();
++  return true;
++}
++
+ void RenderCompositorANGLE::InitializeUsePartialPresent() {
+diff --git a/gfx/webrender_bindings/RenderCompositorANGLE.h b/gfx/webrender_bindings/RenderCompositorANGLE.h
+index bd07419204dd..e76521733190 100644
+--- a/gfx/webrender_bindings/RenderCompositorANGLE.h
++++ b/gfx/webrender_bindings/RenderCompositorANGLE.h
+@@ -30,7 +30,7 @@ namespace wr {
+ 
+ class DCLayerTree;
+ 
+-class RenderCompositorANGLE final : public RenderCompositor {
++class RenderCompositorANGLE : public RenderCompositor {
+  public:
+   static UniquePtr<RenderCompositor> Create(
+       const RefPtr<widget::CompositorWidget>& aWidget, nsACString& aError);
+@@ -110,7 +110,6 @@ class RenderCompositorANGLE final : public RenderCompositor {
+  protected:
+   bool UseCompositor() const;
+   bool UseLayerCompositor() const;
+-  bool RecreateNonNativeCompositorSwapChain();
+   void InitializeUsePartialPresent();
+   void InsertGraphicsCommandsFinishedWaitQuery(
+       RenderedFrameId aRenderedFrameId);
+@@ -126,7 +125,6 @@ class RenderCompositorANGLE final : public RenderCompositor {
+   RefPtr<ID3D11Query> GetD3D11Query();
+   void ReleaseNativeCompositorResources();
+   HWND GetCompositorHwnd();
+-  bool ShouldUseAlpha() const;
+ 
+   RefPtr<IDXGIDevice> DXGIDevice();
+   RefPtr<IDXGIFactory> DXGIFactory();
+@@ -154,8 +152,6 @@ class RenderCompositorANGLE final : public RenderCompositor {
+   // Used to know a timing of disabling native compositor.
+   bool mDisablingNativeCompositor = false;
+   bool mFirstPresent = true;
+-  // Wether we're currently using alpha.
+-  bool mSwapChainUsingAlpha = false;
+   RefPtr<layers::FenceD3D11> mFence;
+ };
+ 
+diff --git a/widget/windows/CompositorWidgetChild.cpp b/widget/windows/CompositorWidgetChild.cpp
+index cd5367823f17..7044235ac11b 100644
+--- a/widget/windows/CompositorWidgetChild.cpp
++++ b/widget/windows/CompositorWidgetChild.cpp
+@@ -66,10 +66,6 @@ void CompositorWidgetChild::NotifyVisibilityUpdated(bool aIsFullyOccluded) {
+   Unused << SendNotifyVisibilityUpdated(aIsFullyOccluded);
+ };
+ 
+-void CompositorWidgetChild::UpdateTransparency(TransparencyMode aMode) {
+-  Unused << SendUpdateTransparency(aMode);
+-}
+-
+ void CompositorWidgetChild::ClearTransparentWindow() {
+   Unused << SendClearTransparentWindow();
+ }
+diff --git a/widget/windows/CompositorWidgetChild.h b/widget/windows/CompositorWidgetChild.h
+index ef508bf80268..cac048d68756 100644
+--- a/widget/windows/CompositorWidgetChild.h
++++ b/widget/windows/CompositorWidgetChild.h
+@@ -35,7 +35,7 @@ class CompositorWidgetChild final : public PCompositorWidgetChild,
+   bool OnWindowResize(const LayoutDeviceIntSize& aSize) override;
+   void NotifyVisibilityUpdated(bool aIsFullyOccluded) override;
+ 
+-  void UpdateTransparency(TransparencyMode) override;
++  void UpdateTransparency(TransparencyMode) override {}
+   void ClearTransparentWindow() override;
+ 
+   mozilla::ipc::IPCResult RecvObserveVsync() override;
+diff --git a/widget/windows/CompositorWidgetParent.cpp b/widget/windows/CompositorWidgetParent.cpp
+index b260174f96c9..9addae9d8fd3 100644
+--- a/widget/windows/CompositorWidgetParent.cpp
++++ b/widget/windows/CompositorWidgetParent.cpp
+@@ -138,12 +138,6 @@ bool CompositorWidgetParent::GetWindowIsFullyOccluded() const {
+   return mIsFullyOccluded;
+ }
+ 
+-mozilla::ipc::IPCResult CompositorWidgetParent::RecvUpdateTransparency(
+-    const TransparencyMode& aMode) {
+-  SetTransparencyMode(aMode);
+-  return IPC_OK();
+-}
+-
+ mozilla::ipc::IPCResult CompositorWidgetParent::RecvClearTransparentWindow() {
+   gfx::CriticalSectionAutoEnter lock(&mPresentLock);
+ 
+diff --git a/widget/windows/CompositorWidgetParent.h b/widget/windows/CompositorWidgetParent.h
+index c8b41a6450f1..9426c380934b 100644
+--- a/widget/windows/CompositorWidgetParent.h
++++ b/widget/windows/CompositorWidgetParent.h
+@@ -53,8 +53,6 @@ class CompositorWidgetParent final : public PCompositorWidgetParent,
+   mozilla::ipc::IPCResult RecvLeavePresentLock() override;
+   mozilla::ipc::IPCResult RecvNotifyVisibilityUpdated(
+       const bool& aIsFullyOccluded) override;
+-  mozilla::ipc::IPCResult RecvUpdateTransparency(
+-      const TransparencyMode& aTransparencyMode) override;
+   mozilla::ipc::IPCResult RecvClearTransparentWindow() override;
+   void ActorDestroy(ActorDestroyReason aWhy) override;
+ 
+@@ -75,6 +73,9 @@ class CompositorWidgetParent final : public PCompositorWidgetParent,
+ 
+   gfx::CriticalSection mPresentLock;
+ 
++  // Transparency handling.
++  mozilla::Atomic<uint32_t, MemoryOrdering::Relaxed> mTransparencyMode;
++
+   // Visibility handling.
+   mozilla::Atomic<nsSizeMode, MemoryOrdering::Relaxed> mSizeMode;
+   mozilla::Atomic<bool, MemoryOrdering::Relaxed> mIsFullyOccluded;
+diff --git a/widget/windows/InProcessWinCompositorWidget.cpp b/widget/windows/InProcessWinCompositorWidget.cpp
+index 2254b2227efc..3abc62b67a32 100644
+--- a/widget/windows/InProcessWinCompositorWidget.cpp
++++ b/widget/windows/InProcessWinCompositorWidget.cpp
+@@ -51,6 +51,7 @@ InProcessWinCompositorWidget::InProcessWinCompositorWidget(
+       mWindow(aWindow),
+       mWnd(reinterpret_cast<HWND>(aInitData.hWnd())),
+       mTransparentSurfaceLock("mTransparentSurfaceLock"),
++      mTransparencyMode(uint32_t(aInitData.transparencyMode())),
+       mMemoryDC(nullptr),
+       mCompositeDC(nullptr),
+       mLockedBackBufferData(nullptr) {
+@@ -264,7 +265,7 @@ void InProcessWinCompositorWidget::UpdateTransparency(TransparencyMode aMode) {
+     return;
+   }
+ 
+-  SetTransparencyMode(aMode);
++  mTransparencyMode = uint32_t(aMode);
+   mTransparentSurface = nullptr;
+   mMemoryDC = nullptr;
+ 
+diff --git a/widget/windows/InProcessWinCompositorWidget.h b/widget/windows/InProcessWinCompositorWidget.h
+index b6de254a48a5..794c61698720 100644
+--- a/widget/windows/InProcessWinCompositorWidget.h
++++ b/widget/windows/InProcessWinCompositorWidget.h
+@@ -83,6 +83,11 @@ class InProcessWinCompositorWidget final
+ 
+   // Transparency handling.
+   mozilla::Mutex mTransparentSurfaceLock MOZ_UNANNOTATED;
++  mozilla::Atomic<uint32_t, MemoryOrdering::Relaxed> mTransparencyMode;
++
++  bool TransparencyModeIs(TransparencyMode aMode) const {
++    return TransparencyMode(uint32_t(mTransparencyMode)) == aMode;
++  }
+ 
+   // Visibility handling.
+   mozilla::Atomic<bool, MemoryOrdering::Relaxed> mIsFullyOccluded;
+diff --git a/widget/windows/PCompositorWidget.ipdl b/widget/windows/PCompositorWidget.ipdl
+index 81cc9a3891b6..dae852bc9fc4 100644
+--- a/widget/windows/PCompositorWidget.ipdl
++++ b/widget/windows/PCompositorWidget.ipdl
+@@ -34,7 +34,6 @@ parent:
+   sync EnterPresentLock();
+   sync LeavePresentLock();
+   async NotifyVisibilityUpdated(bool aIsFullyOccluded);
+-  async UpdateTransparency(TransparencyMode aMode);
+   sync ClearTransparentWindow();
+   async __delete__();
+ 
+diff --git a/widget/windows/WinCompositorWidget.cpp b/widget/windows/WinCompositorWidget.cpp
+index a82529d2671f..15957a1c3f59 100644
+--- a/widget/windows/WinCompositorWidget.cpp
++++ b/widget/windows/WinCompositorWidget.cpp
+@@ -32,7 +32,6 @@ WinCompositorWidget::WinCompositorWidget(
+       mSetParentCompleted(false),
+       mWidgetKey(aInitData.widgetKey()),
+       mWnd(reinterpret_cast<HWND>(aInitData.hWnd())),
+-      mTransparencyMode(uint32_t(aInitData.transparencyMode())),
+       mCompositorWnds(nullptr, nullptr) {
+   MOZ_ASSERT(mWnd && ::IsWindow(mWnd));
+ }
+diff --git a/widget/windows/WinCompositorWidget.h b/widget/windows/WinCompositorWidget.h
+index 1c4fcbba1e54..16164d43c3a8 100644
+--- a/widget/windows/WinCompositorWidget.h
++++ b/widget/windows/WinCompositorWidget.h
+@@ -80,21 +80,13 @@ class WinCompositorWidget : public CompositorWidget {
+                                    const HWND aParentWnd) = 0;
+   virtual void SetRootLayerTreeID(const layers::LayersId& aRootLayerTreeId) = 0;
+ 
+-  bool TransparencyModeIs(TransparencyMode aMode) const {
+-    return TransparencyMode(uint32_t(mTransparencyMode)) == aMode;
+-  }
+-
+  protected:
+-  void SetTransparencyMode(TransparencyMode aMode) {
+-    mTransparencyMode = uint32_t(aMode);
+-  }
+-
+-  bool mSetParentCompleted = false;
++  bool mSetParentCompleted;
+ 
+  private:
+   uintptr_t mWidgetKey;
+   HWND mWnd;
+-  mozilla::Atomic<uint32_t, MemoryOrdering::Relaxed> mTransparencyMode;
++
+   WinCompositorWnds mCompositorWnds;
+   LayoutDeviceIntSize mLastCompositorWndSize;
+ 

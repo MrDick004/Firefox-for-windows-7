@@ -1,0 +1,1 @@
+Bug 1889754 - Standardize recurring user interface shadows as design tokens r=settings-reviewers,desktop-theme-reviewers,tabbrowser-reviewers,reusable-components-reviewers,mtigley,credential-management-reviewers,sidebar-reviewers,hjones,willdurand,nsharpley,dao    2025-03-14 05:21:34    cfe48d85b9a5a99ed22eb26a2af08b5fcca6507e

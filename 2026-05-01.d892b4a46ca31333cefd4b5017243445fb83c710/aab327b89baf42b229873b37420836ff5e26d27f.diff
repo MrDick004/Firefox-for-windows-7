@@ -1,0 +1,27 @@
+diff --git a/layout/style/nsCSSPseudoElementList.h b/layout/style/nsCSSPseudoElementList.h
+index bdda60c5be0a..3d743dbe4aff 100644
+--- a/layout/style/nsCSSPseudoElementList.h
++++ b/layout/style/nsCSSPseudoElementList.h
+@@ -62,6 +62,10 @@ CSS_PSEUDO_ELEMENT(mozSnapshotContainingBlock,
+                    ":-moz-snapshot-containing-block",
+                    CSS_PSEUDO_ELEMENT_ENABLED_IN_UA_SHEETS)
+ 
++// XXXbz should we really allow random content to style these?  Maybe
++// use our flags to prevent that?
++CSS_PSEUDO_ELEMENT(mozFocusInner, ":-moz-focus-inner", 0)
++
+ // HTML5 Forms pseudo elements
+ CSS_PSEUDO_ELEMENT(mozNumberSpinBox, ":-moz-number-spin-box",
+                    CSS_PSEUDO_ELEMENT_SUPPORTS_USER_ACTION_STATE |
+diff --git a/xpcom/ds/StaticAtoms.py b/xpcom/ds/StaticAtoms.py
+index 6609d62abfc4..a57dfe2d1f0a 100644
+--- a/xpcom/ds/StaticAtoms.py
++++ b/xpcom/ds/StaticAtoms.py
+@@ -2531,6 +2531,7 @@ STATIC_ATOMS = [
+     PseudoElementAtom("PseudoElement_viewTransitionOld", ":view-transition-old"),
+     PseudoElementAtom("PseudoElement_viewTransitionNew", ":view-transition-new"),
+     PseudoElementAtom("PseudoElement_mozSnapshotContainingBlock", ":-moz-snapshot-containing-block"),
++    PseudoElementAtom("PseudoElement_mozFocusInner", ":-moz-focus-inner"),
+     PseudoElementAtom("PseudoElement_mozNumberSpinBox", ":-moz-number-spin-box"),
+     PseudoElementAtom("PseudoElement_mozNumberSpinUp", ":-moz-number-spin-up"),
+     PseudoElementAtom("PseudoElement_mozNumberSpinDown", ":-moz-number-spin-down"),

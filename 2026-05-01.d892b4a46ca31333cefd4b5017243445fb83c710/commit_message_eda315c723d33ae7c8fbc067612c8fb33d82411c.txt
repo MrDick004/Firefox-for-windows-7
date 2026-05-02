@@ -1,0 +1,1 @@
+Bug 1900175: Enable USER_RESTRICTED for content processes on Nightly. r=handyman    2024-08-22 17:16:39    eda315c723d33ae7c8fbc067612c8fb33d82411c

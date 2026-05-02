@@ -1,0 +1,33 @@
+diff --git a/browser/app/profile/firefox.js b/browser/app/profile/firefox.js
+index 31d8b52c6f40..ef9e462c20d1 100644
+--- a/browser/app/profile/firefox.js
++++ b/browser/app/profile/firefox.js
+@@ -1446,15 +1446,6 @@ pref("browser.bookmarks.editDialog.maxRecentFolders", 7);
+   pref("browser.taskbar.previews.max", 20);
+   pref("browser.taskbar.previews.cachetime", 5);
+   pref("browser.taskbar.lists.legacyBackend", true);
+-
+-  // We'll only enable the new off-main-thread jumplist backend on Nightly for
+-  // now while we test it.
+-#ifdef NIGHTLY_BUILD
+-  pref("browser.taskbar.lists.legacyBackend", false);
+-#else
+-  pref("browser.taskbar.lists.legacyBackend", true);
+-#endif
+-
+   pref("browser.taskbar.lists.enabled", true);
+   pref("browser.taskbar.lists.frequent.enabled", true);
+   pref("browser.taskbar.lists.recent.enabled", false);
+diff --git a/browser/modules/WindowsJumpLists.sys.mjs b/browser/modules/WindowsJumpLists.sys.mjs
+index 90155274230b..73e3c9609e5b 100644
+--- a/browser/modules/WindowsJumpLists.sys.mjs
++++ b/browser/modules/WindowsJumpLists.sys.mjs
+@@ -277,8 +277,6 @@ var Builder = class {
+           customDescriptions
+         );
+       }
+-    } catch (e) {
+-      console.error("buildList failed: ", e);
+     } finally {
+       this._isBuilding = false;
+     }

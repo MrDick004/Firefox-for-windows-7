@@ -1,0 +1,1 @@
+Bug 1923799 - For opaque windows, don't bother clearing the nc-area on resize. r=win-reviewers,rkraesig    2024-10-12 04:55:59    fe3e5be37bfa46d5933baf3e23a43853b5269ffe

@@ -1,0 +1,303 @@
+diff --git a/gfx/src/nsITheme.h b/gfx/src/nsITheme.h
+index de89e64a03d8..7c2b56e6fb9e 100644
+--- a/gfx/src/nsITheme.h
++++ b/gfx/src/nsITheme.h
+@@ -229,6 +229,9 @@ class nsITheme : public nsISupports {
+    */
+   virtual bool ThemeDrawsFocusForWidget(nsIFrame*, StyleAppearance) = 0;
+ 
++  // Whether we want an inner focus ring for buttons and menulists.
++  virtual bool ThemeWantsButtonInnerFocusRing() { return false; }
++
+   /**
+    * Should we insert a dropmarker inside of combobox button?
+    */
+diff --git a/layout/forms/nsHTMLButtonControlFrame.cpp b/layout/forms/nsHTMLButtonControlFrame.cpp
+index 5b47ff899829..f36d82282c5b 100644
+--- a/layout/forms/nsHTMLButtonControlFrame.cpp
++++ b/layout/forms/nsHTMLButtonControlFrame.cpp
+@@ -36,6 +36,19 @@ nsHTMLButtonControlFrame::nsHTMLButtonControlFrame(ComputedStyle* aStyle,
+ 
+ nsHTMLButtonControlFrame::~nsHTMLButtonControlFrame() = default;
+ 
++void nsHTMLButtonControlFrame::Init(nsIContent* aContent,
++                                    nsContainerFrame* aParent,
++                                    nsIFrame* aPrevInFlow) {
++  nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
++
++  // get all the styles
++  ServoStyleSet* styleSet = PresContext()->StyleSet();
++
++  // Get styles assigned to -moz-focus-inner (i.e. dotted border on Windows)
++  mInnerFocusStyle = styleSet->ProbePseudoElementStyle(
++      *mContent->AsElement(), PseudoStyleType::mozFocusInner, nullptr, Style());
++}
++
+ NS_QUERYFRAME_HEAD(nsHTMLButtonControlFrame)
+   NS_QUERYFRAME_ENTRY(nsHTMLButtonControlFrame)
+ NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
+@@ -64,6 +77,119 @@ bool nsHTMLButtonControlFrame::ShouldClipPaintingToBorderBox() const {
+   return StyleDisplay()->mOverflowX != StyleOverflow::Visible;
+ }
+ 
++namespace mozilla {
++
++class nsDisplayButtonForeground final : public nsPaintedDisplayItem {
++ public:
++  nsDisplayButtonForeground(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame)
++      : nsPaintedDisplayItem(aBuilder, aFrame) {
++    MOZ_COUNT_CTOR(nsDisplayButtonForeground);
++  }
++
++  MOZ_COUNTED_DTOR_FINAL(nsDisplayButtonForeground)
++
++  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override;
++  bool CreateWebRenderCommands(
++      mozilla::wr::DisplayListBuilder& aBuilder,
++      mozilla::wr::IpcResourceUpdateQueue& aResources,
++      const StackingContextHelper& aSc,
++      mozilla::layers::RenderRootStateManager* aManager,
++      nsDisplayListBuilder* aDisplayListBuilder) override;
++  NS_DISPLAY_DECL_NAME("ButtonForeground", TYPE_BUTTON_FOREGROUND)
++};
++
++void nsDisplayButtonForeground::Paint(nsDisplayListBuilder* aBuilder,
++                                      gfxContext* aCtx) {
++  static_cast<nsHTMLButtonControlFrame*>(mFrame)->PaintInnerFocusBorder(
++      aBuilder, *aCtx, GetPaintRect(aBuilder, aCtx),
++      nsRect(ToReferenceFrame(), mFrame->GetSize()));
++}
++
++bool nsDisplayButtonForeground::CreateWebRenderCommands(
++    mozilla::wr::DisplayListBuilder& aBuilder,
++    mozilla::wr::IpcResourceUpdateQueue& aResources,
++    const StackingContextHelper& aSc,
++    mozilla::layers::RenderRootStateManager* aManager,
++    nsDisplayListBuilder* aDisplayListBuilder) {
++  bool borderIsEmpty = false;
++  bool dummy;
++  Maybe<nsCSSBorderRenderer> br =
++      static_cast<nsHTMLButtonControlFrame*>(mFrame)
++          ->CreateInnerFocusBorderRenderer(
++              aDisplayListBuilder, nullptr,
++              GetBounds(aDisplayListBuilder, &dummy),
++              nsRect(ToReferenceFrame(), mFrame->GetSize()), &borderIsEmpty);
++
++  if (!br) {
++    return borderIsEmpty;
++  }
++
++  aBuilder.StartGroup(this);
++  br->CreateWebRenderCommands(this, aBuilder, aResources, aSc);
++  aBuilder.FinishGroup();
++
++  return true;
++}
++
++}  // namespace mozilla
++
++static nsRect GetButtonInnerFocusRect(const nsIFrame* aFrame,
++                                      const ComputedStyle& aFocusStyle,
++                                      const nsRect& aRect) {
++  nsRect result = aRect;
++  result.Deflate(aFrame->GetUsedBorderAndPadding());
++
++  nsMargin innerFocusPadding;
++  aFocusStyle.StylePadding()->GetPadding(innerFocusPadding);
++
++  nsMargin framePadding = aFrame->GetUsedPadding();
++  innerFocusPadding.top = std::min(innerFocusPadding.top, framePadding.top);
++  innerFocusPadding.right =
++      std::min(innerFocusPadding.right, framePadding.right);
++  innerFocusPadding.bottom =
++      std::min(innerFocusPadding.bottom, framePadding.bottom);
++  innerFocusPadding.left = std::min(innerFocusPadding.left, framePadding.left);
++
++  result.Inflate(innerFocusPadding);
++  return result;
++}
++
++void nsHTMLButtonControlFrame::PaintInnerFocusBorder(
++    nsDisplayListBuilder* aBuilder, gfxContext& aRenderingContext,
++    const nsRect& aDirtyRect, const nsRect& aRect) {
++  if (!mInnerFocusStyle) {
++    return;
++  }
++
++  // we draw the -moz-focus-inner border just inside the button's
++  // normal border and padding, to match Windows themes.
++  PaintBorderFlags flags = aBuilder->ShouldSyncDecodeImages()
++                               ? PaintBorderFlags::SyncDecodeImages
++                               : PaintBorderFlags();
++
++  nsRect rect = GetButtonInnerFocusRect(this, *mInnerFocusStyle, aRect);
++  // We don't paint border images here, so the ImgDrawResult is useless.
++  Unused << nsCSSRendering::PaintBorder(PresContext(), aRenderingContext, this,
++                                        aDirtyRect, rect, mInnerFocusStyle,
++                                        flags);
++}
++
++Maybe<nsCSSBorderRenderer>
++nsHTMLButtonControlFrame::CreateInnerFocusBorderRenderer(
++    nsDisplayListBuilder* aBuilder, gfxContext* aRenderingContext,
++    const nsRect& aDirtyRect, const nsRect& aRect, bool* aBorderIsEmpty) {
++  if (!mInnerFocusStyle) {
++    return Nothing();
++  }
++
++  nsRect rect = GetButtonInnerFocusRect(this, *mInnerFocusStyle, aRect);
++  gfx::DrawTarget* dt =
++      aRenderingContext ? aRenderingContext->GetDrawTarget() : nullptr;
++  return nsCSSRendering::CreateBorderRenderer(PresContext(), dt, this,
++                                              aDirtyRect, rect,
++                                              mInnerFocusStyle, aBorderIsEmpty);
++}
++
+ void nsHTMLButtonControlFrame::BuildDisplayList(
+     nsDisplayListBuilder* aBuilder, const nsDisplayListSet& aLists) {
+   if (IsVisibleForPainting()) {
+@@ -98,6 +224,13 @@ void nsHTMLButtonControlFrame::BuildDisplayList(
+                              DisplayChildFlag::ForcePseudoStackingContext);
+   }
+ 
++  // Put the foreground outline on top of the children.
++  if (IsVisibleForPainting() && mInnerFocusStyle &&
++      mInnerFocusStyle->StyleBorder()->HasBorder() && IsThemed() &&
++      PresContext()->Theme()->ThemeWantsButtonInnerFocusRing()) {
++    aLists.Content()->AppendNewToTop<nsDisplayButtonForeground>(aBuilder, this);
++  }
++
+   // To draw border when selected in editor
+   DisplaySelectionOverlay(aBuilder, aLists.Content());
+ }
+@@ -316,6 +449,21 @@ nscoord nsHTMLButtonControlFrame::SynthesizeFallbackBaseline(
+   return Baseline::SynthesizeBOffsetFromMarginBox(this, aWM, aBaselineGroup);
+ }
+ 
++ComputedStyle* nsHTMLButtonControlFrame::GetAdditionalComputedStyle(
++    int32_t aIndex) const {
++  if (aIndex == 0) {
++    return mInnerFocusStyle;
++  }
++  return nullptr;
++}
++
++void nsHTMLButtonControlFrame::SetAdditionalComputedStyle(
++    int32_t aIndex, ComputedStyle* aComputedStyle) {
++  if (aIndex == 0) {
++    mInnerFocusStyle = aComputedStyle;
++  }
++}
++
+ void nsHTMLButtonControlFrame::AppendDirectlyOwnedAnonBoxes(
+     nsTArray<OwnedAnonBox>& aResult) {
+   MOZ_ASSERT(mFrames.FirstChild(), "Must have our button-content anon box");
+diff --git a/layout/forms/nsHTMLButtonControlFrame.h b/layout/forms/nsHTMLButtonControlFrame.h
+index ab60b9c6d347..c91026d4445c 100644
+--- a/layout/forms/nsHTMLButtonControlFrame.h
++++ b/layout/forms/nsHTMLButtonControlFrame.h
+@@ -42,6 +42,13 @@ class nsHTMLButtonControlFrame : public nsContainerFrame {
+                        mozilla::WidgetGUIEvent* aEvent,
+                        nsEventStatus* aEventStatus) override;
+ 
++  void Init(nsIContent* aContent, nsContainerFrame* aParent,
++            nsIFrame* aPrevInFlow) override;
++
++  ComputedStyle* GetAdditionalComputedStyle(int32_t aIndex) const override;
++  void SetAdditionalComputedStyle(int32_t aIndex,
++                                  ComputedStyle* aComputedStyle) override;
++
+ #ifdef DEBUG
+   void AppendFrames(ChildListID aListID, nsFrameList&& aFrameList) override;
+   void InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
+@@ -68,6 +75,14 @@ class nsHTMLButtonControlFrame : public nsContainerFrame {
+   // Return the ::-moz-button-content anonymous box.
+   void AppendDirectlyOwnedAnonBoxes(nsTArray<OwnedAnonBox>& aResult) override;
+ 
++  mozilla::Maybe<nsCSSBorderRenderer> CreateInnerFocusBorderRenderer(
++      nsDisplayListBuilder* aBuilder, gfxContext* aRenderingContext,
++      const nsRect& aDirtyRect, const nsRect& aRect, bool* aBorderIsEmpty);
++
++  void PaintInnerFocusBorder(nsDisplayListBuilder* aBuilder,
++                             gfxContext& aRenderingContext,
++                             const nsRect& aDirtyRect, const nsRect& aRect);
++
+  protected:
+   nsHTMLButtonControlFrame(ComputedStyle* aStyle, nsPresContext* aPresContext,
+                            nsIFrame::ClassID aID);
+@@ -88,6 +103,8 @@ class nsHTMLButtonControlFrame : public nsContainerFrame {
+   nscoord SynthesizeFallbackBaseline(
+       mozilla::WritingMode aWM,
+       BaselineSharingGroup aBaselineGroup) const override;
++
++  RefPtr<mozilla::ComputedStyle> mInnerFocusStyle;
+ };
+ 
+ #endif
+diff --git a/layout/painting/nsCSSRenderingBorders.h b/layout/painting/nsCSSRenderingBorders.h
+index 4c7f76410735..059fa35bc24d 100644
+--- a/layout/painting/nsCSSRenderingBorders.h
++++ b/layout/painting/nsCSSRenderingBorders.h
+@@ -28,6 +28,7 @@ class nsDisplayListBuilder;
+ 
+ class nsDisplayBorder;
+ class nsDisplayButtonBorder;
++class nsDisplayButtonForeground;
+ class nsDisplayOutline;
+ 
+ enum class StyleBorderStyle : uint8_t;
+@@ -88,6 +89,7 @@ class nsCSSBorderRenderer final {
+ 
+   friend class mozilla::nsDisplayOutline;
+   friend class mozilla::nsDisplayButtonBorder;
++  friend class mozilla::nsDisplayButtonForeground;
+ 
+  public:
+   nsCSSBorderRenderer(nsPresContext* aPresContext, DrawTarget* aDrawTarget,
+diff --git a/layout/painting/nsDisplayItemTypesList.h b/layout/painting/nsDisplayItemTypesList.h
+index 0a4e09d7093e..e6eb085ea160 100644
+--- a/layout/painting/nsDisplayItemTypesList.h
++++ b/layout/painting/nsDisplayItemTypesList.h
+@@ -18,6 +18,7 @@ DECLARE_DISPLAY_ITEM_TYPE(BLEND_MODE,
+ DECLARE_DISPLAY_ITEM_TYPE(BORDER, 0)
+ DECLARE_DISPLAY_ITEM_TYPE(BOX_SHADOW_INNER, TYPE_RENDERS_NO_IMAGES)
+ DECLARE_DISPLAY_ITEM_TYPE(BOX_SHADOW_OUTER, TYPE_RENDERS_NO_IMAGES)
++DECLARE_DISPLAY_ITEM_TYPE(BUTTON_FOREGROUND, TYPE_IS_CONTENTFUL)
+ DECLARE_DISPLAY_ITEM_TYPE(CANVAS, TYPE_RENDERS_NO_IMAGES)
+ DECLARE_DISPLAY_ITEM_TYPE(CANVAS_BACKGROUND_IMAGE, TYPE_IS_CONTENTFUL)
+ DECLARE_DISPLAY_ITEM_TYPE(CANVAS_FOCUS, TYPE_RENDERS_NO_IMAGES)
+diff --git a/layout/style/res/forms.css b/layout/style/res/forms.css
+index deff1f67406a..eddbe20ef749 100644
+--- a/layout/style/res/forms.css
++++ b/layout/style/res/forms.css
+@@ -583,6 +583,17 @@ input:is([type=reset], [type=button], [type=submit], [type=color]):active:hover
+   background-color: -moz-buttonactiveface;
+ }
+ 
++::-moz-focus-inner {
++  /* Note this padding only affects the -moz-focus-inner ring, not the button itself */
++  padding-block: 0;
++  padding-inline: 2px;
++  border: 1px dotted transparent;
++}
++
++:focus-visible::-moz-focus-inner {
++  border-color: currentColor;
++}
++
+ :is(:disabled, :disabled:active)::file-selector-button,
+ button:is(:disabled, :disabled:active),
+ input:is([type=reset], [type=button], [type=submit], [type=color]):is(:disabled, :disabled:active),
+diff --git a/widget/windows/nsNativeThemeWin.h b/widget/windows/nsNativeThemeWin.h
+index e9bea389a909..1d38a87c5fe9 100644
+--- a/widget/windows/nsNativeThemeWin.h
++++ b/widget/windows/nsNativeThemeWin.h
+@@ -79,6 +79,8 @@ class nsNativeThemeWin final : public Theme {
+ 
+   bool ThemeDrawsFocusForWidget(nsIFrame*, StyleAppearance) override;
+ 
++  bool ThemeWantsButtonInnerFocusRing() override { return true; }
++
+   nsNativeThemeWin();
+ 
+  protected:

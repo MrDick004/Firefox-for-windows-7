@@ -1,0 +1,89 @@
+diff --git a/gfx/thebes/gfxPlatform.cpp b/gfx/thebes/gfxPlatform.cpp
+index 3ed920e442b1..55f6f8ab49c6 100644
+--- a/gfx/thebes/gfxPlatform.cpp
++++ b/gfx/thebes/gfxPlatform.cpp
+@@ -1875,16 +1875,14 @@ mozilla::layers::DiagnosticTypes gfxPlatform::GetLayerDiagnosticTypes() {
+ BackendPrefsData gfxPlatform::GetBackendPrefs() const {
+   BackendPrefsData data;
+ 
+-  data.mCanvasBitmask = BackendTypeBit(BackendType::SKIA);
+-  data.mContentBitmask = BackendTypeBit(BackendType::SKIA);
+-
+-#ifdef MOZ_WIDGET_GTK
+-  data.mCanvasBitmask |= BackendTypeBit(BackendType::CAIRO);
+-  data.mContentBitmask |= BackendTypeBit(BackendType::CAIRO);
++  data.mCanvasBitmask = BackendTypeBit(BackendType::CAIRO);
++  data.mContentBitmask = BackendTypeBit(BackendType::CAIRO);
++#ifdef USE_SKIA
++  data.mCanvasBitmask |= BackendTypeBit(BackendType::SKIA);
++  data.mContentBitmask |= BackendTypeBit(BackendType::SKIA);
+ #endif
+-
+-  data.mCanvasDefault = BackendType::SKIA;
+-  data.mContentDefault = BackendType::SKIA;
++  data.mCanvasDefault = BackendType::CAIRO;
++  data.mContentDefault = BackendType::CAIRO;
+ 
+   return data;
+ }
+@@ -1917,10 +1915,8 @@ void gfxPlatform::InitBackendPrefs(BackendPrefsData&& aPrefsData) {
+     mContentBackendBitmask |= BackendTypeBit(aPrefsData.mContentDefault);
+   }
+ 
+-  uint32_t swBackendBits = BackendTypeBit(BackendType::SKIA);
+-#ifdef MOZ_WIDGET_GTK
+-  swBackendBits |= BackendTypeBit(BackendType::CAIRO);
+-#endif
++  uint32_t swBackendBits =
++      BackendTypeBit(BackendType::SKIA) | BackendTypeBit(BackendType::CAIRO);
+   mSoftwareBackend = GetContentBackendPref(swBackendBits);
+   if (mSoftwareBackend == BackendType::NONE) {
+     mSoftwareBackend = BackendType::SKIA;
+diff --git a/gfx/thebes/gfxWindowsPlatform.cpp b/gfx/thebes/gfxWindowsPlatform.cpp
+index 250ce20cb263..748bc35434d5 100644
+--- a/gfx/thebes/gfxWindowsPlatform.cpp
++++ b/gfx/thebes/gfxWindowsPlatform.cpp
+@@ -516,8 +516,10 @@ bool gfxWindowsPlatform::HandleDeviceReset() {
+ BackendPrefsData gfxWindowsPlatform::GetBackendPrefs() const {
+   BackendPrefsData data;
+ 
+-  data.mCanvasBitmask = BackendTypeBit(BackendType::SKIA);
+-  data.mContentBitmask = BackendTypeBit(BackendType::SKIA);
++  data.mCanvasBitmask =
++      BackendTypeBit(BackendType::CAIRO) | BackendTypeBit(BackendType::SKIA);
++  data.mContentBitmask =
++      BackendTypeBit(BackendType::CAIRO) | BackendTypeBit(BackendType::SKIA);
+   data.mCanvasDefault = BackendType::SKIA;
+   data.mContentDefault = BackendType::SKIA;
+ 
+diff --git a/modules/libpref/init/all.js b/modules/libpref/init/all.js
+index e33e66179edf..142dd410fa88 100644
+--- a/modules/libpref/init/all.js
++++ b/modules/libpref/init/all.js
+@@ -401,14 +401,14 @@ pref("gfx.font_ahem_antialias_none", false);
+ 
+ #if defined(XP_WIN)
+   // comma separated list of backends to use in order of preference
+-  // e.g., pref("gfx.canvas.azure.backends", "direct2d,skia");
+-  pref("gfx.canvas.azure.backends", "direct2d1.1,skia");
++// e.g., pref("gfx.canvas.azure.backends", "direct2d,skia,cairo");
++pref("gfx.canvas.azure.backends", "direct2d1.1,skia,cairo");
++pref("gfx.content.azure.backends", "direct2d1.1,skia,cairo");
+ #elif defined(XP_MACOSX)
+   pref("gfx.canvas.azure.backends", "skia");
+ #else
+   pref("gfx.canvas.azure.backends", "skia");
+ #endif
+-pref("gfx.content.azure.backends", "skia");
+ 
+ #ifdef XP_WIN
+   pref("gfx.webrender.flip-sequential", false);
+@@ -544,6 +544,8 @@ pref("toolkit.sqlitejsm.loglevel", "Error");
+ pref("toolkit.tabbox.switchByScrolling", false);
+ 
+ // Telemetry settings.
++// Disabling telemetry hopefully
++pref("toolkit.telemetry.enabled", false);
+ // Server to submit telemetry pings to.
+ pref("toolkit.telemetry.server", "https://incoming.telemetry.mozilla.org");
+ // Telemetry server owner. Please change if you set toolkit.telemetry.server to a different server

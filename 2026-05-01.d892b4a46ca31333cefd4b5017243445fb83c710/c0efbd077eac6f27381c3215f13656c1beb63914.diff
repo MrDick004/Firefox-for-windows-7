@@ -1,0 +1,310 @@
+diff --git a/toolkit/content/widgets/menu.js b/toolkit/content/widgets/menu.js
+index 56eaa5908342..70b9521a271b 100644
+--- a/toolkit/content/widgets/menu.js
++++ b/toolkit/content/widgets/menu.js
+@@ -360,6 +360,7 @@
+         ".menu-text": "value=label,accesskey,crop",
+         ".menu-iconic-highlightable-text":
+           "text=label,crop,accesskey,highlightable",
++        ".menubar-left": "src=image",
+         ".menu-iconic-icon":
+           "src=image,triggeringprincipal=iconloadingprincipal,validate",
+         ".menu-iconic-accel": "value=acceltext",
+@@ -391,16 +392,27 @@
+     }
+ 
+     get fragment() {
++      let { isMenubarChild, isIconic } = this;
+       let fragment = null;
+-      if (this.isMenubarChild) {
++      // Add aria-hidden="true" on all DOM, since XULMenuAccessible handles accessibility here.
++      if (isMenubarChild && isIconic) {
++        if (!MozMenu.menubarIconicFrag) {
++          MozMenu.menubarIconicFrag = MozXULElement.parseXULToFragment(`
++          <image class="menubar-left" aria-hidden="true"/>
++          <label class="menubar-text" crop="end" aria-hidden="true"/>
++        `);
++        }
++        fragment = document.importNode(MozMenu.menubarIconicFrag, true);
++      }
++      if (isMenubarChild && !isIconic) {
+         if (!MozMenu.menubarFrag) {
+-          // Add aria-hidden="true" on all DOM, since XULMenuAccessible handles accessibility here.
+           MozMenu.menubarFrag = MozXULElement.parseXULToFragment(`
+           <label class="menubar-text" crop="end" aria-hidden="true"/>
+         `);
+         }
+         fragment = document.importNode(MozMenu.menubarFrag, true);
+-      } else if (this.isIconic) {
++      }
++      if (!isMenubarChild && isIconic) {
+         if (!MozMenu.normalIconicFrag) {
+           MozMenu.normalIconicFrag = MozXULElement.parseXULToFragment(`
+           <hbox class="menu-iconic-left" align="center" pack="center" aria-hidden="true">
+@@ -418,7 +430,8 @@
+         }
+ 
+         fragment = document.importNode(MozMenu.normalIconicFrag, true);
+-      } else {
++      }
++      if (!isMenubarChild && !isIconic) {
+         if (!MozMenu.normalFrag) {
+           MozMenu.normalFrag = MozXULElement.parseXULToFragment(`
+           <label class="menu-text" crop="end" aria-hidden="true"/>
+diff --git a/toolkit/content/xul.css b/toolkit/content/xul.css
+index bd80261aee27..134acec351c8 100644
+--- a/toolkit/content/xul.css
++++ b/toolkit/content/xul.css
+@@ -217,6 +217,7 @@ html|label.toolbarbutton-badge:empty {
+ .toolbarbutton-menu-dropmarker,
+ .treecol-text,
+ .treecol-sortdirection,
++.menubar-left,
+ .menubar-text,
+ .menu-text,
+ .menu-iconic-text,
+diff --git a/toolkit/themes/linux/global/menu.css b/toolkit/themes/linux/global/menu.css
+index d499f72cae7a..436a160c41e3 100644
+--- a/toolkit/themes/linux/global/menu.css
++++ b/toolkit/themes/linux/global/menu.css
+@@ -12,11 +12,25 @@
+ 
+ /* ..... internal content .... */
+ 
++.menu-text,
++.menu-iconic-left,
++.menu-iconic-text,
++.menubar-left {
++  margin-block: 0;
++  margin-inline: 0 2px;
++}
++
+ .menu-text {
+   /* This is (18 + the size of end-padding on .menu-iconic-left)px */
+   margin-inline-start: 21px;
+ }
+ 
++.menu-accel,
++.menu-iconic-accel {
++  margin-block: 0;
++  margin-inline-start: 7px;
++}
++
+ .menu-accel-container {
+   justify-content: flex-end;
+ }
+@@ -27,6 +41,15 @@
+   padding-inline-end: 3px;
+ }
+ 
++.menu-iconic-icon {
++  width: 16px;
++  height: 16px;
++}
++
++.menubar-text {
++  margin: 0 1px;
++}
++
+ menuitem:is([type="checkbox"], [checked="true"]) .menu-iconic-icon {
+   appearance: auto;
+   -moz-default-appearance: checkbox;
+diff --git a/toolkit/themes/osx/global/menu.css b/toolkit/themes/osx/global/menu.css
+index ece39b8bf04c..e02acda545e3 100644
+--- a/toolkit/themes/osx/global/menu.css
++++ b/toolkit/themes/osx/global/menu.css
+@@ -6,6 +6,43 @@
+ 
+ @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
+ 
++/* Internal content */
++
++.menu-text,
++.menu-iconic-text,
++.menu-accel,
++.menu-iconic-accel {
++  margin: 0;
++}
++
++.menu-iconic-icon {
++  height: 16px;
++  margin-block: -2px;
++  margin-inline-end: 6px;
++  /* Empty icons shouldn't take up room, so we need to compensate
++   * the 6px margin-end with a negative margin-start.
++   */
++  margin-inline-start: -6px;
++}
++
++/* menuitems with icons */
++.menuitem-iconic > .menu-iconic-left > .menu-iconic-icon,
++.menu-iconic > .menu-iconic-left > .menu-iconic-icon,
++menuitem[image] > .menu-iconic-left > .menu-iconic-icon {
++  margin-inline-start: 0;
++  width: 16px;
++}
++
++/* Internal content  */
++
++.menubar-left {
++  margin: 0 2px;
++}
++
++.menubar-text {
++  margin: 0 1px;
++}
++
+ /* checked menuitems */
+ 
+ menupopup[needsgutter] {
+diff --git a/toolkit/themes/shared/menu-shared.css b/toolkit/themes/shared/menu-shared.css
+index 066833958c20..94d26dc9bedf 100644
+--- a/toolkit/themes/shared/menu-shared.css
++++ b/toolkit/themes/shared/menu-shared.css
+@@ -154,12 +154,11 @@ menubar {
+   font: menu;
+ }
+ 
+-menubar > menu {
++menubar  > menu {
+   @media (-moz-platform: linux) {
+     color: inherit;
+     background-color: transparent;
+     border-radius: 0;
+-    padding: .25em .5em;
+     padding-bottom: 1px;
+     border-bottom: 3px solid transparent;
+ 
+@@ -184,7 +183,7 @@ menubar > menu {
+     }
+   }
+   @media (-moz-platform: windows) {
+-    padding: 1px 6px 2px;
++    padding: 0;
+ 
+     &:-moz-window-inactive {
+       color: ThreeDShadow;
+@@ -207,10 +206,6 @@ menubar > menu {
+   }
+ }
+ 
+-.menubar-text {
+-  margin: 0;
+-}
+-
+ menu,
+ menuitem,
+ menucaption {
+@@ -275,39 +270,15 @@ menucaption {
+   }
+ }
+ 
+-.menu-text,
+-.menu-iconic-text,
+-.menu-accel,
+-.menu-iconic-accel {
+-  margin: 0;
+-  @media (-moz-platform: windows) {
+-    padding: 1px 0;
++@media (-moz-platform: macos) {
++  :is(.menu-accel, .menu-iconic-accel)[value] {
++    margin-inline-start: 25px;
+   }
+-  @media (-moz-platform: linux) {
+-    margin-inline: 0 2px;
+-  }
+-}
+-
+-.menu-accel,
+-.menu-iconic-accel {
+-  margin-inline: 0.74em 1.35em;
+-  @media (-moz-platform: macos) {
+-    margin-inline: 25px 0;
+-  }
+-  @media (-moz-platform: linux) {
+-    /* Matches the margin-inline-end on iconic-left */
+-    margin-inline: 0.5em 0;
+-  }
+-}
+-
+ @media (-moz-platform: macos) {
+   /* On macOS, empty acceltext shouldn't take up any space */
+   :is(menu, menuitem):not([acceltext]) > .menu-accel-container {
+     display: none;
+   }
+ }
+ 
+-.menu-iconic-icon {
+-  width: 16px;
+-  height: 16px;
+ }
+diff --git a/toolkit/themes/windows/global/menu.css b/toolkit/themes/windows/global/menu.css
+index 1a9a1c5394b5..2a1c9ea97030 100644
+--- a/toolkit/themes/windows/global/menu.css
++++ b/toolkit/themes/windows/global/menu.css
+@@ -12,6 +12,24 @@
+ 
+ /* ..... Internal content .... */
+ 
++.menu-accel,
++.menu-iconic-accel,
++.menu-text,
++.menu-iconic-text {
++  margin: 0;
++  padding: 1px 0;
++}
++
++.menu-accel,
++.menu-iconic-accel {
++  margin-inline: 0.74em 1.35em;
++}
++
++.menu-iconic-icon {
++  width: 16px;
++  height: 16px;
++}
++
+ .menu-iconic > .menu-iconic-left,
+ .menuitem-iconic > .menu-iconic-left {
+   padding-top: 2px;
+@@ -22,6 +40,10 @@ menuitem:is([type="checkbox"], [type="radio"]):not([checked="true"]) > .menu-ico
+ }
+ 
+ 
++.menubar-text {
++  margin: 1px 6px 2px;
++}
++
+ menulist > menupopup > menuitem[_moz-menuactive][disabled="true"] {
+   color: GrayText;
+ }
+@@ -44,17 +66,17 @@ menupopup[needsgutter] menuitem:not([checked="true"], [icon], .menuitem-iconic)
+ 
+ menuitem[checked="true"] {
+   padding-inline-start: 12px;
++}
+ 
+-  /* We need to do something to override the default style for selected
+-     checkboxes and radio buttons because the native drawing we use on other
+-     Windows versions looks pretty bad with the Win10 styles, so for now we'll
+-     insert a generic checkmark icon for both types. */
+-  > .menu-iconic-left {
+-    -moz-context-properties: fill, fill-opacity;
+-    fill: currentColor;
+-    fill-opacity: var(--menu-icon-opacity);
+-    list-style-image: url("chrome://global/skin/icons/menu-check.svg");
+-    width: 16px;
+-    margin-inline-end: 8px;
+-  }
++/* We need to do something to override the default style for selected
++   checkboxes and radio buttons because the native drawing we use on other
++   Windows versions looks pretty bad with the Win10 styles, so for now we'll
++   insert a generic checkmark icon for both types. */
++menuitem[checked="true"] > .menu-iconic-left {
++  -moz-context-properties: fill, fill-opacity;
++  fill: currentColor;
++  fill-opacity: var(--menu-icon-opacity);
++  list-style-image: url("chrome://global/skin/icons/menu-check.svg");
++  width: 16px;
++  margin-inline-end: 8px;
+ }

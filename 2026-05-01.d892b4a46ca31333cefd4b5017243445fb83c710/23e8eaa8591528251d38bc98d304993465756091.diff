@@ -1,0 +1,34 @@
+diff --git a/toolkit/themes/shared/menu-shared.css b/toolkit/themes/shared/menu-shared.css
+index 94d26dc9bedf..bdf895196ace 100644
+--- a/toolkit/themes/shared/menu-shared.css
++++ b/toolkit/themes/shared/menu-shared.css
+@@ -183,12 +183,6 @@ menubar  > menu {
+     }
+   }
+   @media (-moz-platform: windows) {
+-    padding: 0;
+-
+-    &:-moz-window-inactive {
+-      color: ThreeDShadow;
+-    }
+-
+     &:not([disabled="true"]) {
+       color: inherit;
+     }
+diff --git a/toolkit/themes/windows/global/menu.css b/toolkit/themes/windows/global/menu.css
+index 2a1c9ea97030..f3bcdc26b7c3 100644
+--- a/toolkit/themes/windows/global/menu.css
++++ b/toolkit/themes/windows/global/menu.css
+@@ -10,6 +10,12 @@
+ 
+ @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
+ 
++/* ::::: menu/menuitem ::::: */
++
++menubar > menu:-moz-window-inactive {
++  color: ThreeDShadow;
++}
++
+ /* ..... Internal content .... */
+ 
+ .menu-accel,

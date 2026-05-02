@@ -1,0 +1,1 @@
+Bug 1966505 - Refactor how overlapped operations are handled across connectors and listeners r=afranchuk,yjuglaret    2025-05-23 15:58:20    c0776f54043b7fec65ec99004b2348598e21990f

@@ -1,0 +1,87 @@
+diff --git a/widget/gtk/nsWindow.h b/widget/gtk/nsWindow.h
+index 38e148313652..d1727a37ef24 100644
+--- a/widget/gtk/nsWindow.h
++++ b/widget/gtk/nsWindow.h
+@@ -879,6 +879,11 @@ class nsWindow final : public nsBaseWidget {
+   void LogPopupGravity(GdkGravity aGravity);
+ #endif
+ 
++  bool IsTopLevelWindowType() const {
++    return mWindowType == WindowType::TopLevel ||
++           mWindowType == WindowType::Dialog;
++  }
++
+   // mPopupPosition is the original popup position/size from layout, set by
+   // nsWindow::Move() or nsWindow::Resize().
+   // Popup position is relative to main (toplevel) window.
+diff --git a/widget/nsBaseWidget.cpp b/widget/nsBaseWidget.cpp
+index dee950ba77e0..e21349311c49 100644
+--- a/widget/nsBaseWidget.cpp
++++ b/widget/nsBaseWidget.cpp
+@@ -546,14 +546,7 @@ void nsBaseWidget::Destroy() {
+ 
+ nsIWidget* nsIWidget::GetTopLevelWidget() {
+   auto* cur = this;
+-  while (true) {
+-    if (cur->IsTopLevelWidget()) {
+-      break;
+-    }
+-    nsIWidget* parent = cur->GetParent();
+-    if (!parent) {
+-      break;
+-    }
++  while (nsIWidget* parent = cur->GetParent()) {
+     cur = parent;
+   }
+   return cur;
+diff --git a/widget/nsIWidget.h b/widget/nsIWidget.h
+index bbadacd8e839..8378789baa4b 100644
+--- a/widget/nsIWidget.h
++++ b/widget/nsIWidget.h
+@@ -541,14 +541,9 @@ class nsIWidget : public nsISupports {
+   /**
+    * Return the top level Widget of this Widget
+    *
+-   * @return the closest top level widget, as in IsTopLevelWidget().
++   * @return the top level widget
+    */
+   nsIWidget* GetTopLevelWidget();
+-  bool IsTopLevelWidget() const {
+-    return mWindowType == WindowType::TopLevel ||
+-           mWindowType == WindowType::Dialog ||
+-           mWindowType == WindowType::Invisible;
+-  }
+ 
+   /**
+    * Return the physical DPI of the screen containing the window ...
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index 2a763ab1c5d0..fcb6664748b1 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -187,6 +187,11 @@ class nsWindow final : public nsBaseWidget {
+    */
+   nsWindow* GetParentWindowBase(bool aIncludeOwner);
+ 
++  bool IsTopLevelWidget() const {
++    return mWindowType == WindowType::TopLevel ||
++           mWindowType == WindowType::Dialog;
++  }
++
+   // nsIWidget interface
+   using nsBaseWidget::Create;  // for Create signature not overridden here
+   [[nodiscard]] nsresult Create(nsIWidget* aParent,
+diff --git a/xpfe/appshell/AppWindow.cpp b/xpfe/appshell/AppWindow.cpp
+index 6119eddbd9e0..15251422c465 100644
+--- a/xpfe/appshell/AppWindow.cpp
++++ b/xpfe/appshell/AppWindow.cpp
+@@ -744,9 +744,7 @@ NS_IMETHODIMP AppWindow::Center(nsIAppWindow* aRelative, bool aScreen,
+     return NS_OK;
+   }
+ 
+-  if (!aScreen && !aRelative) {
+-    return NS_ERROR_INVALID_ARG;
+-  }
++  if (!aScreen && !aRelative) return NS_ERROR_INVALID_ARG;
+ 
+   nsCOMPtr<nsIScreenManager> screenmgr =
+       do_GetService("@mozilla.org/gfx/screenmanager;1", &result);
