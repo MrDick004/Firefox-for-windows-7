@@ -1,0 +1,1 @@
+Bug 1559810 - disallow Cairo as content/canvas backend. r=jrmuizel    2019-06-25 02:45:16    94712e80f4c82bd8a28b6671cbf29fd42994bab9

@@ -1,0 +1,15 @@
+diff --git a/tools/profiler/public/ETWTools.h b/tools/profiler/public/ETWTools.h
+index aeb9214058c0..bd2998a4b74c 100644
+--- a/tools/profiler/public/ETWTools.h
++++ b/tools/profiler/public/ETWTools.h
+@@ -7,6 +7,10 @@
+ #ifndef ETWTools_h
+ #define ETWTools_h
+ 
++// This code needs to run on Windows 7 and this is magic which
++// removes static linking to EventSetInformation
++#define TLG_HAVE_EVENT_SET_INFORMATION 2
++
+ #include "mozilla/BaseProfilerMarkers.h"
+ #include "mozilla/Flow.h"
+ #include "mozilla/TimeStamp.h"

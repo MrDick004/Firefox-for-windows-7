@@ -1,0 +1,1 @@
+Bug 1845623 - Remove more dead native appearance values. r=mhowell    2023-07-27 22:39:09    13fba10a6be5c06bf1f4ea2790f4880677450d53

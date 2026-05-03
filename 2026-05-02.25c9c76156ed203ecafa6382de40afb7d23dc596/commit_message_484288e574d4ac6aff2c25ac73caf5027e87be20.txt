@@ -1,0 +1,1 @@
+Bug 1926862 - Add transparency support to RenderCompositorANGLE. r=gfx-reviewers,nical    2024-11-09 06:17:11    484288e574d4ac6aff2c25ac73caf5027e87be20

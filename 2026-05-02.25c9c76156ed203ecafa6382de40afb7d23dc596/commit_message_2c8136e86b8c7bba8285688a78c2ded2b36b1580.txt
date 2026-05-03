@@ -1,0 +1,1 @@
+Bug 1889429 - Remove most native tree code. r=mac-reviewers,desktop-theme-reviewers,places-reviewers,win-reviewers,dao,handyman,mstange    2024-05-07 03:22:35    2c8136e86b8c7bba8285688a78c2ded2b36b1580

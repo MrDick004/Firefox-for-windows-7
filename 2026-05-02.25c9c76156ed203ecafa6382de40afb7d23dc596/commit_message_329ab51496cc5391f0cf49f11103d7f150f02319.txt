@@ -1,0 +1,1 @@
+Bug 1890370 - Remove libtheora from the tree. r=sylvestre,frontend-codestyle-reviewers,zeid    2024-07-15 22:20:37    329ab51496cc5391f0cf49f11103d7f150f02319

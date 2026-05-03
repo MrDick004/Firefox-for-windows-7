@@ -1,0 +1,126 @@
+diff --git a/security/sandbox/chromium/base/synchronization/lock_impl.h b/security/sandbox/chromium/base/synchronization/lock_impl.h
+index cfe53db2f52ae..c79db4013f71a 100644
+--- a/security/sandbox/chromium/base/synchronization/lock_impl.h
++++ b/security/sandbox/chromium/base/synchronization/lock_impl.h
+@@ -52,10 +52,10 @@ class BASE_EXPORT LockImpl {
+ 
+   // If the lock is not held, take it and return true.  If the lock is already
+   // held by something else, immediately return false.
+-  inline bool Try();
++  bool Try();
+ 
+   // Take the lock, blocking until it is available if necessary.
+-  inline void Lock();
++  void Lock();
+ 
+   // Release the lock.  This must only be called by the lock's holder: after
+   // a successful call to Try, or a call to Lock.
+@@ -71,49 +71,14 @@ class BASE_EXPORT LockImpl {
+   static bool PriorityInheritanceAvailable();
+ #endif
+ 
+-  void LockInternal();
+   NativeHandle native_handle_;
+ };
+ 
+-void LockImpl::Lock() {
+-  // Try the lock first to acquire it cheaply if it's not contended. Try() is
+-  // cheap on platforms with futex-type locks, as it doesn't call into the
+-  // kernel. Not marked LIKELY(), as:
+-  // 1. We don't know how much contention the lock would experience
+-  // 2. This may lead to weird-looking code layout when inlined into a caller
+-  // with (UN)LIKELY() annotations.
+-  if (Try()) {
+-    return;
+-  }
+-
+-  LockInternal();
+-}
+-
+ #if BUILDFLAG(IS_WIN)
+-bool LockImpl::Try() {
+-  return !!::TryAcquireSRWLockExclusive(
+-      reinterpret_cast<PSRWLOCK>(&native_handle_));
+-}
+-
+ void LockImpl::Unlock() {
+   ::ReleaseSRWLockExclusive(reinterpret_cast<PSRWLOCK>(&native_handle_));
+ }
+-
+ #elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
+-
+-#if DCHECK_IS_ON()
+-BASE_EXPORT void dcheck_trylock_result(int rv);
+-BASE_EXPORT void dcheck_unlock_result(int rv);
+-#endif
+-
+-bool LockImpl::Try() {
+-  int rv = pthread_mutex_trylock(&native_handle_);
+-#if DCHECK_IS_ON()
+-  dcheck_trylock_result(rv);
+-#endif
+-  return rv == 0;
+-}
+-
+ void LockImpl::Unlock() {
+   [[maybe_unused]] int rv = pthread_mutex_unlock(&native_handle_);
+ #if DCHECK_IS_ON()
+diff --git a/security/sandbox/chromium/base/synchronization/lock_impl_posix.cc b/security/sandbox/chromium/base/synchronization/lock_impl_posix.cc
+index 0793661d62b56..24dc107258f25 100644
+--- a/security/sandbox/chromium/base/synchronization/lock_impl_posix.cc
++++ b/security/sandbox/chromium/base/synchronization/lock_impl_posix.cc
+@@ -80,7 +80,24 @@ LockImpl::~LockImpl() {
+   DCHECK_EQ(rv, 0) << ". " << SystemErrorCodeToString(rv);
+ }
+ 
+-void LockImpl::LockInternal() {
++bool LockImpl::Try() {
++  int rv = pthread_mutex_trylock(&native_handle_);
++  DCHECK(rv == 0 || rv == EBUSY) << ". " << SystemErrorCodeToString(rv);
++  return rv == 0;
++}
++
++void LockImpl::Lock() {
++  // The ScopedLockAcquireActivity below is relatively expensive and so its
++  // actions can become significant due to the very large number of locks that
++  // tend to be used throughout the build. It is also not needed unless the lock
++  // is contended.
++  //
++  // To avoid this cost in the vast majority of the calls, simply "try" the lock
++  // first and only do the (tracked) blocking call if that fails. |Try()| is
++  // cheap on platforms with futex(), as it doesn't call into the kernel.
++  if (Try())
++    return;
++
+   int rv = pthread_mutex_lock(&native_handle_);
+   DCHECK_EQ(rv, 0) << ". " << SystemErrorCodeToString(rv);
+ }
+diff --git a/security/sandbox/chromium/base/synchronization/lock_impl_win.cc b/security/sandbox/chromium/base/synchronization/lock_impl_win.cc
+index a040eb2d18602..6a219d4110277 100644
+--- a/security/sandbox/chromium/base/synchronization/lock_impl_win.cc
++++ b/security/sandbox/chromium/base/synchronization/lock_impl_win.cc
+@@ -15,7 +15,23 @@ LockImpl::LockImpl() : native_handle_(SRWLOCK_INIT) {}
+ 
+ LockImpl::~LockImpl() = default;
+ 
+-void LockImpl::LockInternal() {
++bool LockImpl::Try() {
++  return !!::TryAcquireSRWLockExclusive(
++      reinterpret_cast<PSRWLOCK>(&native_handle_));
++}
++
++void LockImpl::Lock() {
++  // The ScopedLockAcquireActivity below is relatively expensive and so its
++  // actions can become significant due to the very large number of locks that
++  // tend to be used throughout the build. It is also not needed unless the lock
++  // is contended.
++  //
++  // To avoid this cost in the vast majority of the calls, simply "try" the lock
++  // first and only do the (tracked) blocking call if that fails. |Try()| is
++  // cheap, as it doesn't call into the kernel.
++  if (Try())
++    return;
++
+   ::AcquireSRWLockExclusive(reinterpret_cast<PSRWLOCK>(&native_handle_));
+ }
+ 

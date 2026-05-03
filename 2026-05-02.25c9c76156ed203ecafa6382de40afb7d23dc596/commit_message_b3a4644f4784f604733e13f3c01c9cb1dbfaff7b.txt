@@ -1,0 +1,1 @@
+Bug 1754301 - remove pref security.csp.enable r=ckerschb,mccr8    2022-02-16 00:03:27    b3a4644f4784f604733e13f3c01c9cb1dbfaff7b

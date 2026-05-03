@@ -1,0 +1,24 @@
+diff --git a/toolkit/themes/shared/menu-shared.css b/toolkit/themes/shared/menu-shared.css
+index a95e8c266fa9..066833958c20 100644
+--- a/toolkit/themes/shared/menu-shared.css
++++ b/toolkit/themes/shared/menu-shared.css
+@@ -269,6 +269,10 @@ menucaption {
+   @media (-moz-platform: macos) {
+     margin-inline: 22px -3px;
+   }
++
++  @media (-moz-platform: windows) {
++    margin-inline-end: 1em;
++  }
+ }
+ 
+ .menu-text,
+@@ -286,7 +290,7 @@ menucaption {
+ 
+ .menu-accel,
+ .menu-iconic-accel {
+-  margin-inline: 0.74em 0.35em;
++  margin-inline: 0.74em 1.35em;
+   @media (-moz-platform: macos) {
+     margin-inline: 25px 0;
+   }

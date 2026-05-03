@@ -1,0 +1,1 @@
+Bug 1871110 - Remove sha1 support from IOUtils::ComputeHexDigest r=xpcom-reviewers,mccr8,extension-reviewers,robwu    2024-02-02 05:50:06    a8ffe0b5217436f194944edd708f5ea073127feb

@@ -1,0 +1,1 @@
+Bug 1957227 - Fix client vs. window coordinate confusion in transparent window code. r=win-reviewers,handyman    2025-04-02 04:37:19    91438a7604544fb2e1f9013385a5d61e91aaf8df

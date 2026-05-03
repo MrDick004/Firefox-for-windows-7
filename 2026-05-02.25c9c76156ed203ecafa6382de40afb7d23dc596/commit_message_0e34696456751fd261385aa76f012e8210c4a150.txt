@@ -1,0 +1,1 @@
+feat: add git commit to about:buildconfig page    2021-12-07 23:56:37    0e34696456751fd261385aa76f012e8210c4a150
