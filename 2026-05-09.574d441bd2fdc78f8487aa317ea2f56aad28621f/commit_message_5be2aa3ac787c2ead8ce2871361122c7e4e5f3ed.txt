@@ -1,0 +1,1 @@
+Bug 1890370 - Remove libtheora integration. r=media-playback-reviewers,karlt    2024-07-15 22:20:37    5be2aa3ac787c2ead8ce2871361122c7e4e5f3ed

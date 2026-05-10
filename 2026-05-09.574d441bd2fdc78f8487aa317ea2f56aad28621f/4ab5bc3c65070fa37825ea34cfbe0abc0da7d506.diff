@@ -1,0 +1,265 @@
+diff --git a/widget/nsNativeTheme.cpp b/widget/nsNativeTheme.cpp
+index 6a4f7ef91501..8045d152c16b 100644
+--- a/widget/nsNativeTheme.cpp
++++ b/widget/nsNativeTheme.cpp
+@@ -139,6 +139,23 @@ bool nsNativeTheme::CheckBooleanAttr(nsIFrame* aFrame, nsAtom* aAtom) {
+                                            eCaseMatters);
+ }
+ 
++/* static */
++int32_t nsNativeTheme::CheckIntAttr(nsIFrame* aFrame, nsAtom* aAtom,
++                                    int32_t defaultValue) {
++  if (!aFrame) return defaultValue;
++
++  nsIContent* content = aFrame->GetContent();
++  if (!content || !content->IsElement()) return defaultValue;
++
++  nsAutoString attr;
++  content->AsElement()->GetAttr(aAtom, attr);
++  nsresult err;
++  int32_t value = attr.ToInteger(&err);
++  if (attr.IsEmpty() || NS_FAILED(err)) return defaultValue;
++
++  return value;
++}
++
+ /* static */
+ double nsNativeTheme::GetProgressValue(nsIFrame* aFrame) {
+   if (!aFrame || !aFrame->GetContent()->IsHTMLElement(nsGkAtoms::progress)) {
+@@ -166,6 +183,16 @@ bool nsNativeTheme::IsButtonTypeMenu(nsIFrame* aFrame) {
+                                            u"menu"_ns, eCaseMatters);
+ }
+ 
++bool nsNativeTheme::IsPressedButton(nsIFrame* aFrame) {
++  ElementState state = GetContentState(aFrame, StyleAppearance::Toolbarbutton);
++  if (state.HasState(ElementState::DISABLED)) {
++    return false;
++  }
++
++  return IsOpenButton(aFrame) ||
++         state.HasAllStates(ElementState::ACTIVE | ElementState::HOVER);
++}
++
+ bool nsNativeTheme::IsWidgetStyled(nsPresContext* aPresContext,
+                                    nsIFrame* aFrame,
+                                    StyleAppearance aAppearance) {
+@@ -219,6 +246,99 @@ bool nsNativeTheme::IsHTMLContent(nsIFrame* aFrame) {
+   return content && content->IsHTMLElement();
+ }
+ 
++// treeheadercell:
++nsNativeTheme::TreeSortDirection nsNativeTheme::GetTreeSortDirection(
++    nsIFrame* aFrame) {
++  if (!aFrame || !aFrame->GetContent()) return eTreeSortDirection_Natural;
++
++  static Element::AttrValuesArray strings[] = {nsGkAtoms::descending,
++                                               nsGkAtoms::ascending, nullptr};
++
++  nsIContent* content = aFrame->GetContent();
++  if (content->IsElement()) {
++    switch (content->AsElement()->FindAttrValueIn(
++        kNameSpaceID_None, nsGkAtoms::sortDirection, strings, eCaseMatters)) {
++      case 0:
++        return eTreeSortDirection_Descending;
++      case 1:
++        return eTreeSortDirection_Ascending;
++    }
++  }
++
++  return eTreeSortDirection_Natural;
++}
++
++bool nsNativeTheme::IsLastTreeHeaderCell(nsIFrame* aFrame) {
++  if (!aFrame) {
++    return false;
++  }
++
++  // A tree column picker button is always the last header cell.
++  if (aFrame->GetContent()->IsXULElement(nsGkAtoms::button)) {
++    return true;
++  }
++
++  // Find the parent tree.
++  nsIContent* parent = aFrame->GetContent()->GetParent();
++  while (parent && !parent->IsXULElement(nsGkAtoms::tree)) {
++    parent = parent->GetParent();
++  }
++
++  // If the column picker is visible, this can't be the last column.
++  if (parent && !parent->AsElement()->AttrValueIs(kNameSpaceID_None,
++                                                  nsGkAtoms::hidecolumnpicker,
++                                                  u"true"_ns, eCaseMatters))
++    return false;
++
++  while ((aFrame = aFrame->GetNextSibling())) {
++    if (aFrame->GetRect().Width() > 0) return false;
++  }
++  return true;
++}
++
++// tab:
++bool nsNativeTheme::IsBottomTab(nsIFrame* aFrame) {
++  if (!aFrame) return false;
++
++  nsAutoString classStr;
++  if (aFrame->GetContent()->IsElement()) {
++    aFrame->GetContent()->AsElement()->GetAttr(nsGkAtoms::_class, classStr);
++  }
++  // FIXME: This looks bogus, shouldn't this be looking at GetClasses()?
++  return !classStr.IsEmpty() && classStr.Find(u"tab-bottom") != kNotFound;
++}
++
++bool nsNativeTheme::IsFirstTab(nsIFrame* aFrame) {
++  if (!aFrame) return false;
++
++  for (nsIFrame* first : aFrame->GetParent()->PrincipalChildList()) {
++    if (first->GetRect().Width() > 0 &&
++        first->GetContent()->IsXULElement(nsGkAtoms::tab))
++      return (first == aFrame);
++  }
++  return false;
++}
++
++bool nsNativeTheme::IsNextToSelectedTab(nsIFrame* aFrame, int32_t aOffset) {
++  if (!aFrame) return false;
++
++  if (aOffset == 0) return IsSelectedTab(aFrame);
++
++  int32_t thisTabIndex = -1, selectedTabIndex = -1;
++
++  nsIFrame* currentTab = aFrame->GetParent()->PrincipalChildList().FirstChild();
++  for (int32_t i = 0; currentTab; currentTab = currentTab->GetNextSibling()) {
++    if (currentTab->GetRect().Width() == 0) continue;
++    if (aFrame == currentTab) thisTabIndex = i;
++    if (IsSelectedTab(currentTab)) selectedTabIndex = i;
++    ++i;
++  }
++
++  if (thisTabIndex == -1 || selectedTabIndex == -1) return false;
++
++  return (thisTabIndex - selectedTabIndex == aOffset);
++}
++
+ bool nsNativeTheme::IsVerticalProgress(nsIFrame* aFrame) {
+   if (!aFrame) {
+     return false;
+@@ -242,6 +362,30 @@ bool nsNativeTheme::IsVerticalMeter(nsIFrame* aFrame) {
+   return false;
+ }
+ 
++// menupopup:
++bool nsNativeTheme::IsSubmenu(nsIFrame* aFrame, bool* aLeftOfParent) {
++  if (!aFrame) return false;
++
++  nsIContent* parentContent = aFrame->GetContent()->GetParent();
++  if (!parentContent || !parentContent->IsXULElement(nsGkAtoms::menu))
++    return false;
++
++  nsIFrame* parent = aFrame;
++  while ((parent = parent->GetParent())) {
++    if (parent->GetContent() == parentContent) {
++      if (aLeftOfParent) {
++        LayoutDeviceIntRect selfBounds, parentBounds;
++        selfBounds = aFrame->GetNearestWidget()->GetScreenBounds();
++        parentBounds = parent->GetNearestWidget()->GetScreenBounds();
++        *aLeftOfParent = selfBounds.X() < parentBounds.X();
++      }
++      return true;
++    }
++  }
++
++  return false;
++}
++
+ bool nsNativeTheme::QueueAnimatedContentForRefresh(nsIContent* aContent,
+                                                    uint32_t aMinimumFrameRate) {
+   NS_ASSERTION(aContent, "Null pointer!");
+diff --git a/widget/nsNativeTheme.h b/widget/nsNativeTheme.h
+index f39d77d408bc..05a519620acf 100644
+--- a/widget/nsNativeTheme.h
++++ b/widget/nsNativeTheme.h
+@@ -46,6 +46,11 @@ class nsNativeTheme : public nsITimerCallback, public nsINamed {
+     eScrollbarButton_Bottom = 1 << 1
+   };
+ 
++  enum TreeSortDirection {
++    eTreeSortDirection_Descending,
++    eTreeSortDirection_Natural,
++    eTreeSortDirection_Ascending
++  };
+   // Returns the content state (hover, focus, etc), see EventStateManager.h
+   static mozilla::dom::ElementState GetContentState(
+       nsIFrame* aFrame, mozilla::StyleAppearance aAppearance);
+@@ -68,17 +73,72 @@ class nsNativeTheme : public nsITimerCallback, public nsINamed {
+ 
+   bool IsButtonTypeMenu(nsIFrame* aFrame);
+ 
++  // tab:
++  bool IsSelectedTab(nsIFrame* aFrame) {
++    return CheckBooleanAttr(aFrame, nsGkAtoms::visuallyselected);
++  }
++
++  bool IsNextToSelectedTab(nsIFrame* aFrame, int32_t aOffset);
++
++  bool IsBeforeSelectedTab(nsIFrame* aFrame) {
++    return IsNextToSelectedTab(aFrame, -1);
++  }
++
++  bool IsAfterSelectedTab(nsIFrame* aFrame) {
++    return IsNextToSelectedTab(aFrame, 1);
++  }
++
++  bool IsLeftToSelectedTab(nsIFrame* aFrame) {
++    return IsFrameRTL(aFrame) ? IsAfterSelectedTab(aFrame)
++                              : IsBeforeSelectedTab(aFrame);
++  }
++
++  bool IsRightToSelectedTab(nsIFrame* aFrame) {
++    return IsFrameRTL(aFrame) ? IsBeforeSelectedTab(aFrame)
++                              : IsAfterSelectedTab(aFrame);
++  }
++
++  // button / toolbarbutton:
++  bool IsCheckedButton(nsIFrame* aFrame) {
++    return CheckBooleanAttr(aFrame, nsGkAtoms::checked);
++  }
++
++  bool IsSelectedButton(nsIFrame* aFrame) {
++    return CheckBooleanAttr(aFrame, nsGkAtoms::checked) ||
++           CheckBooleanAttr(aFrame, nsGkAtoms::selected);
++  }
++
+   bool IsOpenButton(nsIFrame* aFrame) {
+     return CheckBooleanAttr(aFrame, nsGkAtoms::open);
+   }
+ 
++  bool IsPressedButton(nsIFrame* aFrame);
++
++  // treeheadercell:
++  TreeSortDirection GetTreeSortDirection(nsIFrame* aFrame);
++  bool IsLastTreeHeaderCell(nsIFrame* aFrame);
++
++  // tab:
++  bool IsBottomTab(nsIFrame* aFrame);
++  bool IsFirstTab(nsIFrame* aFrame);
++
+   // progressbar:
+   bool IsVerticalProgress(nsIFrame* aFrame);
+ 
+   // meter:
+   bool IsVerticalMeter(nsIFrame* aFrame);
+ 
++  // textfield:
++  bool IsReadOnly(nsIFrame* aFrame) {
++    return CheckBooleanAttr(aFrame, nsGkAtoms::readonly);
++  }
++
++  // menupopup:
++  bool IsSubmenu(nsIFrame* aFrame, bool* aLeftOfParent);
++
+   static bool CheckBooleanAttr(nsIFrame* aFrame, nsAtom* aAtom);
++  static int32_t CheckIntAttr(nsIFrame* aFrame, nsAtom* aAtom,
++                              int32_t defaultValue);
+ 
+   // Helpers for progressbar.
+   static double GetProgressValue(nsIFrame* aFrame);

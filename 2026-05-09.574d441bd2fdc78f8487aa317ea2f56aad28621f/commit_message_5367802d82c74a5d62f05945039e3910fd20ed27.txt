@@ -1,0 +1,1 @@
+Bug 1922717- Fix CompositorBridgeChild::SendFlushRenderingAsync() as to send async IPC r=gfx-reviewers,bradwerth    2024-10-04 14:09:44    5367802d82c74a5d62f05945039e3910fd20ed27

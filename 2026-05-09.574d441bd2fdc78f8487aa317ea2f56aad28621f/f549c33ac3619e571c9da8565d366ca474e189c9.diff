@@ -1,0 +1,113 @@
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 5ffb02cabd7f..e7a242c147a8 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -1225,9 +1225,9 @@ const wchar_t* nsWindow::ChooseWindowClass(WindowType aWindowType) {
+ const wchar_t* nsWindow::ChooseWindowClass(WindowType aWindowType) {
+   switch (aWindowType) {
+     case WindowType::Dialog:
+-      return RegisterWindowClass(kClassNameDialog, 0, nullptr);
++      return RegisterWindowClass(kClassNameDialog, 0, 0);
+     case WindowType::Popup:
+-      return RegisterWindowClass(kClassNameDropShadow, 0,
++      return RegisterWindowClass(kClassNameDropShadow, CS_DROPSHADOW,
+                                  gStockApplicationIcon);
+     default:
+       return RegisterWindowClass(GetMainWindowClass(), 0,
+@@ -1577,6 +1577,15 @@ void nsWindow::Show(bool bState) {
+ 
+   if (mWindowType == WindowType::Popup) {
+     MOZ_ASSERT(ChooseWindowClass(mWindowType) == kClassNameDropShadow);
++    const bool shouldUseDropShadow =
++        mTransparencyMode != TransparencyMode::Transparent;
++
++    static bool sShadowEnabled = true;
++    if (sShadowEnabled != shouldUseDropShadow) {
++      ::SetClassLongA(mWnd, GCL_STYLE, shouldUseDropShadow ? CS_DROPSHADOW : 0);
++      sShadowEnabled = shouldUseDropShadow;
++    }
++
+     // WS_EX_COMPOSITED conflicts with the WS_EX_LAYERED style and causes
+     // some popup menus to become invisible.
+     LONG_PTR exStyle = ::GetWindowLongPtrW(mWnd, GWL_EXSTYLE);
+@@ -1712,6 +1721,26 @@ void nsWindow::Show(bool bState) {
+ // This does not take cloaking into account.
+ bool nsWindow::IsVisible() const { return mIsVisible; }
+ 
++/**************************************************************
++ *
++ * SECTION: Window clipping utilities
++ *
++ * Used in Size and Move operations for setting the proper
++ * window clipping regions for window transparency.
++ *
++ **************************************************************/
++
++// XP and Vista visual styles sometimes require window clipping regions to be
++// applied for proper transparency. These routines are called on size and move
++// operations.
++// XXX this is apparently still needed in Windows 7 and later
++void nsWindow::ClearThemeRegion() {
++  if (mWindowType == WindowType::Popup && !IsPopupWithTitleBar() &&
++      (mPopupType == PopupType::Tooltip || mPopupType == PopupType::Panel)) {
++    SetWindowRgn(mWnd, nullptr, false);
++  }
++}
++
+ /**************************************************************
+  *
+  * SECTION: Touch and APZ-related functions
+@@ -1886,6 +1915,8 @@ void nsWindow::Move(double aX, double aY) {
+       }
+     }
+ #endif
++      ClearThemeRegion();
++
+       UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE;
+       double oldScale = mDefaultScale;
+       mResizeState = IN_SIZEMOVE;
+@@ -1950,6 +1981,7 @@ void nsWindow::Resize(double aWidth, double aHeight, bool aRepaint) {
+     if (!aRepaint) {
+       flags |= SWP_NOREDRAW;
+     }
++      ClearThemeRegion();
+     double oldScale = mDefaultScale;
+     mResizeState = RESIZING;
+     VERIFY(::SetWindowPos(mWnd, nullptr, 0, 0, size.width, size.height, flags));
+@@ -2028,6 +2060,8 @@ void nsWindow::Resize(double aX, double aY, double aWidth, double aHeight,
+         flags |= SWP_NOREDRAW;
+       }
+ 
++      ClearThemeRegion();
++
+       double oldScale = mDefaultScale;
+       mResizeState = RESIZING;
+     VERIFY(::SetWindowPos(mWnd, nullptr, topLeft.x, topLeft.y, size.width,
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index c75c9d174d73..f0994e9d348a 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -598,6 +598,11 @@ class nsWindow final : public nsBaseWidget {
+   static const wchar_t* RegisterWindowClass(const wchar_t* aClassName,
+                                             UINT aExtraStyle, LPWSTR aIconID);
+ 
++  /**
++   * XP and Vista theming support for windows with rounded edges
++   */
++  void ClearThemeRegion();
++
+   /**
+    * Popup hooks
+    */
+diff --git a/widget/windows/nsWindowDefs.h b/widget/windows/nsWindowDefs.h
+index 320d6ef07b07..a191f05309e9 100644
+--- a/widget/windows/nsWindowDefs.h
++++ b/widget/windows/nsWindowDefs.h
+@@ -61,6 +61,7 @@ const wchar_t kClassNameHidden[] = L"MozillaHiddenWindowClass";
+ const wchar_t kClassNameGeneral[] = L"MozillaWindowClass";
+ const wchar_t kClassNameDialog[] = L"MozillaDialogClass";
+ const wchar_t kClassNameDropShadow[] = L"MozillaDropShadowWindowClass";
++const wchar_t kClassNameTemp[] = L"MozillaTempWindowClass";
+ const wchar_t kClassNameTransition[] = L"MozillaTransitionWindowClass";
+ 
+ /**************************************************************

@@ -1,0 +1,1 @@
+Bug 1977669 - Scrolled button frames should still be centered and baseline aligned to the content box. r=dholbert    2025-07-18 15:26:03    24ea549f78df83cdda3daae025d25019a86355ca

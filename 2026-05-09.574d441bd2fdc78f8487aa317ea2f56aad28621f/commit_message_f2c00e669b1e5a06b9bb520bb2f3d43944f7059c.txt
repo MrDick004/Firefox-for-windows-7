@@ -1,0 +1,1 @@
+Bug 1915862 - update selected tab background in the dark theme to be more differentiated and update tab text colour for contrast, r=dao,extension-reviewers,desktop-theme-reviewers,rpl    2024-09-25 21:29:00    f2c00e669b1e5a06b9bb520bb2f3d43944f7059c

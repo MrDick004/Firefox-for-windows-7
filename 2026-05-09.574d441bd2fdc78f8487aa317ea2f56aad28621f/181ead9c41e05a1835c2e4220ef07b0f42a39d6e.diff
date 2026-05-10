@@ -1,0 +1,89 @@
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index e3d5de0115a5..d3eb8cc5fc16 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -2934,6 +2934,30 @@ void nsWindow::SetCursor(const Cursor& aCursor) {
+   ::SetCursor(cursor);
+ }
+ 
++/**************************************************************
++ *
++ * SECTION: nsIWidget::Get/SetTransparencyMode
++ *
++ * Manage the transparency mode of the window containing this
++ * widget.
++ *
++ **************************************************************/
++
++TransparencyMode nsWindow::GetTransparencyMode() {
++  return GetTopLevelWindow(true)->GetWindowTranslucencyInner();
++}
++
++void nsWindow::SetTransparencyMode(TransparencyMode aMode) {
++  nsWindow* window = GetTopLevelWindow(true);
++  MOZ_ASSERT(window);
++
++  if (!window || window->DestroyCalled()) {
++    return;
++  }
++
++  window->SetWindowTranslucencyInner(aMode);
++}
++
+ /**************************************************************
+  *
+  * SECTION: nsIWidget::UpdateWindowDraggingRegion
+@@ -7141,13 +7165,22 @@ a11y::LocalAccessible* nsWindow::GetAccessible() {
+ }
+ #endif
+ 
+-void nsWindow::SetTransparencyMode(TransparencyMode aMode) {
+-  if (aMode == mTransparencyMode || DestroyCalled()) {
++/**************************************************************
++ **************************************************************
++ **
++ ** BLOCK: Transparency
++ **
++ ** Window transparency helpers.
++ **
++ **************************************************************
++ **************************************************************/
++
++void nsWindow::SetWindowTranslucencyInner(TransparencyMode aMode) {
++  if (aMode == mTransparencyMode) {
+     return;
+   }
+ 
+   MOZ_ASSERT(WinUtils::GetTopLevelHWND(mWnd, true) == mWnd);
+-  MOZ_ASSERT(GetTopLevelWindow(true) == this);
+ 
+   mTransparencyMode = aMode;
+ 
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index 2ae8dd245247..d07a1c8781f1 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -292,7 +292,7 @@ class nsWindow final : public nsBaseWidget {
+   InputContext GetInputContext() override;
+   TextEventDispatcherListener* GetNativeTextEventDispatcherListener() override;
+   void SetTransparencyMode(TransparencyMode aMode) override;
+-  TransparencyMode GetTransparencyMode() override { return mTransparencyMode; }
++  TransparencyMode GetTransparencyMode() override;
+   void SetCustomTitlebar(bool) override;
+   void SetResizeMargin(mozilla::LayoutDeviceIntCoord aResizeMargin) override;
+   void UpdateWindowDraggingRegion(
+@@ -634,6 +634,14 @@ class nsWindow final : public nsBaseWidget {
+       mozilla::Maybe<POINT> aEventPoint = mozilla::Nothing());
+   static bool DealWithPopups(HWND inWnd, UINT inMsg, WPARAM inWParam,
+                              LPARAM inLParam, LRESULT* outResult);
++
++  /**
++   * Window transparency helpers
++   */
++  void SetWindowTranslucencyInner(TransparencyMode aMode);
++  TransparencyMode GetWindowTranslucencyInner() const {
++    return mTransparencyMode;
++  }
+   bool IsSimulatedClientArea(int32_t clientX, int32_t clientY);
+   bool IsWindowButton(int32_t hitTestResult);
+ 

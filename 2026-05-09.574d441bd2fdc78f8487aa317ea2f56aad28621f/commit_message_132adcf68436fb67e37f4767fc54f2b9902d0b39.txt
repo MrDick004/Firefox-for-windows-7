@@ -1,0 +1,1 @@
+Bug 1838108 - nsICryptoHash: use non-assembly hashing implementation on Windows r=jschanck, a=dmeehan    2023-06-16 06:27:55    132adcf68436fb67e37f4767fc54f2b9902d0b39

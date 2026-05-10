@@ -1,0 +1,1 @@
+Bug 1336607 - Update vendored Rust sources to include geckolib dependencies; r=froydnj    2017-02-11 04:19:18    b4ab990a0d87f0c70f1d479fa3bcabf33398234b
