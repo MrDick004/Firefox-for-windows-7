@@ -1,0 +1,115 @@
+diff --git a/mozglue/misc/PreXULSkeletonUI.h b/mozglue/misc/PreXULSkeletonUI.h
+index ce61f10fc701..7ff3908de003 100644
+--- a/mozglue/misc/PreXULSkeletonUI.h
++++ b/mozglue/misc/PreXULSkeletonUI.h
+@@ -20,8 +20,8 @@ namespace mozilla {
+ // to not vary based off of any user settings for the initial toplevel window,
+ // so we're safe here for now.
+ static const DWORD kPreXULSkeletonUIWindowStyle =
+-    WS_CLIPCHILDREN | WS_DLGFRAME | WS_BORDER | WS_MAXIMIZEBOX |
+-    WS_MINIMIZEBOX | WS_SIZEBOX | WS_SYSMENU;
++    WS_OVERLAPPED | WS_CLIPCHILDREN | WS_DLGFRAME | WS_BORDER | WS_THICKFRAME |
++    WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU;
+ static const DWORD kPreXULSkeletonUIWindowStyleEx = WS_EX_WINDOWEDGE;
+ 
+ struct CSSPixelSpan {
+diff --git a/widget/windows/moz.build b/widget/windows/moz.build
+index 6c62a6345621..ef38b4332d94 100644
+--- a/widget/windows/moz.build
++++ b/widget/windows/moz.build
+@@ -146,13 +146,6 @@ SOURCES += [
+     "TSFUtils.cpp",
+ ]
+ 
+-# Needs winrt exceptions since we're calling into the
+-# Windows App SDK.
+-SOURCES["WindowsUIUtils.cpp"].flags += [
+-    "-Xclang",
+-    "-fcxx-exceptions",
+-]
+-
+ if CONFIG["NS_PRINTING"]:
+     UNIFIED_SOURCES += [
+         "nsDeviceContextSpecWin.cpp",
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 5c662f04b122..a7c9fce927ed 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -1091,6 +1091,9 @@ nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
+ 
+       mBounds = mLastPaintBounds = GetBounds();
+ 
++      // Skeleton ui is disabled when custom titlebar is off, see bug 1673092.
++      SetCustomTitlebar(true);
++
+       // Reset the WNDPROC for this window and its whole class, as we had
+       // to use our own WNDPROC when creating the skeleton UI window.
+       ::SetWindowLongPtrW(mWnd, GWLP_WNDPROC,
+@@ -2842,16 +2845,42 @@ void nsWindow::SetCustomTitlebar(bool aCustomTitlebar) {
+ 
+   mCustomNonClient = aCustomTitlebar;
+ 
++  const LONG_PTR style = GetWindowLongPtrW(mWnd, GWL_STYLE);
+   // Force a reflow of content based on the new client dimensions.
+   if (mCustomNonClient) {
++    if (style & WS_SYSMENU) {
++      // Remove the WS_SYSMENU style, so that DWM doesn't draw the caption
++      // buttons. Note that we still need WS_MAXIMIZEBOX at least to
++      // support Snap Layouts / Aero Snap.
++      //
++      // This behavior is not documented: per MSDN, WS_MAXIMIZEBOX simply
++      // requires WS_SYSMENU, and is not valid without it. However, omitting it
++      // doesn't seem to have negative side-effects on any version of Windows
++      // tested (other than losing the default system menu handling, which we
++      // implement ourselves in DisplaySystemMenu()).
++      //
++      // Since the system menu is lazily initialized (see [1]), we have to call
++      // GetSystemMenu() here in order to get it created before it is too late.
++      // An alternative would be to play with window styles later to force it
++      // to be created, but that seems a bit more finicky.
++      //
++      // [1]: https://devblogs.microsoft.com/oldnewthing/20100528-00/?p=13893
++      ::GetSystemMenu(mWnd, FALSE);
++      ::SetWindowLongPtrW(mWnd, GWL_STYLE, style & ~WS_SYSMENU);
++    }
+     UpdateNonClientMargins();
+   } else {
++    if (WindowStyle() & WS_SYSMENU) {
++      // Restore the WS_SYSMENU style if appropriate.
++      ::SetWindowLongPtrW(mWnd, GWL_STYLE, style | WS_SYSMENU);
++      // Reset the small icon as a workaround for a dwm bug, see bug 1935542.
++      HICON icon =
++          (HICON)::SendMessageW(mWnd, WM_SETICON, (WPARAM)ICON_SMALL, 0);
++      ::SendMessageW(mWnd, WM_SETICON, (WPARAM)ICON_SMALL, (LPARAM)icon);
++    }
+     mCustomNonClientMetrics = {};
+     ResetLayout();
+   }
+-  if (ShouldAssociateWithWinAppSDK()) {
+-    WindowsUIUtils::SetIsTitlebarCollapsed(mWnd, mCustomNonClient);
+-  }
+ }
+ 
+ void nsWindow::SetResizeMargin(mozilla::LayoutDeviceIntCoord aResizeMargin) {
+@@ -4660,7 +4691,7 @@ static bool DisplaySystemMenu(HWND hWnd, nsSizeMode sizeMode, bool isRtl,
+       NS_ASSERTION(false, "Did the argument come from invalid IPC?");
+       break;
+     default:
+-      MOZ_ASSERT_UNREACHABLE("Unhandled nsSizeMode value detected");
++      MOZ_ASSERT_UNREACHABLE("Unhnalded nsSizeMode value detected");
+       break;
+   }
+   LPARAM cmd = TrackPopupMenu(hMenu,
+@@ -5837,9 +5868,9 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+ 
+       if (filteredWParam == SC_KEYMENU && lParam == VK_SPACE) {
+         const auto sizeMode = mFrameState->GetSizeMode();
+-        // Handle the system menu manually when we're in full screen mode
+-        // so we can set the appropriate options.
+-        if (sizeMode == nsSizeMode_Fullscreen) {
++        // Handle the system menu manually when we're in full screen mode or
++        // with custom titlebar so we can set the appropriate options.
++        if (sizeMode == nsSizeMode_Fullscreen || mCustomNonClient) {
+           // Historically on fullscreen windows we've used this offset from the
+           // top left as our context menu position. Note that if the point we
+           // supply is offscreen, Windows will still try to put our menu in the

@@ -1,0 +1,1 @@
+Bug 1946365 - Track already-clear region of transparent windows. r=win-reviewers,rkraesig    2025-02-19 01:56:00    250bf55503ba25535d10a72c95aaca10c57d14a7

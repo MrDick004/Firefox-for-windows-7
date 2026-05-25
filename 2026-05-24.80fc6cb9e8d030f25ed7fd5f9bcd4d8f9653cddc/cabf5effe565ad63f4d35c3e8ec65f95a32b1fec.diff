@@ -1,0 +1,20 @@
+diff --git a/widget/windows/CompositorWidgetChild.cpp b/widget/windows/CompositorWidgetChild.cpp
+index 9ce9d50f3f10..9530b981b27e 100644
+--- a/widget/windows/CompositorWidgetChild.cpp
++++ b/widget/windows/CompositorWidgetChild.cpp
+@@ -31,13 +31,8 @@ CompositorWidgetChild::CompositorWidgetChild(
+ 
+ CompositorWidgetChild::~CompositorWidgetChild() {}
+ 
+-bool CompositorWidgetChild::Initialize(
+-    const layers::CompositorOptions& aOptions) {
+-  // We only use remote_backbuffer::Provider with software WebRender.
+-  if (!aOptions.UseSoftwareWebRender()) {
+-    return true;
+-  }
+-
++bool CompositorWidgetChild::Initialize(
++    const layers::CompositorOptions& aOptions) {
+   mRemoteBackbufferProvider = std::make_unique<remote_backbuffer::Provider>();
+   if (!mRemoteBackbufferProvider->Initialize(mWnd, OtherPid())) {
+     return false;

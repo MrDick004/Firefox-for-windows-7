@@ -1,0 +1,1 @@
+Bug 1991931 - Stop using an alternate desktop for WINDOWS_UTILS utility process. r=handyman    2025-10-04 03:42:41    1b61694baee703d9c2f626f919693d5620d35a96

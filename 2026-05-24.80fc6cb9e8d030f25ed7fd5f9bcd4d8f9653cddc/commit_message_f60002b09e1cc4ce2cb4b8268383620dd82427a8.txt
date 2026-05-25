@@ -1,0 +1,1 @@
+Bug 1958711 - Remove reentrancy from nsWindow::OnPaint. r=win-reviewers,handyman    2025-04-16 06:55:00    f60002b09e1cc4ce2cb4b8268383620dd82427a8

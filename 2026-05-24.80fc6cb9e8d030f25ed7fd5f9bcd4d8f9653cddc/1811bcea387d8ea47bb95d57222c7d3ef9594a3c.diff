@@ -1,0 +1,196 @@
+diff --git a/gfx/thebes/gfxGDIFontList.cpp b/gfx/thebes/gfxGDIFontList.cpp
+index 6475dd511a02..4a1d71dc4675 100644
+--- a/gfx/thebes/gfxGDIFontList.cpp
++++ b/gfx/thebes/gfxGDIFontList.cpp
+@@ -29,6 +29,7 @@
+ #include "mozilla/ProfilerLabels.h"
+ #include "mozilla/StaticPrefs_gfx.h"
+ #include "mozilla/glean/GfxMetrics.h"
++#include "mozilla/WindowsVersion.h"
+ 
+ #include <usp10.h>
+ 
+diff --git a/mfbt/WindowsVersion.h b/mfbt/WindowsVersion.h
+index 1d27ce5bdf91..4156f4f64baa 100644
+--- a/mfbt/WindowsVersion.h
++++ b/mfbt/WindowsVersion.h
+@@ -84,6 +84,81 @@ IsWindowsBuildOrLater(uint32_t aBuild)
+   return false;
+ }
+ 
++#if defined(_M_X64) || defined(_M_AMD64)
++// We support only Win7 or later on Win64.
++MOZ_ALWAYS_INLINE bool
++IsXPSP3OrLater()
++{
++  return true;
++}
++
++MOZ_ALWAYS_INLINE bool
++IsWin2003OrLater()
++{
++  return true;
++}
++
++MOZ_ALWAYS_INLINE bool
++IsWin2003SP2OrLater()
++{
++  return true;
++}
++
++MOZ_ALWAYS_INLINE bool
++IsVistaOrLater()
++{
++  return true;
++}
++
++MOZ_ALWAYS_INLINE bool
++IsVistaSP1OrLater()
++{
++  return true;
++}
++
++MOZ_ALWAYS_INLINE bool
++IsWin7OrLater()
++{
++  return true;
++}
++#else
++MOZ_ALWAYS_INLINE bool
++IsXPSP3OrLater()
++{
++  return IsWindowsVersionOrLater(0x05010300ul);
++}
++
++MOZ_ALWAYS_INLINE bool
++IsWin2003OrLater()
++{
++  return IsWindowsVersionOrLater(0x05020000ul);
++}
++
++MOZ_ALWAYS_INLINE bool
++IsWin2003SP2OrLater()
++{
++  return IsWindowsVersionOrLater(0x05020200ul);
++}
++
++MOZ_ALWAYS_INLINE bool
++IsVistaOrLater()
++{
++  return IsWindowsVersionOrLater(0x06000000ul);
++}
++
++MOZ_ALWAYS_INLINE bool
++IsVistaSP1OrLater()
++{
++  return IsWindowsVersionOrLater(0x06000100ul);
++}
++
++MOZ_ALWAYS_INLINE bool
++IsWin7OrLater()
++{
++  return IsWindowsVersionOrLater(0x06010000ul);
++}
++#endif
++
+ MOZ_ALWAYS_INLINE bool IsWin7SP1OrLater() {
+   return IsWindowsVersionOrLater(0x06010100ul);
+ }
+@@ -111,7 +186,8 @@ IsWin10OrLater()
+ }
+ 
+ MOZ_ALWAYS_INLINE bool IsNotWin7PreRTM() {
+-  return IsWin7SP1OrLater() || IsWindowsBuildOrLater(7600);
++  return IsWin7SP1OrLater() || !IsWin7OrLater() ||
++         IsWindowsBuildOrLater(7600);
+ }
+ 
+ inline bool IsWin7AndPre2000Compatible() {
+diff --git a/servo/components/style/gecko/media_features.rs b/servo/components/style/gecko/media_features.rs
+index c2403d30de34..397cc052b8fb 100644
+--- a/servo/components/style/gecko/media_features.rs
++++ b/servo/components/style/gecko/media_features.rs
+@@ -418,6 +418,9 @@ public:
+     Macos,
+     /// Matches any Windows version.
+     Windows,
++    // XXX: The XP and Vista values can now be removed (see bug 1330146).
++    WindowsXP,
++    WindowsVista,
+     /// Matches only Windows 7.
+     WindowsWin7,
+     /// Matches only Windows 8.
+diff --git a/widget/windows/KeyboardLayout.cpp b/widget/windows/KeyboardLayout.cpp
+index 921788a143ed..c711e71f81f3 100644
+--- a/widget/windows/KeyboardLayout.cpp
++++ b/widget/windows/KeyboardLayout.cpp
+@@ -10,6 +10,7 @@
+ #include "mozilla/StaticPtr.h"
+ #include "mozilla/TextEvents.h"
+ #include "mozilla/widget/WinRegistry.h"
++#include "mozilla/WindowsVersion.h"
+ 
+ #include "nsExceptionHandler.h"
+ #include "nsGkAtoms.h"
+diff --git a/widget/windows/WinMessages.h b/widget/windows/WinMessages.h
+index d0613cb15e1e..e722a38360d9 100644
+--- a/widget/windows/WinMessages.h
++++ b/widget/windows/WinMessages.h
+@@ -45,6 +45,10 @@
+ // fullscreen window-state update handler in Windows 10+. (See bug 1835851.)
+ #define MOZ_WM_FULLSCREEN_STATE_UPDATE (WM_APP + 0x0318)
+ 
++// Internal message for ensuring the file picker is visible on multi monitor
++// systems, and when the screen resolution changes.
++#define MOZ_WM_ENSUREVISIBLE              (WM_APP+0x374F)
++
+ // XXX Should rename them to MOZ_WM_* and use safer values!
+ // Messages for fullscreen transition window
+ #define WM_FULLSCREEN_TRANSITION_BEFORE (WM_USER + 0)
+diff --git a/widget/windows/WinMouseScrollHandler.cpp b/widget/windows/WinMouseScrollHandler.cpp
+index fc3e38eb69ed..e157b1be2d2f 100644
+--- a/widget/windows/WinMouseScrollHandler.cpp
++++ b/widget/windows/WinMouseScrollHandler.cpp
+@@ -20,6 +20,7 @@
+ #include "mozilla/StaticPrefs_mousewheel.h"
+ #include "mozilla/StaticPrefs_widget.h"
+ #include "mozilla/widget/WinRegistry.h"
++#include "mozilla/WindowsVersion.h"
+ 
+ #include <psapi.h>
+ 
+diff --git a/widget/windows/WinTaskbar.cpp b/widget/windows/WinTaskbar.cpp
+index 699dc96f6dfb..aa2c6b313f9f 100644
+--- a/widget/windows/WinTaskbar.cpp
++++ b/widget/windows/WinTaskbar.cpp
+@@ -28,6 +28,7 @@
+ #include "nsAppRunner.h"
+ #include "nsXREDirProvider.h"
+ #include "mozilla/widget/WinRegistry.h"
++#include "mozilla/WindowsVersion.h"
+ #include <io.h>
+ #include <propvarutil.h>
+ #include <propkey.h>
+diff --git a/widget/windows/nsDataObj.cpp b/widget/windows/nsDataObj.cpp
+index 96f1aae93337..5454a791e9ca 100644
+--- a/widget/windows/nsDataObj.cpp
++++ b/widget/windows/nsDataObj.cpp
+@@ -38,6 +38,7 @@
+ #include "nsLocalFile.h"
+ 
+ #include "mozilla/LazyIdleThread.h"
++#include "mozilla/WindowsVersion.h"
+ #include <algorithm>
+ 
+ using namespace mozilla;
+diff --git a/widget/windows/nsFilePicker.cpp b/widget/windows/nsFilePicker.cpp
+index a634acddef99..d304996ff136 100644
+--- a/widget/windows/nsFilePicker.cpp
++++ b/widget/windows/nsFilePicker.cpp
+@@ -37,4 +37,6 @@ using namespace mozilla::widget;
+ constinit UniquePtr<char16_t[], nsFilePicker::FreeDeleter>
+     nsFilePicker::sLastUsedUnicodeDirectory;
++static const wchar_t kDialogPtrProp[] = L"DialogPtrProperty";
++static const DWORD kDialogTimerID = 9999;
+ 
+ #define MAX_EXTENSION_LENGTH 10

@@ -1,0 +1,211 @@
+diff --git a/browser/themes/windows/places/organizer.css b/browser/themes/windows/places/organizer.css
+index dd171b7ecd64..68b0fd38661d 100644
+--- a/browser/themes/windows/places/organizer.css
++++ b/browser/themes/windows/places/organizer.css
+@@ -82,6 +82,7 @@
+ /* Toolbar and menus */
+ 
+ #placesToolbar {
++  appearance: none;
+   background-color: var(--organizer-toolbar-background);
+   color: var(--organizer-color);
+   border-bottom: 1px solid var(--organizer-border-color);
+diff --git a/layout/painting/nsDisplayList.h b/layout/painting/nsDisplayList.h
+index dfbb3bdda658..0ef5fea38ba7 100644
+--- a/layout/painting/nsDisplayList.h
++++ b/layout/painting/nsDisplayList.h
+@@ -852,9 +852,9 @@ class nsDisplayListBuilder {
+   /**
+    * Notifies the builder that a particular themed widget exists
+    * at the given rectangle within the currently built display list.
+-   * For certain appearance values (currently only
+-   * StyleAppearance::MozWindowTitlebar) this gets called during every display
+-   * list construction, for every themed widget of the right type within the
++   * For certain appearance values (currently only StyleAppearance::Toolbar and
++   * StyleAppearance::WindowTitlebar) this gets called during every display list
++   * construction, for every themed widget of the right type within the
+    * display list, except for themed widgets which are transformed or have
+    * effects applied to them (e.g. CSS opacity or filters).
+    *
+diff --git a/servo/components/style/values/specified/box.rs b/servo/components/style/values/specified/box.rs
+index ee50227504ae..737565641a4d 100644
+--- a/servo/components/style/values/specified/box.rs
++++ b/servo/components/style/values/specified/box.rs
+@@ -1567,9 +1567,15 @@ pub enum Appearance {
+     TabScrollArrowBack,
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     TabScrollArrowForward,
++    /// A toolbar in an application window.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Toolbar,
+     /// A single toolbar button (with no associated dropdown).
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Toolbarbutton,
++    /// The toolbox that contains the toolbars.
++    #[parse(condition = "ParserContext::chrome_rules_enabled")]
++    Toolbox,
+     /// A tooltip.
+     #[parse(condition = "ParserContext::chrome_rules_enabled")]
+     Tooltip,
+diff --git a/toolkit/themes/shared/toolbar.css b/toolkit/themes/shared/toolbar.css
+index ada6f77f9cd1..2b336dd0c9bc 100644
+--- a/toolkit/themes/shared/toolbar.css
++++ b/toolkit/themes/shared/toolbar.css
+@@ -8,7 +8,14 @@
+ 
+ @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
+ 
++toolbox {
++  appearance: auto;
++  -moz-default-appearance: toolbox;
++}
++
+ toolbar {
++  appearance: auto;
++  -moz-default-appearance: toolbar;
+   min-width: 1px;
+   min-height: 20px;
+ 
+@@ -17,6 +24,13 @@ toolbar:first-child {
+   }
+ }
+ 
++*|*:root[lwtheme] {
++  toolbox,
++  toolbar {
++    appearance: none;
++  }
++}
++
+ toolbarseparator {
+   appearance: auto;
+   -moz-default-appearance: separator;
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index 7ef968baf6fa..04883a833fc3 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -484,6 +484,9 @@ mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
+     case StyleAppearance::Textfield:
+     case StyleAppearance::Textarea:
+       return Some(eUXEdit);
++    case StyleAppearance::Toolbox:
++      return Some(eUXRebar);
++    case StyleAppearance::Toolbar:
+     case StyleAppearance::Toolbarbutton:
+       return Some(eUXToolbar);
+     case StyleAppearance::ProgressBar:
+@@ -716,6 +719,27 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
+       }
+       return NS_OK;
+     }
++    case StyleAppearance::Toolbox: {
++      aState = 0;
++      aPart = RP_BACKGROUND;
++      return NS_OK;
++    }
++    case StyleAppearance::Toolbar: {
++      // Use -1 to indicate we don't wish to have the theme background drawn
++      // for this item. We will pass any nessessary information via aState,
++      // and will render the item using separate code.
++      aPart = -1;
++      aState = 0;
++      if (aFrame) {
++        nsIContent* content = aFrame->GetContent();
++        nsIContent* parent = content->GetParent();
++        // XXXzeniko hiding the first toolbar will result in an unwanted margin
++        if (parent && parent->GetFirstChild() == content) {
++          aState = 1;
++        }
++      }
++      return NS_OK;
++    }
+     case StyleAppearance::Treeview:
+     case StyleAppearance::Listbox: {
+       aPart = TREEVIEW_BODY;
+@@ -1007,6 +1031,18 @@ RENDER_AGAIN:
+         ::DeleteObject(hPen);
+       }
+     }
++  } else if (aAppearance == StyleAppearance::Toolbar && state == 0) {
++    // Draw toolbar separator lines above all toolbars except the first one.
++    // The lines are part of the Rebar theme, which is loaded for
++    // StyleAppearance::Toolbox.
++    theme = GetTheme(StyleAppearance::Toolbox);
++    if (!theme) {
++      return;
++    }
++
++    widgetRect.bottom = widgetRect.top + TB_SEPARATOR_HEIGHT;
++    DrawThemeEdge(theme, hdc, RP_BAND, 0, &widgetRect, EDGE_ETCHED, BF_TOP,
++                  nullptr);
+   }
+ 
+   nativeDrawing.EndNativeDrawing();
+@@ -1067,7 +1101,8 @@ LayoutDeviceIntMargin nsNativeThemeWin::GetWidgetBorder(
+     return result;
+   }
+ 
+-  if (!WidgetIsContainer(aAppearance)) {
++  if (!WidgetIsContainer(aAppearance) ||
++      aAppearance == StyleAppearance::Toolbox) {
+     return result;  // Don't worry about it.
+   }
+ 
+@@ -1074,6 +1109,12 @@ LayoutDeviceIntMargin nsNativeThemeWin::GetWidgetBorder(
+   nsresult rv = GetThemePartAndState(aFrame, aAppearance, part, state);
+   if (NS_FAILED(rv)) return result;
+ 
++  if (aAppearance == StyleAppearance::Toolbar) {
++    // make space for the separator line above all toolbars but the first
++    if (state == 0) result.top = TB_SEPARATOR_HEIGHT;
++    return result;
++  }
++
+   result = GetCachedWidgetBorder(theme, themeClass.value(), aAppearance, part,
+                                  state);
+ 
+@@ -1237,6 +1278,8 @@ LayoutDeviceIntSize nsNativeThemeWin::GetMinimumWidgetSize(
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+     case StyleAppearance::Textfield:
++    case StyleAppearance::Toolbox:
++    case StyleAppearance::Toolbar:
+     case StyleAppearance::Listbox:
+     case StyleAppearance::Treeview:
+       return {};  // Don't worry about it.
+@@ -1309,7 +1352,9 @@ nsNativeThemeWin::WidgetStateChanged(nsIFrame* aFrame,
+ bool nsNativeThemeWin::WidgetAttributeChangeRequiresRepaint(
+     StyleAppearance aAppearance, nsAtom* aAttribute) {
+   // Some widget types just never change state.
+-  if (aAppearance == StyleAppearance::ProgressBar) {
++  if (aAppearance == StyleAppearance::Toolbox ||
++      aAppearance == StyleAppearance::Toolbar ||
++      aAppearance == StyleAppearance::ProgressBar) {
+     return false;
+   }
+ 
+diff --git a/widget/windows/nsUXThemeData.cpp b/widget/windows/nsUXThemeData.cpp
+index ce8b0f347996..b3f9e6fce90b 100644
+--- a/widget/windows/nsUXThemeData.cpp
++++ b/widget/windows/nsUXThemeData.cpp
+@@ -62,6 +62,8 @@ const wchar_t* nsUXThemeData::GetClassName(nsUXThemeClass cls) {
+       return L"Button";
+     case eUXEdit:
+       return L"Edit";
++    case eUXRebar:
++      return L"Rebar";
+     case eUXToolbar:
+       return L"Toolbar";
+     case eUXProgress:
+diff --git a/widget/windows/nsUXThemeData.h b/widget/windows/nsUXThemeData.h
+index 24fe07d12805..38be8b448497 100644
+--- a/widget/windows/nsUXThemeData.h
++++ b/widget/windows/nsUXThemeData.h
+@@ -19,6 +19,7 @@
+ enum nsUXThemeClass {
+   eUXButton = 0,
+   eUXEdit,
++  eUXRebar,
+   eUXToolbar,
+   eUXProgress,
+   eUXTab,

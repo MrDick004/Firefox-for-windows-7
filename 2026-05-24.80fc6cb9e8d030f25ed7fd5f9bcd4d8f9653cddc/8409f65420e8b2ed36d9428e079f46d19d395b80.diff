@@ -1,0 +1,21 @@
+diff --git a/dom/media/gmp/ChromiumCDMAdapter.cpp b/dom/media/gmp/ChromiumCDMAdapter.cpp
+index 5f1c868cf056..da9349eb8cd6 100644
+--- a/dom/media/gmp/ChromiumCDMAdapter.cpp
++++ b/dom/media/gmp/ChromiumCDMAdapter.cpp
+@@ -23,6 +23,7 @@
+ #ifdef XP_WIN
+ #  include <strsafe.h>
+ #  include <windows.h>
++#  include <winuser.h>
+ #  include <bcrypt.h>
+ 
+ #  include <unordered_map>
+@@ -316,7 +317,7 @@ BOOL WINAPI MozProcessPrng(PBYTE pbData, SIZE_T cbData) {
+ }
+ 
+ FARPROC WINAPI MozGetProcAddress(HMODULE hModule, LPCSTR lpProcName) {
+-  if (strcmp(lpProcName, "ProcessPrng") == 0) {
++  if (!IS_INTRESOURCE(lpProcName) && strcmp(lpProcName, "ProcessPrng") == 0) {
+     return reinterpret_cast<FARPROC>(&MozProcessPrng);
+   }
+ 

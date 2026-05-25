@@ -1,0 +1,560 @@
+diff --git a/layout/base/PresShell.cpp b/layout/base/PresShell.cpp
+index bf5951273391..b49a92433dd2 100644
+--- a/layout/base/PresShell.cpp
++++ b/layout/base/PresShell.cpp
+@@ -10137,16 +10137,23 @@ void PresShell::WillPaint() {
+ }
+ 
+ void PresShell::DidPaintWindow() {
+-  if (mHasReceivedPaintMessage) {
+-    return;
+-  }
+-  mHasReceivedPaintMessage = true;
+-  nsPIDOMWindowOuter* win = mDocument->GetWindow();
+-  if (!win || !nsGlobalWindowOuter::Cast(win)->IsChromeWindow()) {
++  nsRootPresContext* rootPresContext = mPresContext->GetRootPresContext();
++  if (rootPresContext != mPresContext) {
++    // This could be a popup's presshell. No point in notifying XPConnect
++    // about compositing of popups.
+     return;
+   }
+-  if (nsCOMPtr<nsIObserverService> obsvc = services::GetObserverService()) {
+-    obsvc->NotifyObservers(win, "widget-first-paint", nullptr);
++
++  if (!mHasReceivedPaintMessage) {
++    mHasReceivedPaintMessage = true;
++
++    nsCOMPtr<nsIObserverService> obsvc = services::GetObserverService();
++    if (obsvc && mDocument) {
++      nsPIDOMWindowOuter* window = mDocument->GetWindow();
++      if (window && nsGlobalWindowOuter::Cast(window)->IsChromeWindow()) {
++        obsvc->NotifyObservers(window, "widget-first-paint", nullptr);
++      }
++    }
+   }
+ }
+ 
+diff --git a/layout/base/PresShell.h b/layout/base/PresShell.h
+index 010821930f86..1cf511441205 100644
+--- a/layout/base/PresShell.h
++++ b/layout/base/PresShell.h
+@@ -1086,9 +1086,12 @@ class PresShell final : public nsStubDocumentObserver,
+   nsresult HandleEvent(nsIFrame* aFrame, WidgetGUIEvent* aEvent,
+                        bool aDontRetargetEvents, nsEventStatus* aEventStatus);
+   bool ShouldIgnoreInvalidation();
+-  // Notify that we called PaintWindow() from widget.
+-  MOZ_CAN_RUN_SCRIPT
+-  void DidPaintWindow();
++  /**
++   * Notify that we called Paint with PaintFlags::PaintComposite.
++   * Fires on the presshell for the painted widget.
++   * This is issued at a time when it's safe to modify widget geometry.
++   */
++  MOZ_CAN_RUN_SCRIPT void DidPaintWindow();
+ 
+   bool IsVisible() const;
+   bool IsUnderHiddenEmbedderElement() const {
+diff --git a/layout/xul/nsMenuPopupFrame.cpp b/layout/xul/nsMenuPopupFrame.cpp
+index 34f9b3902f0d..fa7ba3baa5d5 100644
+--- a/layout/xul/nsMenuPopupFrame.cpp
++++ b/layout/xul/nsMenuPopupFrame.cpp
+@@ -2593,7 +2593,7 @@ nsEventStatus nsMenuPopupFrame::HandleEvent(mozilla::WidgetGUIEvent* aEvent) {
+   return status;
+ }
+ 
+-void nsMenuPopupFrame::PaintWindow(nsIWidget* aWidget) {
++bool nsMenuPopupFrame::PaintWindow(nsIWidget* aWidget, LayoutDeviceIntRegion) {
+   MOZ_ASSERT(aWidget == mWidget);
+   nsAutoScriptBlocker scriptBlocker;
+   RefPtr ps = PresShell();
+@@ -2603,6 +2603,7 @@ void nsMenuPopupFrame::PaintWindow(nsIWidget* aWidget) {
+   } else {
+     ps->SyncPaintFallback(this, renderer);
+   }
++  return true;
+ }
+ 
+ void nsMenuPopupFrame::DidCompositeWindow(
+diff --git a/layout/xul/nsMenuPopupFrame.h b/layout/xul/nsMenuPopupFrame.h
+index 3ff192414614..8e19bf72279d 100644
+--- a/layout/xul/nsMenuPopupFrame.h
++++ b/layout/xul/nsMenuPopupFrame.h
+@@ -206,7 +206,7 @@ class nsMenuPopupFrame final : public nsBlockFrame, public nsIWidgetListener {
+   MOZ_CAN_RUN_SCRIPT_BOUNDARY
+   nsEventStatus HandleEvent(mozilla::WidgetGUIEvent* aEvent) override;
+   MOZ_CAN_RUN_SCRIPT_BOUNDARY
+-  void PaintWindow(nsIWidget* aWidget) override;
++  bool PaintWindow(nsIWidget* aWidget, mozilla::LayoutDeviceIntRegion) override;
+   void DidCompositeWindow(mozilla::layers::TransactionId aTransactionId,
+                           const mozilla::TimeStamp& aCompositeStart,
+                           const mozilla::TimeStamp& aCompositeEnd) override;
+diff --git a/layout/base/PresShellWidgetListener.cpp b/layout/base/PresShellWidgetListener.cpp
+index a26df8da0a69..7d0c8883ee14 100644
+--- a/layout/base/PresShellWidgetListener.cpp
++++ b/layout/base/PresShellWidgetListener.cpp
+@@ -229,20 +228,36 @@ void nsView::AndroidPipModeChanged(bool aPipMode) {
+ #endif
+ }
+ 
+-void PresShellWidgetListener::PaintWindow(nsIWidget* aWidget) {
+-  RefPtr ps = GetPresShell();
+-  if (!ps) {
+-    return;
+-  }
+-  RefPtr renderer = aWidget->GetWindowRenderer();
+-  if (!renderer->NeedsWidgetInvalidation()) {
+-    ps->PaintSynchronously();
+-    renderer->FlushRendering(wr::RenderReasons::WIDGET);
+-  } else {
+-    ps->SyncPaintFallback(ps->GetRootFrame(), renderer);
+-  }
+-  mozilla::StartupTimeline::RecordOnce(mozilla::StartupTimeline::FIRST_PAINT);
+-  ps->DidPaintWindow();
++void PresShellWidgetListener::WillPaintWindow(nsIWidget* aWidget) {
++  WindowRenderer* renderer = aWidget->GetWindowRenderer();
++  if (renderer->NeedsWidgetInvalidation()) {
++    return;
++  }
++  if (RefPtr ps = mPresShell) {
++    // FIXME(bug 2002232): Why is this needed?
++    ps->PaintSynchronously();
++  }
++}
++
++bool PresShellWidgetListener::PaintWindow(nsIWidget* aWidget, LayoutDeviceIntRegion) {
++  RefPtr ps = mPresShell;
++  if (!ps) {
++    return true;
++  }
++  RefPtr renderer = aWidget->GetWindowRenderer();
++  if (!renderer->NeedsWidgetInvalidation()) {
++    renderer->FlushRendering(wr::RenderReasons::WIDGET);
++  } else {
++    ps->SyncPaintFallback(ps->GetRootFrame(), renderer);
++  }
++  mozilla::StartupTimeline::RecordOnce(mozilla::StartupTimeline::FIRST_PAINT);
++  return true;
++}
++
++void PresShellWidgetListener::DidPaintWindow() {
++  if (RefPtr<PresShell> presShell = mPresShell) {
++    presShell->DidPaintWindow();
++  }
+ }
+ 
+ void PresShellWidgetListener::DidCompositeWindow(
+diff --git a/layout/base/PresShellWidgetListener.h b/layout/base/PresShellWidgetListener.h
+index b33776b328bc..37454a0ffd1e 100644
+--- a/layout/base/PresShellWidgetListener.h
++++ b/layout/base/PresShellWidgetListener.h
+@@ -199,7 +199,11 @@ class nsView final : public nsIWidgetListener {
+   void KeyboardHeightChanged(mozilla::ScreenIntCoord aHeight) override;
+   void AndroidPipModeChanged(bool) override;
+   MOZ_CAN_RUN_SCRIPT_BOUNDARY
+-  void PaintWindow(nsIWidget* aWidget) override;
++  void WillPaintWindow(nsIWidget* aWidget) override;
++  MOZ_CAN_RUN_SCRIPT_BOUNDARY
++  bool PaintWindow(nsIWidget* aWidget, LayoutDeviceIntRegion aRegion) override;
++  MOZ_CAN_RUN_SCRIPT_BOUNDARY
++  void DidPaintWindow() override;
+   void DidCompositeWindow(mozilla::layers::TransactionId aTransactionId,
+                           const mozilla::TimeStamp& aCompositeStart,
+                           const mozilla::TimeStamp& aCompositeEnd) override;
+diff --git a/widget/PuppetWidget.cpp b/widget/PuppetWidget.cpp
+index a6520a0a68a2..9f8ec40475ff 100644
+--- a/widget/PuppetWidget.cpp
++++ b/widget/PuppetWidget.cpp
+@@ -896,11 +896,18 @@ PuppetWidget::WidgetPaintTask::Run() {
+ }
+ 
+ void PuppetWidget::Paint() {
++  if (!GetPaintListener()) {
++    return;
++  }
++
+   mWidgetPaintTask.Revoke();
+ 
+   RefPtr<PuppetWidget> strongThis(this);
++
++  GetPaintListener()->WillPaintWindow(this);
++
+   if (auto* listener = GetPaintListener()) {
+-    listener->PaintWindow(this);
++    listener->DidPaintWindow();
+   }
+ }
+ 
+diff --git a/widget/cocoa/nsCocoaWindow.h b/widget/cocoa/nsCocoaWindow.h
+index 92a16e745ba9..f608b381fba2 100644
+--- a/widget/cocoa/nsCocoaWindow.h
++++ b/widget/cocoa/nsCocoaWindow.h
+@@ -375,8 +375,9 @@ class nsCocoaWindow final : public nsIWidget {
+   int32_t RoundsWidgetCoordinatesTo() override;
+ 
+   // Mac specific methods
+-  void PaintWindow();
+-  void PaintWindowInDrawTarget(mozilla::gfx::DrawTarget* aDT,
++  void WillPaintWindow();
++  bool PaintWindow(LayoutDeviceIntRegion aRegion);
++  bool PaintWindowInDrawTarget(mozilla::gfx::DrawTarget* aDT,
+                                const LayoutDeviceIntRegion& aRegion,
+                                const mozilla::gfx::IntSize& aSurfaceSize);
+ 
+diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
+index 60413e27b12d..a96a3cd0885f 100644
+--- a/widget/cocoa/nsCocoaWindow.mm
++++ b/widget/cocoa/nsCocoaWindow.mm
+@@ -753,17 +753,33 @@ void nsCocoaWindow::Invalidate(const LayoutDeviceIntRect& aRect) {
+ 
+ #pragma mark -
+ 
+-void nsCocoaWindow::PaintWindow() {
++void nsCocoaWindow::WillPaintWindow() {
+   if (nsIWidgetListener* listener = GetPaintListener()) {
+-    listener->PaintWindow(this);
++    listener->WillPaintWindow(this);
+   }
+ }
+ 
+-void nsCocoaWindow::PaintWindowInDrawTarget(
++bool nsCocoaWindow::PaintWindow(LayoutDeviceIntRegion aRegion) {
++  nsIWidgetListener* listener = GetPaintListener();
++  if (!listener) {
++    return false;
++  }
++
++  bool returnValue = listener->PaintWindow(this, aRegion);
++
++  listener = GetPaintListener();
++  if (listener) {
++    listener->DidPaintWindow();
++  }
++
++  return returnValue;
++}
++
++bool nsCocoaWindow::PaintWindowInDrawTarget(
+     gfx::DrawTarget* aDT, const LayoutDeviceIntRegion& aRegion,
+     const gfx::IntSize& aSurfaceSize) {
+   if (!aDT || !aDT->IsValid()) {
+-    return;
++    return false;
+   }
+   gfxContext targetContext(aDT);
+ 
+@@ -779,8 +795,9 @@ void nsCocoaWindow::PaintWindowInDrawTarget(
+   nsAutoRetainCocoaObject kungFuDeathGrip(mChildView);
+   if (GetWindowRenderer()->GetBackendType() == LayersBackend::LAYERS_NONE) {
+     nsIWidget::AutoLayerManagerSetup setupLayerManager(this, &targetContext);
+-    PaintWindow();
++    return PaintWindow(aRegion);
+   }
++  return false;
+ }
+ 
+ void nsCocoaWindow::EnsureContentLayerForMainThreadPainting() {
+@@ -826,6 +843,7 @@ void nsCocoaWindow::PaintWindowInContentLayer() {
+ 
+ void nsCocoaWindow::HandleMainThreadCATransaction() {
+   AUTO_PROFILER_MARKER("HandleMainThreadCATransaction", GRAPHICS);
++  WillPaintWindow();
+ 
+   if (GetWindowRenderer()->GetBackendType() == LayersBackend::LAYERS_NONE) {
+     // We're in BasicLayers mode, i.e. main thread software compositing.
+@@ -836,7 +854,7 @@ void nsCocoaWindow::HandleMainThreadCATransaction() {
+     // NotifySurfaceReady on the compositor thread to update mNativeLayerRoot's
+     // contents, and the main thread (this thread) will wait inside PaintWindow
+     // during that time.
+-    PaintWindow();
++    PaintWindow(LayoutDeviceIntRegion(GetClientBounds()));
+   }
+ 
+   {
+diff --git a/widget/gtk/nsWindow.cpp b/widget/gtk/nsWindow.cpp
+index 80ec7f44283b..37b8b07624cd 100644
+--- a/widget/gtk/nsWindow.cpp
++++ b/widget/gtk/nsWindow.cpp
+@@ -4107,6 +4107,11 @@ gboolean nsWindow::OnExposeEvent(cairo_t* cr) {
+ 
+   RefPtr<nsWindow> strongThis(this);
+ 
++  // Dispatch WillPaintWindow notification to allow scripts etc. to run
++  // before we paint. It also spins event loop which may show/hide the window
++  // so we may have new renderer etc.
++  GetPaintListener()->WillPaintWindow(this);
++
+   // If the window has been destroyed during the will paint notification,
+   // there is nothing left to do.
+   if (mIsDestroyed) {
+@@ -4132,6 +4137,9 @@ gboolean nsWindow::OnExposeEvent(cairo_t* cr) {
+     layerManager->SetNeedsComposite(false);
+   }
+ 
++  // Our bounds may have changed after calling WillPaintWindow.  Clip
++  // to the new bounds here.  The region is relative to this
++  // window.
+   region.AndWith(LayoutDeviceIntRect(LayoutDeviceIntPoint(), GetClientSize()));
+   LOGVERBOSE("painted region scaled %s (client size scaled %s)",
+              ToString(region).c_str(), ToString(GetClientSize()).c_str());
+@@ -4141,7 +4149,16 @@ gboolean nsWindow::OnExposeEvent(cairo_t* cr) {
+   // If this widget uses OMTC...
+   if (renderer->GetBackendType() == LayersBackend::LAYERS_WR) {
+     LOG("redirect painting to OMTC rendering...");
+-    listener->PaintWindow(this);
++    listener->PaintWindow(this, region);
++
++    // Re-get the listener since the will paint notification might have
++    // killed it.
++    listener = GetPaintListener();
++    if (!listener) {
++      return TRUE;
++    }
++
++    listener->DidPaintWindow();
+     return TRUE;
+   }
+ 
+@@ -4174,16 +4191,25 @@ gboolean nsWindow::OnExposeEvent(cairo_t* cr) {
+ 
+ #endif  // MOZ_X11
+ 
+-  if (renderer->GetBackendType() == LayersBackend::LAYERS_NONE) {
+-    if (GetTransparencyMode() == TransparencyMode::Transparent &&
+-        mHasAlphaVisual) {
+-      // If our draw target is unbuffered and we use an alpha channel,
+-      // clear the image beforehand to ensure we don't get artifacts from a
+-      // reused SHM image. See bug 1258086.
+-      dt->ClearRect(Rect(boundsRect));
++  {
++    if (renderer->GetBackendType() == LayersBackend::LAYERS_NONE) {
++      if (GetTransparencyMode() == TransparencyMode::Transparent &&
++          mHasAlphaVisual) {
++        // If our draw target is unbuffered and we use an alpha channel,
++        // clear the image beforehand to ensure we don't get artifacts from a
++        // reused SHM image. See bug 1258086.
++        dt->ClearRect(Rect(boundsRect));
++      }
++      AutoLayerManagerSetup setupLayerManager(this, ctx.ptrOr(nullptr));
++      listener->PaintWindow(this, region);
++
++      // Re-get the listener since the will paint notification might have
++      // killed it.
++      listener = GetPaintListener();
++      if (!listener) {
++        return TRUE;
++      }
+     }
+-    AutoLayerManagerSetup setupLayerManager(this, ctx.ptrOr(nullptr));
+-    listener->PaintWindow(this);
+   }
+ 
+ #ifdef MOZ_X11
+@@ -4193,8 +4219,12 @@ gboolean nsWindow::OnExposeEvent(cairo_t* cr) {
+ 
+   EndRemoteDrawingInRegion(dt, region);
+ 
++  listener->DidPaintWindow();
++
+   // Synchronously flush any new dirty areas
+-  if (cairo_region_t* dirtyArea = gdk_window_get_update_area(mGdkWindow)) {
++  cairo_region_t* dirtyArea = gdk_window_get_update_area(mGdkWindow);
++
++  if (dirtyArea) {
+     gdk_window_invalidate_region(mGdkWindow, dirtyArea, false);
+     cairo_region_destroy(dirtyArea);
+     gdk_window_process_updates(mGdkWindow, false);
+diff --git a/widget/nsIWidgetListener.h b/widget/nsIWidgetListener.h
+index c6c58bd90fce..912055b500ce 100644
+--- a/widget/nsIWidgetListener.h
++++ b/widget/nsIWidgetListener.h
+@@ -110,9 +110,33 @@ class nsIWidgetListener {
+    */
+   virtual bool RequestWindowClose(nsIWidget* aWidget) { return false; }
+ 
+-  /** Paint the window if needed. */
++  /*
++   * Indicate that a paint is about to occur on this window. This is called
++   * at a time when it's OK to change the geometry of this widget or of
++   * other widgets. Must be called before every call to PaintWindow.
++   */
++  MOZ_CAN_RUN_SCRIPT_BOUNDARY
++  virtual void WillPaintWindow(nsIWidget* aWidget) {}
++
++  /**
++   * Paint the specified region of the window. Returns true if the
++   * notification was handled.
++   * This is called at a time when it is not OK to change the geometry of
++   * this widget or of other widgets.
++   */
++  MOZ_CAN_RUN_SCRIPT_BOUNDARY
++  virtual bool PaintWindow(nsIWidget* aWidget,
++                           mozilla::LayoutDeviceIntRegion aRegion) {
++    return false;
++  }
++  /**
++   * Indicates that a paint occurred.
++   * This is called at a time when it is OK to change the geometry of
++   * this widget or of other widgets.
++   * Must be called after every call to PaintWindow.
++   */
+   MOZ_CAN_RUN_SCRIPT_BOUNDARY
+-  virtual void PaintWindow(nsIWidget* aWidget) {}
++  virtual void DidPaintWindow() {}
+ 
+   virtual void DidCompositeWindow(mozilla::layers::TransactionId aTransactionId,
+                                   const mozilla::TimeStamp& aCompositeStart,
+diff --git a/widget/uikit/nsWindow.h b/widget/uikit/nsWindow.h
+index 07abe22076e8..bd5d4b1c6268 100644
+--- a/widget/uikit/nsWindow.h
++++ b/widget/uikit/nsWindow.h
+@@ -85,7 +85,8 @@ class nsWindow final : public nsIWidget {
+ 
+   void Invalidate(const LayoutDeviceIntRect& aRect) override;
+ 
+-  void PaintWindow();
++  void WillPaintWindow();
++  bool PaintWindow(LayoutDeviceIntRegion aRegion);
+ 
+   bool HasModalDescendents() { return false; }
+ 
+diff --git a/widget/windows/nsWindowGfx.cpp b/widget/windows/nsWindowGfx.cpp
+index 3702bfbc6a0b..eff2a690cde0 100644
+--- a/widget/windows/nsWindowGfx.cpp
++++ b/widget/windows/nsWindowGfx.cpp
+@@ -179,6 +179,13 @@ bool nsWindow::OnPaint() {
+   mLastPaintBounds = mBounds;
+ 
+   RefPtr<nsWindow> strongThis(this);
++  if (nsIWidgetListener* listener = GetPaintListener()) {
++    // WillPaintWindow will update our transparent area if needed, which we use
++    // below. Note that this might kill the listener.
++    listener->WillPaintWindow(this);
++  }
++
++  bool didPaint = false;
+   // BeginPaint/EndPaint must be called to make Windows think that invalid
+   // area is painted. Otherwise it will continue sending the same message
+   // endlessly. Note that we need to call it after WillPaintWindow, which
+@@ -189,9 +196,39 @@ bool nsWindow::OnPaint() {
+   HDC hDC = ::BeginPaint(mWnd, &ps);
+   auto endPaint = MakeScopeExit([&] {
+     ::EndPaint(mWnd, &ps);
+-    mLastPaintEndTime = TimeStamp::Now();
++    if (didPaint) {
++      mLastPaintEndTime = TimeStamp::Now();
++      if (nsIWidgetListener* listener = GetPaintListener()) {
++        listener->DidPaintWindow();
++      }
++    }
+   });
+ 
++  LayoutDeviceIntRegion region = GetRegionToPaint(ps, hDC);
++  LayoutDeviceIntRegion regionToClear;
++  // Clear the translucent region if needed.
++  if (isTransparent) {
++    auto translucentRegion = GetTranslucentRegion();
++    // Clear the parts of the translucent region that aren't clear already or
++    // that Windows has told us to repaint.
++    // NOTE(emilio): Ordering of region ops is a bit subtle to avoid
++    // unnecessary copies, but we want to end up with:
++    //   regionToClear = translucentRegion - (mClearedRegion - region)
++    //   mClearedRegion = translucentRegion;
++    //   And add translucentRegion to region afterwards.
++    regionToClear = translucentRegion;
++    if (!mClearedRegion.IsEmpty()) {
++      mClearedRegion.SubOut(region);
++      regionToClear.SubOut(mClearedRegion);
++    }
++    region.OrWith(translucentRegion);
++    mClearedRegion = std::move(translucentRegion);
++  }
++
++  if (region.IsEmpty() || !GetPaintListener()) {
++    return false;
++  }
++
+   Maybe<FallbackPaintContext> fallback;
+   if (isFallback) {
+     uint32_t flags = isTransparent ? gfxWindowsSurface::FLAG_IS_TRANSPARENT : 0;
+@@ -209,23 +246,12 @@ bool nsWindow::OnPaint() {
+     fallback.emplace(this, std::move(targetSurface), std::move(dt));
+   }
+ 
+-  LayoutDeviceIntRegion region = GetRegionToPaint(ps, hDC);
+-  if (!mClearedRegion.IsEmpty()) {
+-    // Don't consider regions that Windows has told us to repaint as clear, even
+-    // if we've cleared them before.
+-    mClearedRegion.SubOut(region);
++  if (knowsCompositor && layerManager) {
++    layerManager->SendInvalidRegion(region.ToUnknownRegion());
++    layerManager->ScheduleComposite(wr::RenderReasons::WIDGET);
+   }
+ 
+-  auto ComputeAndClearTranslucentRegion = [&]() {
+-    if (!isTransparent) {
+-      return;
+-    }
+-    const LayoutDeviceIntRegion translucentRegion = GetTranslucentRegion();
+-    auto regionToClear = translucentRegion;
+-    if (!mClearedRegion.IsEmpty()) {
+-      regionToClear.SubOut(mClearedRegion);
+-    }
+-    mClearedRegion = std::move(translucentRegion);
++  if (!regionToClear.IsEmpty()) {
+     auto black = reinterpret_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH));
+     // We could use RegionToHRGN, but at least for simple regions (and
+     // possibly for complex ones too?) FillRect is faster; see bug 1946365
+@@ -242,33 +268,6 @@ bool nsWindow::OnPaint() {
+         ::FillRect(hDC, &rect, black);
+       }
+     }
+-    region.OrWith(regionToClear);
+-  };
+-
+-  // This is a bit subtle: For fallback windows, we paint directly into the DC,
+-  // so we need to clear it before PaintWindow().
+-  //
+-  // For composited windows, we first need to paint (so that we know the
+-  // translucent area, which is computed from the display list), then we clear
+-  // it.
+-  //
+-  // We don't track the transparent region for popups (meaning we always rely on
+-  // the whole client area being cleared) so this works out.
+-  if (fallback) {
+-    ComputeAndClearTranslucentRegion();
+-  }
+-
+-  if (auto* listener = GetPaintListener()) {
+-    listener->PaintWindow(this);
+-  }
+-
+-  if (!fallback) {
+-    ComputeAndClearTranslucentRegion();
+-  }
+-
+-  if (knowsCompositor && layerManager && !region.IsEmpty()) {
+-    layerManager->SendInvalidRegion(region.ToUnknownRegion());
+-    layerManager->ScheduleComposite(wr::RenderReasons::WIDGET);
+   }
+ 
+ #ifdef WIDGET_DEBUG_OUTPUT
+@@ -276,12 +275,18 @@ bool nsWindow::OnPaint() {
+                        (int32_t)mWnd);
+ #endif  // WIDGET_DEBUG_OUTPUT
+ 
++  bool result = true;
++  if (nsIWidgetListener* listener = GetPaintListener()) {
++    result = listener->PaintWindow(this, region);
++  }
++
+   if (!isFallback && !gfxEnv::MOZ_DISABLE_FORCE_PRESENT()) {
+     NS_DispatchToMainThread(NewRunnableMethod("nsWindow::ForcePresent", this,
+                                               &nsWindow::ForcePresent));
+   }
+ 
+-  return true;
++  didPaint = true;
++  return result;
+ }
+ 
+ bool nsWindow::NeedsToTrackWindowOcclusionState() {

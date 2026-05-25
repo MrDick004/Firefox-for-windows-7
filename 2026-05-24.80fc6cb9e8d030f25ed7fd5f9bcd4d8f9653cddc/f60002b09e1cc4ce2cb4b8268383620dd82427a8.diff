@@ -1,0 +1,49 @@
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 59b1f941d0da..1c94a515c1e4 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -5025,7 +5025,7 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+       break;
+ 
+     case WM_PAINT:
+-      *aRetValue = (int)OnPaint();
++      *aRetValue = (int)OnPaint(0);
+       result = true;
+       break;
+ 
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index 399109faa6cd..ce8fe8495064 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -606,7 +606,7 @@ class nsWindow final : public nsBaseWidget,
+   bool OnGesture(WPARAM wParam, LPARAM lParam);
+   bool OnTouch(WPARAM wParam, LPARAM lParam);
+   bool OnHotKey(WPARAM wParam, LPARAM lParam);
+-  bool OnPaint();
++  bool OnPaint(uint32_t aNestingLevel);
+   void OnWindowPosChanging(WINDOWPOS* info);
+   void OnWindowPosChanged(WINDOWPOS* wp);
+   void OnSysColorChanged();
+diff --git a/widget/windows/nsWindowGfx.cpp b/widget/windows/nsWindowGfx.cpp
+index b52909f869e8..64154bdb18e5 100644
+--- a/widget/windows/nsWindowGfx.cpp
++++ b/widget/windows/nsWindowGfx.cpp
+@@ -127,7 +127,7 @@ void nsWindow::ForcePresent() {
+   }
+ }
+ 
+-bool nsWindow::OnPaint() {
++bool nsWindow::OnPaint(uint32_t aNestingLevel) {
+   struct FallbackPaintContext {
+     RefPtr<gfxASurface> mTargetSurface;
+     RefPtr<DrawTarget> mDt;
+@@ -209,6 +209,9 @@ bool nsWindow::OnPaint() {
+       if (nsIWidgetListener* listener = GetPaintListener()) {
+         listener->DidPaintWindow();
+       }
++      if (aNestingLevel == 0 && ::GetUpdateRect(mWnd, nullptr, false)) {
++        OnPaint(1);
++      }
+     }
+   });
+ 

@@ -1,0 +1,1 @@
+Bug 1948565 - Allow accelerating semi-transparent windows popups. r=win-reviewers,rkraesig    2025-02-17 19:48:05    3ca31b681a3295bf6e80be490d931d1be90e85fc

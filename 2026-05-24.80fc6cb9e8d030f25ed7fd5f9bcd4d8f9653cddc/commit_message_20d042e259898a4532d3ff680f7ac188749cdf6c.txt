@@ -1,0 +1,1 @@
+Bug 1979338 - Use an <html:img> rather than <xul:image> for menu icons. r=Gijs,desktop-theme-reviewers,settings-reviewers,tabbrowser-reviewers,sidebar-reviewers,sthompson,nsharpley,dao    2025-07-30 19:35:36    20d042e259898a4532d3ff680f7ac188749cdf6c

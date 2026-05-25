@@ -1,0 +1,354 @@
+diff --git a/toolkit/content/widgets.css b/toolkit/content/widgets.css
+index c106799f93ea..5afd791856fc 100644
+--- a/toolkit/content/widgets.css
++++ b/toolkit/content/widgets.css
+@@ -14,7 +14,7 @@
+ @import url("chrome://global/skin/notification.css");
+ @import url("chrome://global/skin/numberinput.css");
+ @import url("chrome://global/skin/popup.css");
+-/* NOTE: menu.css must be after popup.css, since it overrides some general menupopup rules. */
++/* NOTE: Menu must be after popup.css, since it overrides some general menupopup rules. */
+ @import url("chrome://global/skin/menu.css");
+ @import url("chrome://global/skin/popupnotification.css");
+ @import url("chrome://global/skin/radio.css");
+diff --git a/toolkit/themes/linux/global/jar.mn b/toolkit/themes/linux/global/jar.mn
+index c6e2a61f9cf3..320021ae3760 100644
+--- a/toolkit/themes/linux/global/jar.mn
++++ b/toolkit/themes/linux/global/jar.mn
+@@ -8,6 +8,7 @@ toolkit.jar:
+ toolkit.jar:
+    skin/classic/global/autocomplete.css
+    skin/classic/global/global.css
++   skin/classic/global/menu.css
+    skin/classic/global/menulist.css
+    skin/classic/global/richlistbox.css
+ 
+diff --git a/toolkit/themes/linux/global/menu.css b/toolkit/themes/linux/global/menu.css
+new file mode 100644
+index 000000000000..d499f72cae7a
+--- /dev/null
++++ b/toolkit/themes/linux/global/menu.css
+@@ -0,0 +1,38 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++@import url("chrome://global/skin/menu-shared.css");
++
++/* ===== menu.css =======================================================
++  == Styles used by XUL menu-related elements.
++  ======================================================================= */
++
++@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
++
++/* ..... internal content .... */
++
++.menu-text {
++  /* This is (18 + the size of end-padding on .menu-iconic-left)px */
++  margin-inline-start: 21px;
++}
++
++.menu-accel-container {
++  justify-content: flex-end;
++}
++
++.menu-iconic-left {
++  min-width: 16px;
++  /* We can only hardcode this, to make the default GTK icon<->label spacing */
++  padding-inline-end: 3px;
++}
++
++menuitem:is([type="checkbox"], [checked="true"]) .menu-iconic-icon {
++  appearance: auto;
++  -moz-default-appearance: checkbox;
++}
++
++menuitem[type="radio"] .menu-iconic-icon {
++  appearance: auto;
++  -moz-default-appearance: radio;
++}
+diff --git a/toolkit/themes/osx/global/jar.mn b/toolkit/themes/osx/global/jar.mn
+index b8eb5b4faae8..6d7b1975b5e1 100644
+--- a/toolkit/themes/osx/global/jar.mn
++++ b/toolkit/themes/osx/global/jar.mn
+@@ -9,6 +9,7 @@ toolkit.jar:
+   skin/classic/global/button.css
+   skin/classic/global/dialog.css
+   skin/classic/global/global.css
++  skin/classic/global/menu.css
+   skin/classic/global/menulist.css
+   skin/classic/global/richlistbox.css
+   skin/classic/global/wizard.css
+diff --git a/toolkit/themes/osx/global/menu.css b/toolkit/themes/osx/global/menu.css
+new file mode 100644
+index 000000000000..ece39b8bf04c
+--- /dev/null
++++ b/toolkit/themes/osx/global/menu.css
+@@ -0,0 +1,33 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++@import url("chrome://global/skin/menu-shared.css");
++
++@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
++
++/* checked menuitems */
++
++menupopup[needsgutter] {
++  /* although only menuitems may be checked, apply this to
++     menus and menucaptions as well to maintain alignment */
++  > menu,
++  > menuitem,
++  > menucaption {
++    padding-inline-start: 0;
++
++    &::before {
++      content: "\2713"; /* a checkmark */
++      display: inline-block;
++      vertical-align: middle;
++      line-height: 0;
++      visibility: hidden;
++      padding-inline: 4px;
++      font-weight: var(--font-weight-bold);
++    }
++  }
++
++  > menuitem:is([checked], [selected])::before {
++    visibility: inherit;
++  }
++}
+diff --git a/toolkit/themes/shared/desktop-jar.inc.mn b/toolkit/themes/shared/desktop-jar.inc.mn
+index 530d95c9c32f..3747c789d0ae 100644
+--- a/toolkit/themes/shared/desktop-jar.inc.mn
++++ b/toolkit/themes/shared/desktop-jar.inc.mn
+@@ -35,7 +35,7 @@
+   skin/classic/global/error-pages.css                      (../../shared/error-pages.css)
+   skin/classic/global/findbar.css                          (../../shared/findbar.css)
+   skin/classic/global/global-shared.css                    (../../shared/global-shared.css)
+-  skin/classic/global/menu.css                             (../../shared/menu.css)
++  skin/classic/global/menu-shared.css                      (../../shared/menu-shared.css)
+   skin/classic/global/menulist-shared.css                  (../../shared/menulist-shared.css)
+   skin/classic/global/notification.css                     (../../shared/notification.css)
+   skin/classic/global/numberinput.css                      (../../shared/numberinput.css)
+diff --git a/toolkit/themes/shared/menu.css b/toolkit/themes/shared/menu-shared.css
+similarity index 72%
+rename from toolkit/themes/shared/menu.css
+rename to toolkit/themes/shared/menu-shared.css
+index ad4d0679e798..25945f0e624f 100644
+--- a/toolkit/themes/shared/menu.css
++++ b/toolkit/themes/shared/menu-shared.css
+@@ -85,12 +85,6 @@ menulist > menupopup {
+       }
+     }
+   }
+-
+-  @media (-moz-platform: windows) {
+-    > menuitem[_moz-menuactive][disabled] {
+-      color: GrayText;
+-    }
+-  }
+ }
+ 
+ /* Menu separator */
+@@ -306,106 +300,3 @@ menucaption {
+   width: 16px;
+   height: 16px;
+ }
+-
+-@media (-moz-platform: linux) {
+-  .menu-text {
+-    /* This is 16px (of icons / checkbox) + the size of end-margin on .menu-iconic-left */
+-    margin-inline-start: calc(16px + 0.5em);
+-  }
+-}
+-
+-.menu-iconic-left {
+-  @media (-moz-platform: linux) {
+-    margin-inline-end: 0.5em;
+-  }
+-  @media (-moz-platform: windows) {
+-    padding-top: 2px;
+-    margin-inline-end: 8px;
+-  }
+-  @media (-moz-platform: macos) {
+-    margin-block: -2px;
+-    margin-inline-end: 6px;
+-  }
+-}
+-
+-/* checkbox / radio rendering */
+-
+-/* On linux, we use regular checkboxes and radio buttons */
+-@media (-moz-platform: linux) {
+-  menuitem:is([type="checkbox"], [checked]) .menu-iconic-icon {
+-    appearance: auto;
+-    -moz-default-appearance: checkbox;
+-  }
+-
+-  menuitem[type="radio"] .menu-iconic-icon {
+-    appearance: auto;
+-    -moz-default-appearance: radio;
+-  }
+-}
+-
+-/* On windows we use a checkmark */
+-@media (-moz-platform: windows) {
+-  menuitem:is([type="checkbox"], [type="radio"]):not([checked="true"]) > .menu-iconic-left > .menu-iconic-icon {
+-    display: none;
+-  }
+-
+-  /* We need to do something to override the default style for selected
+-     checkboxes and radio buttons because the native drawing we use on other
+-     Windows versions looks pretty bad with the Win10 styles, so for now we'll
+-     insert a generic checkmark icon for both types. */
+-  menuitem[checked] > .menu-iconic-left {
+-    -moz-context-properties: fill, fill-opacity;
+-    fill: currentColor;
+-    fill-opacity: var(--menu-icon-opacity);
+-    list-style-image: url("chrome://global/skin/icons/menu-check.svg");
+-    width: 16px;
+-  }
+-}
+-
+-menupopup[needsgutter] {
+-  @media (-moz-platform: linux) or (-moz-platform: windows) {
+-    > :is(menu, menuitem) > .menu-icon {
+-      display: revert;
+-    }
+-  }
+-
+-  @media (-moz-platform: macos) {
+-    /* although only menuitems may be checked, apply this to
+-       menus and menucaptions as well to maintain alignment */
+-    > menu,
+-    > menuitem,
+-    > menucaption {
+-      padding-inline-start: 0;
+-
+-      &::before {
+-        content: "\2713"; /* a checkmark */
+-        display: inline-block;
+-        vertical-align: middle;
+-        line-height: 0;
+-        visibility: hidden;
+-        padding-inline: 4px;
+-        font-weight: var(--font-weight-bold);
+-      }
+-    }
+-
+-    > menuitem:is([checked], [selected])::before {
+-      visibility: inherit;
+-    }
+-  }
+-}
+-
+-menuitem[badge]::after {
+-  border-radius: var(--border-radius-small);
+-  border: 1px solid var(--badge-border-color);
+-  color: var(--badge-text-color);
+-  background-color: var(--badge-background-color);
+-  content: attr(badge);
+-  margin-inline-start: var(--space-small);
+-  padding: var(--space-xxsmall) var(--space-small);
+-}
+-
+-menuitem.badge-new::after {
+-  border-color: var(--badge-border-color-filled);
+-  color: var(--badge-text-color-filled);
+-  background-color: var(--badge-background-color-filled);
+-}
+diff --git a/toolkit/themes/windows/global/jar.mn b/toolkit/themes/windows/global/jar.mn
+index 82d1b9445b84..fc4d66835a9f 100644
+--- a/toolkit/themes/windows/global/jar.mn
++++ b/toolkit/themes/windows/global/jar.mn
+@@ -7,6 +7,7 @@
+ 
+ toolkit.jar:
+   skin/classic/global/autocomplete.css
++  skin/classic/global/menu.css
+   skin/classic/global/menulist.css
+   skin/classic/global/global.css
+   skin/classic/global/printPageSetup.css
+diff --git a/toolkit/themes/windows/global/menu.css b/toolkit/themes/windows/global/menu.css
+new file mode 100644
+index 000000000000..1a9a1c5394b5
+--- /dev/null
++++ b/toolkit/themes/windows/global/menu.css
+@@ -0,0 +1,76 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++@import url("chrome://global/skin/menu-shared.css");
++
++/* ===== menu.css =======================================================
++  == Styles used by XUL menu-related elements.
++  ======================================================================= */
++
++@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
++
++/* ..... Internal content .... */
++
++.menu-iconic > .menu-iconic-left,
++.menuitem-iconic > .menu-iconic-left {
++  padding-top: 2px;
++}
++
++menuitem:is([type="checkbox"], [type="radio"]):not([checked="true"]) > .menu-iconic-left > .menu-iconic-icon {
++  display: none;
++}
++
++
++menulist > menupopup > menuitem[_moz-menuactive][disabled] {
++  color: GrayText;
++}
++
++menulist > menupopup > :is(menuitem, menucaption):not(.menuitem-iconic) > .menu-iconic-text {
++  margin: 0;
++}
++
++/* ::::: checkbox and radio menuitems ::::: */
++
++menupopup[needsgutter] menu:not([icon], .menu-iconic),
++menupopup[needsgutter] menuitem:not([checked="true"], [icon], .menuitem-iconic) {
++  padding-inline-start: 36px;
++}
++
++.menu-iconic > .menu-iconic-left,
++.menuitem-iconic > .menu-iconic-left {
++  margin-inline-end: 8px;
++}
++
++menuitem[checked="true"] {
++  padding-inline-start: 12px;
++
++  /* We need to do something to override the default style for selected
++     checkboxes and radio buttons because the native drawing we use on other
++     Windows versions looks pretty bad with the Win10 styles, so for now we'll
++     insert a generic checkmark icon for both types. */
++  > .menu-iconic-left {
++    -moz-context-properties: fill, fill-opacity;
++    fill: currentColor;
++    fill-opacity: var(--menu-icon-opacity);
++    list-style-image: url("chrome://global/skin/icons/menu-check.svg");
++    width: 16px;
++    margin-inline-end: 8px;
++  }
++}
++
++menuitem[badge]::after {
++  border-radius: var(--border-radius-small);
++  border: 1px solid var(--badge-border-color);
++  color: var(--badge-text-color);
++  background-color: var(--badge-background-color);
++  content: attr(badge);
++  margin-inline-start: var(--space-small);
++  padding: var(--space-xxsmall) var(--space-small);
++}
++
++menuitem.badge-new::after {
++  border-color: var(--badge-border-color-filled);
++  color: var(--badge-text-color-filled);
++  background-color: var(--badge-background-color-filled);
++}
