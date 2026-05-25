@@ -1,0 +1,1 @@
+Bug 1947324 part 3 - use WinRT/Windows App SDK instead of WS_SYSMENU to collapse titlebar r=emilio    2025-10-06 19:18:29    2fe4ae0730109c5403da17b0546d4500712e96e7

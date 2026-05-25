@@ -1,0 +1,1 @@
+Bug 1891063 - Re-introduce some of the opaque region handling removed in bug 1844241. r=win-reviewers,rkraesig    2024-04-23 07:17:51    b6f8a18455a4cb9f9ab24e5414051fff78e0a78f

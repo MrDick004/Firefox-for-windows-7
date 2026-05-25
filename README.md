@@ -7,7 +7,7 @@ Firefox 115 is the last version to support Windows 7. This repository includes p
 
 ## Platform Support
 
-Windows 7, 8, 10, 11.
+Windows 7.
 
 ![](imgs/snapshot.png)
 
@@ -90,6 +90,8 @@ To replace the browser icon with the Fox icon, see: https://github.com/e3kskoy7w
      ac_add_options --with-redist=<CRT_LOCATION>
      export WIN_UCRT_REDIST_DIR=<UCRT_LOCATION>
      ac_add_options --disable-crashreporter
+     ac_add_options --allow-addon-sideload
+     ac_add_options --with-unsigned-addon-scopes=app,system
      ac_add_options --disable-sandbox
      ac_add_options --target=i686-pc-windows-msvc
      ac_add_options --enable-optimize
@@ -108,6 +110,8 @@ To replace the browser icon with the Fox icon, see: https://github.com/e3kskoy7w
      ac_add_options --with-redist=<CRT_LOCATION>
      export WIN_UCRT_REDIST_DIR=<UCRT_LOCATION>
      ac_add_options --disable-crashreporter
+     ac_add_options --allow-addon-sideload
+     ac_add_options --with-unsigned-addon-scopes=app,system
      ac_add_options --target=x86_64-pc-windows-msvc
      ac_add_options --enable-optimize
      ac_add_options --disable-tests

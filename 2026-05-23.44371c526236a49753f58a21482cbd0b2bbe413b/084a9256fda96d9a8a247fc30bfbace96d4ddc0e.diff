@@ -1,0 +1,932 @@
+diff --git a/widget/windows/TaskbarPreview.cpp b/widget/windows/TaskbarPreview.cpp
+index 65277fb548a3..2b958f84c1c3 100644
+--- a/widget/windows/TaskbarPreview.cpp
++++ b/widget/windows/TaskbarPreview.cpp
+@@ -14,6 +14,7 @@
+ #include <nsIWidget.h>
+ #include <nsServiceManagerUtils.h>
+ 
++#include "nsUXThemeData.h"
+ #include "nsWindow.h"
+ #include "nsAppShell.h"
+ #include "TaskbarPreviewButton.h"
+diff --git a/widget/windows/TaskbarTabPreview.cpp b/widget/windows/TaskbarTabPreview.cpp
+index b142fd7198fa..f761bbf14e32 100644
+--- a/widget/windows/TaskbarTabPreview.cpp
++++ b/widget/windows/TaskbarTabPreview.cpp
+@@ -7,6 +7,7 @@
+ 
+ #include "TaskbarTabPreview.h"
+ #include "nsWindowGfx.h"
++#include "nsUXThemeData.h"
+ #include "WinUtils.h"
+ #include <nsITaskbarPreviewController.h>
+ 
+diff --git a/widget/windows/TaskbarWindowPreview.cpp b/widget/windows/TaskbarWindowPreview.cpp
+index 36f0d97f3269..703aabe794a4 100644
+--- a/widget/windows/TaskbarWindowPreview.cpp
++++ b/widget/windows/TaskbarWindowPreview.cpp
+@@ -10,6 +10,7 @@
+ #include <nsITaskbarPreviewController.h>
+ #include "TaskbarWindowPreview.h"
+ #include "WindowHook.h"
++#include "nsUXThemeData.h"
+ #include "TaskbarPreviewButton.h"
+ #include "nsWindow.h"
+ #include "nsWindowGfx.h"
+diff --git a/widget/windows/WinTaskbar.cpp b/widget/windows/WinTaskbar.cpp
+index 8dc5aef71e1d..67717499bc66 100644
+--- a/widget/windows/WinTaskbar.cpp
++++ b/widget/windows/WinTaskbar.cpp
+@@ -18,6 +18,7 @@
+ #include <nsIBaseWindow.h>
+ #include <nsServiceManagerUtils.h>
+ #include "nsIXULAppInfo.h"
++#include "nsUXThemeData.h"
+ #include "nsWindow.h"
+ #include "WinUtils.h"
+ #include "TaskbarTabPreview.h"
+diff --git a/widget/windows/moz.build b/widget/windows/moz.build
+index 929af7da019c..d1c0f45da779 100644
+--- a/widget/windows/moz.build
++++ b/widget/windows/moz.build
+@@ -91,6 +91,7 @@ UNIFIED_SOURCES += [
+     "nsSound.cpp",
+     "nsToolkit.cpp",
+     "nsUserIdleServiceWin.cpp",
++    "nsUXThemeData.cpp",
+     "nsWindow.cpp",
+     "nsWindowDbg.cpp",
+     "nsWindowGfx.cpp",
+diff --git a/widget/windows/nsLookAndFeel.cpp b/widget/windows/nsLookAndFeel.cpp
+index a90001584896..9e540efdc23d 100644
+--- a/widget/windows/nsLookAndFeel.cpp
++++ b/widget/windows/nsLookAndFeel.cpp
+@@ -8,8 +8,8 @@
+ #include <windows.h>
+ #include <shellapi.h>
+ #include "nsStyleConsts.h"
++#include "nsUXThemeData.h"
+ #include "nsUXThemeConstants.h"
+-#include "nsWindowDefs.h"
+ #include "nsWindowsHelpers.h"
+ #include "WinUtils.h"
+ #include "WindowsUIUtils.h"
+@@ -23,10 +23,10 @@
+ using namespace mozilla;
+ using namespace mozilla::widget;
+ 
+-static Maybe<nscolor> GetColorFromTheme(UXThemeClass cls, int32_t aPart,
++static Maybe<nscolor> GetColorFromTheme(nsUXThemeClass cls, int32_t aPart,
+                                         int32_t aState, int32_t aPropId) {
+   COLORREF color;
+-  HRESULT hr = GetThemeColor(nsLookAndFeel::GetTheme(cls), aPart, aState,
++  HRESULT hr = GetThemeColor(nsUXThemeData::GetTheme(cls), aPart, aState,
+                              aPropId, &color);
+   if (hr == S_OK) {
+     return Some(COLOREF_2_NSRGB(color));
+@@ -50,60 +50,22 @@ static int32_t GetTooltipOffsetVertical() {
+                     float(cursorSize) / float(kDefaultCursorSize));
+ }
+ 
+-UXThemeHandle::~UXThemeHandle() { Close(); }
+-
+-void UXThemeHandle::OpenOnce(LPCWSTR aClassList) {
+-  if (mHandle.isSome()) {
+-    return;
+-  }
+-
+-  mHandle = Some(OpenThemeData(nullptr, aClassList));
+-}
+-
+-void UXThemeHandle::Close() {
+-  if (mHandle.isNothing()) {
+-    return;
+-  }
+-
+-  if (HANDLE rawHandle = mHandle.extract()) {
+-    CloseThemeData(rawHandle);
++static bool SystemWantsDarkTheme() {
++  if (nsUXThemeData::IsHighContrastOn()) {
++    return LookAndFeel::IsDarkColor(
++        LookAndFeel::Color(StyleSystemColor::Window, ColorScheme::Light,
++                           LookAndFeel::UseStandins::No));
+   }
+-}
+ 
+-UXThemeHandle::operator HANDLE() { return mHandle.valueOr(nullptr); }
+-
+-static const wchar_t* GetUXThemeClassName(UXThemeClass aClass) {
+-  switch (aClass) {
+-    case UXThemeClass::Button:
+-      return L"Button";
+-    case UXThemeClass::Edit:
+-      return L"Edit";
+-    case UXThemeClass::Toolbar:
+-      return L"Toolbar";
+-    case UXThemeClass::Progress:
+-      return L"Progress";
+-    case UXThemeClass::Tab:
+-      return L"Tab";
+-    case UXThemeClass::Trackbar:
+-      return L"Trackbar";
+-    case UXThemeClass::Combobox:
+-      return L"Combobox";
+-    case UXThemeClass::Listview:
+-      return L"Listview";
+-    case UXThemeClass::Menu:
+-      return L"Menu";
+-    case UXThemeClass::NumClasses:
+-      break;
++  WinRegistry::Key key(
++      HKEY_CURRENT_USER,
++      u"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"_ns,
++      WinRegistry::KeyMode::QueryValue);
++  if (NS_WARN_IF(!key)) {
++    return false;
+   }
+-  MOZ_ASSERT_UNREACHABLE("unknown uxtheme class");
+-  return L"";
+-}
+-
+-HANDLE nsLookAndFeel::GetTheme(UXThemeClass aClass) {
+-  auto& handle =
+-      static_cast<nsLookAndFeel*>(GetInstance())->mThemeHandles[aClass];
+-  handle.OpenOnce(GetUXThemeClassName(aClass));
+-  return handle;
++  uint32_t light = key.GetValueAsDword(u"AppsUseLightTheme"_ns).valueOr(1);
++  return !light;
+ }
+ 
+ uint32_t nsLookAndFeel::SystemColorFilter() {
+@@ -133,18 +95,18 @@ void nsLookAndFeel::RefreshImpl() {
+   nsXPLookAndFeel::RefreshImpl();
+ }
+ 
++static bool UseNonNativeMenuColors(ColorScheme aScheme) {
++  return !nsUXThemeData::IsHighContrastOn() || aScheme == ColorScheme::Dark;
++}
++
+ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+                                        nscolor& aColor) {
+   EnsureInit();
+ 
+-  auto UseNonNativeMenuColors = [&]() -> bool {
+-    return !mHighContrastOn || aScheme == ColorScheme::Dark;
+-  };
+-
+   auto IsHighlightColor = [&] {
+     switch (aID) {
+       case ColorID::MozMenuhover:
+-        return !UseNonNativeMenuColors();
++        return !UseNonNativeMenuColors(aScheme);
+       case ColorID::Highlight:
+       case ColorID::Selecteditem:
+         // We prefer the generic dark selection color if we don't have an
+@@ -165,12 +127,12 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+   auto IsHighlightTextColor = [&] {
+     switch (aID) {
+       case ColorID::MozMenubarhovertext:
+-        if (UseNonNativeMenuColors()) {
++        if (UseNonNativeMenuColors(aScheme)) {
+           return false;
+         }
+         [[fallthrough]];
+       case ColorID::MozMenuhovertext:
+-        if (UseNonNativeMenuColors()) {
++        if (UseNonNativeMenuColors(aScheme)) {
+           return false;
+         }
+         return !mColorMenuHoverText;
+@@ -228,7 +190,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+       aColor = mTitlebarColors.Get(aScheme, false).mBorder;
+       return NS_OK;
+     case ColorID::MozMenuhover:
+-      MOZ_ASSERT(UseNonNativeMenuColors());
++      MOZ_ASSERT(UseNonNativeMenuColors(aScheme));
+       if (WinUtils::MicaPopupsEnabled()) {
+         aColor = aScheme == ColorScheme::Dark ? NS_RGBA(255, 255, 255, 30)
+                                               : NS_RGBA(0, 0, 0, 30);
+@@ -238,7 +200,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+       }
+       return NS_OK;
+     case ColorID::MozMenuhoverdisabled:
+-      if (UseNonNativeMenuColors()) {
++      if (UseNonNativeMenuColors(aScheme)) {
+         if (WinUtils::MicaPopupsEnabled()) {
+           aColor = aScheme == ColorScheme::Dark ? NS_RGBA(255, 255, 255, 10)
+                                                 : NS_RGBA(0, 0, 0, 10);
+@@ -251,7 +213,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+       }
+       return NS_OK;
+     case ColorID::Menu: {
+-      if (UseNonNativeMenuColors()) {
++      if (UseNonNativeMenuColors(aScheme)) {
+         if (WinUtils::MicaPopupsEnabled()) {
+           aColor = aScheme == ColorScheme::Dark ? NS_RGBA(0, 0, 0, 153)
+                                                 : NS_RGBA(255, 255, 255, 153);
+@@ -279,7 +271,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+       break;
+   }
+ 
+-  if (mHighContrastOn) {
++  if (nsUXThemeData::IsHighContrastOn()) {
+     switch (aID) {
+       case ColorID::MozButtonhoverborder:
+       case ColorID::MozButtonhoverface:
+@@ -333,13 +295,13 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+       idx = COLOR_GRAYTEXT;
+       break;
+     case ColorID::MozMenubarhovertext:
+-      if (UseNonNativeMenuColors()) {
++      if (UseNonNativeMenuColors(aScheme)) {
+         aColor = kNonNativeMenuText;
+         return NS_OK;
+       }
+       [[fallthrough]];
+     case ColorID::MozMenuhovertext:
+-      if (UseNonNativeMenuColors()) {
++      if (UseNonNativeMenuColors(aScheme)) {
+         aColor = kNonNativeMenuText;
+         return NS_OK;
+       }
+@@ -356,7 +318,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
+       idx = COLOR_INFOTEXT;
+       break;
+     case ColorID::Menutext:
+-      if (UseNonNativeMenuColors()) {
++      if (UseNonNativeMenuColors(aScheme)) {
+         aColor = kNonNativeMenuText;
+         return NS_OK;
+       }
+@@ -525,7 +488,7 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
+       // High contrast is a misnomer under Win32 -- any theme can be used with
+       // it, e.g. normal contrast with large fonts, low contrast, etc. The high
+       // contrast flag really means -- use this theme and don't override it.
+-      aResult = mHighContrastOn;
++      aResult = nsUXThemeData::IsHighContrastOn();
+       break;
+     case IntID::ScrollArrowStyle:
+       aResult = eScrollArrowStyle_Single;
+@@ -603,20 +566,9 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
+     case IntID::TooltipOffsetVertical:
+       aResult = GetTooltipOffsetVertical();
+       break;
+-    case IntID::SystemUsesDarkTheme: {
+-      if (mHighContrastOn) {
+-        aResult =
+-            LookAndFeel::IsDarkColor(GetColorForSysColorIndex(COLOR_WINDOW));
+-      } else {
+-        WinRegistry::Key key(
+-            HKEY_CURRENT_USER,
+-            u"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"_ns,
+-            WinRegistry::KeyMode::QueryValue);
+-        aResult =
+-            key && !key.GetValueAsDword(u"AppsUseLightTheme"_ns).valueOr(1);
+-      }
++    case IntID::SystemUsesDarkTheme:
++      aResult = SystemWantsDarkTheme();
+       break;
+-    }
+     case IntID::SystemScrollbarSize:
+       aResult = std::max(WinUtils::GetSystemMetricsForDpi(SM_CXVSCROLL, 96),
+                          WinUtils::GetSystemMetricsForDpi(SM_CXHSCROLL, 96));
+@@ -872,7 +824,7 @@ auto nsLookAndFeel::ComputeTitlebarColors() -> TitlebarColors {
+                           *GenericDarkColor(ColorID::Inactivecaptiontext),
+                           *GenericDarkColor(ColorID::Inactiveborder)};
+ 
+-  if (!mHighContrastOn) {
++  if (!nsUXThemeData::IsHighContrastOn()) {
+     // Use our non-native light colors.
+     result.mActiveLight = {
+         GetStandinForNativeColor(ColorID::Activecaption, ColorScheme::Light),
+@@ -960,7 +968,7 @@ auto nsLookAndFeel::ComputeTitlebarColors() -> TitlebarColors {
+   // turned on. This setting is not supposed to have an effect in high contrast
+   // mode, see bug 2007306.
+   result.mUseAccent =
+-      !mHighContrastOn &&
++      !nsUXThemeData::IsHighContrastOn() &&
+       dwmKey.GetValueAsDword(u"ColorPrevalence"_ns).valueOr(0) == 1;
+   if (!result.mUseAccent) {
+     return result;
+@@ -980,21 +932,10 @@ void nsLookAndFeel::EnsureInit() {
+   }
+   mInitialized = true;
+ 
+-  for (auto& handle : mThemeHandles) {
+-    handle.Close();
+-  }
+-
+-  mHighContrastOn = []() {
+-    HIGHCONTRAST hc;
+-    hc.cbSize = sizeof(HIGHCONTRAST);
+-    return ::SystemParametersInfo(SPI_GETHIGHCONTRAST, 0, &hc, 0) &&
+-           hc.dwFlags & HCF_HIGHCONTRASTON;
+-  }();
+-
+   const bool neededMicaWorkaround = NeedsMicaWorkaround();
+ 
+-  mColorMenuHoverText = ::GetColorFromTheme(UXThemeClass::Menu, MENU_POPUPITEM,
+-                                            MPI_HOT, TMT_TEXTCOLOR);
++  mColorMenuHoverText =
++      ::GetColorFromTheme(eUXMenu, MENU_POPUPITEM, MPI_HOT, TMT_TEXTCOLOR);
+ 
+   // Fill out the sys color table.
+   for (int i = SYS_COLOR_MIN; i <= SYS_COLOR_MAX; ++i) {
+diff --git a/widget/windows/nsLookAndFeel.h b/widget/windows/nsLookAndFeel.h
+index 5626e6efd50a..ab25200046df 100644
+--- a/widget/windows/nsLookAndFeel.h
++++ b/widget/windows/nsLookAndFeel.h
+@@ -8,7 +8,6 @@
+ 
+ #include <windows.h>
+ 
+-#include "mozilla/EnumeratedArray.h"
+ #include "nsXPLookAndFeel.h"
+ #include "gfxFont.h"
+ 
+@@ -49,47 +48,11 @@ namespace mozilla::widget::WinRegistry {
+ class KeyWatcher;
+ }
+ 
+-enum class UXThemeClass : uint8_t {
+-  Button = 0,
+-  Edit,
+-  Toolbar,
+-  Progress,
+-  Tab,
+-  Trackbar,
+-  Combobox,
+-  Listview,
+-  Menu,
+-  NumClasses
+-};
+-
+-// This class makes sure we don't attempt to open a theme if the previous
+-// loading attempt has failed because OpenThemeData is a heavy task and
+-// it's less likely that the API returns a different result.
+-class UXThemeHandle final {
+-  mozilla::Maybe<HANDLE> mHandle;
+-
+- public:
+-  UXThemeHandle() = default;
+-  ~UXThemeHandle();
+-
+-  // Disallow copy and move
+-  UXThemeHandle(const UXThemeHandle&) = delete;
+-  UXThemeHandle(UXThemeHandle&&) = delete;
+-  UXThemeHandle& operator=(const UXThemeHandle&) = delete;
+-  UXThemeHandle& operator=(UXThemeHandle&&) = delete;
+-
+-  operator HANDLE();
+-  void OpenOnce(LPCWSTR aClassList);
+-  void Close();
+-};
+-
+ class nsLookAndFeel final : public nsXPLookAndFeel {
+  public:
+   nsLookAndFeel();
+   virtual ~nsLookAndFeel();
+ 
+-  static HANDLE GetTheme(UXThemeClass);
+-
+   void NativeInit() final;
+   void RefreshImpl() override;
+   nsresult NativeGetInt(IntID, int32_t& aResult) override;
+@@ -162,12 +125,7 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
+   nscolor mColorAccent = 0;
+   nscolor mColorAccentText = 0;
+ 
+-  nscolor mSysColorTable[SYS_COLOR_COUNT]{0};
+-  bool mHighContrastOn = false;
+-
+-  mozilla::EnumeratedArray<UXThemeClass, UXThemeHandle,
+-                           size_t(UXThemeClass::NumClasses)>
+-      mThemeHandles;
++  nscolor mSysColorTable[SYS_COLOR_COUNT];
+ 
+   mozilla::UniquePtr<mozilla::widget::WinRegistry::KeyWatcher>
+       mColorFilterWatcher;
+diff --git a/widget/windows/nsNativeThemeWin.cpp b/widget/windows/nsNativeThemeWin.cpp
+index 93aa68d4190d..07a283bdc001 100644
+--- a/widget/windows/nsNativeThemeWin.cpp
++++ b/widget/windows/nsNativeThemeWin.cpp
+@@ -33,7 +33,6 @@
+ #include "Theme.h"
+ #include "nsPresContext.h"
+ #include "nsRect.h"
+-#include "nsUXThemeConstants.h"
+ #include "nsSize.h"
+ #include "nsStyleConsts.h"
+ #include "nsTransform2D.h"
+@@ -59,6 +58,8 @@ nsNativeThemeWin::nsNativeThemeWin()
+       mMinimumWidgetSizeCacheValid(),
+       mGutterSizeCacheValid(false) {}
+ 
++nsNativeThemeWin::~nsNativeThemeWin() { nsUXThemeData::Invalidate(); }
++
+ bool nsNativeThemeWin::IsWidgetAlwaysNonNative(nsIFrame* aFrame,
+                                                StyleAppearance aAppearance) {
+   return Theme::IsWidgetAlwaysNonNative(aFrame, aAppearance) ||
+@@ -67,9 +68,9 @@ bool nsNativeThemeWin::IsWidgetAlwaysNonNative(nsIFrame* aFrame,
+          aAppearance == StyleAppearance::MozMenulistArrowButton;
+ }
+ 
+-auto nsNativeThemeWin::IsWidgetNonNative(nsIFrame* aFrame,
+-                                         StyleAppearance aAppearance)
+-    -> NonNative {
++auto nsNativeThemeWin::IsWidgetNonNative(nsIFrame* aFrame,
++                                         StyleAppearance aAppearance)
++    -> NonNative {
+   if (IsWidgetAlwaysNonNative(aFrame, aAppearance)) {
+     return NonNative::Always;
+   }
+@@ -392,10 +394,9 @@ void nsNativeThemeWin::DrawThemedProgressMeter(
+ }
+ 
+ LayoutDeviceIntMargin nsNativeThemeWin::GetCachedWidgetBorder(
+-    HTHEME aTheme, UXThemeClass aThemeClass, StyleAppearance aAppearance,
++    HTHEME aTheme, nsUXThemeClass aThemeClass, StyleAppearance aAppearance,
+     int32_t aPart, int32_t aState) {
+-  int32_t cacheIndex =
+-      int32_t(aThemeClass) * THEME_PART_DISTINCT_VALUE_COUNT + aPart;
++  int32_t cacheIndex = aThemeClass * THEME_PART_DISTINCT_VALUE_COUNT + aPart;
+   int32_t cacheBitIndex = cacheIndex / 8;
+   uint8_t cacheBit = 1u << (cacheIndex % 8);
+ 
+@@ -430,9 +431,9 @@ LayoutDeviceIntMargin nsNativeThemeWin::GetCachedWidgetBorder(
+ }
+ 
+ nsresult nsNativeThemeWin::GetCachedMinimumWidgetSize(
+-    nsIFrame* aFrame, HANDLE aTheme, UXThemeClass aThemeClass,
++    nsIFrame* aFrame, HANDLE aTheme, nsUXThemeClass aThemeClass,
+     StyleAppearance aAppearance, int32_t aPart, int32_t aState,
+-    int32_t aSizeReq, mozilla::LayoutDeviceIntSize* aResult) {
++    THEMESIZE aSizeReq, mozilla::LayoutDeviceIntSize* aResult) {
+   int32_t cachePart = aPart;
+ 
+   if (aAppearance == StyleAppearance::Button && aSizeReq == TS_MIN) {
+@@ -445,7 +446,7 @@ nsresult nsNativeThemeWin::GetCachedMinimumWidgetSize(
+ 
+   MOZ_ASSERT(aPart < THEME_PART_DISTINCT_VALUE_COUNT);
+   int32_t cacheIndex =
+-      int32_t(aThemeClass) * THEME_PART_DISTINCT_VALUE_COUNT + cachePart;
++      aThemeClass * THEME_PART_DISTINCT_VALUE_COUNT + cachePart;
+   int32_t cacheBitIndex = cacheIndex / 8;
+   uint8_t cacheBit = 1u << (cacheIndex % 8);
+ 
+@@ -460,8 +461,7 @@ nsresult nsNativeThemeWin::GetCachedMinimumWidgetSize(
+   }
+ 
+   SIZE sz;
+-  GetThemePartSize(aTheme, hdc, aPart, aState, nullptr, THEMESIZE(aSizeReq),
+-                   &sz);
++  GetThemePartSize(aTheme, hdc, aPart, aState, nullptr, aSizeReq, &sz);
+   aResult->width = sz.cx;
+   aResult->height = sz.cy;
+ 
+@@ -473,26 +473,26 @@ nsresult nsNativeThemeWin::GetCachedMinimumWidgetSize(
+   return NS_OK;
+ }
+ 
+-mozilla::Maybe<UXThemeClass> nsNativeThemeWin::GetThemeClass(
++mozilla::Maybe<nsUXThemeClass> nsNativeThemeWin::GetThemeClass(
+     StyleAppearance aAppearance) {
+   switch (aAppearance) {
+     case StyleAppearance::Button:
+-      return Some(UXThemeClass::Button);
++      return Some(eUXButton);
+     case StyleAppearance::NumberInput:
+     case StyleAppearance::PasswordInput:
+     case StyleAppearance::Textfield:
+     case StyleAppearance::Textarea:
+-      return Some(UXThemeClass::Edit);
++      return Some(eUXEdit);
+     case StyleAppearance::Toolbarbutton:
+-      return Some(UXThemeClass::Toolbar);
++      return Some(eUXToolbar);
+     case StyleAppearance::ProgressBar:
+-      return Some(UXThemeClass::Progress);
++      return Some(eUXProgress);
+     case StyleAppearance::Range:
+-      return Some(UXThemeClass::Trackbar);
++      return Some(eUXTrackbar);
+     case StyleAppearance::Menulist:
+-      return Some(UXThemeClass::Combobox);
++      return Some(eUXCombobox);
+     case StyleAppearance::Listbox:
+-      return Some(UXThemeClass::Listview);
++      return Some(eUXListview);
+     default:
+       return Nothing();
+   }
+@@ -507,11 +507,11 @@ mozilla::Maybe<UXThemeClass> nsNativeThemeWin::GetThemeClass(
+ 
+ HANDLE
+ nsNativeThemeWin::GetTheme(StyleAppearance aAppearance) {
+-  mozilla::Maybe<UXThemeClass> themeClass = GetThemeClass(aAppearance);
++  mozilla::Maybe<nsUXThemeClass> themeClass = GetThemeClass(aAppearance);
+   if (themeClass.isNothing()) {
+     return nullptr;
+   }
+-  return nsLookAndFeel::GetTheme(themeClass.value());
++  return nsUXThemeData::GetTheme(themeClass.value());
+ }
+ 
+ int32_t nsNativeThemeWin::StandardGetState(nsIFrame* aFrame,
+@@ -788,8 +788,8 @@ nsresult nsNativeThemeWin::GetThemePartAndState(nsIFrame* aFrame,
+ 
+ static bool AssumeThemePartAndStateAreTransparent(int32_t aPart,
+                                                   int32_t aState) {
+-  if (!LookAndFeel::GetInt(LookAndFeel::IntID::UseAccessibilityTheme) &&
+-      aPart == MENU_POPUPITEM && aState == MBI_NORMAL) {
++  if (!nsUXThemeData::IsHighContrastOn() && aPart == MENU_POPUPITEM &&
++      aState == MBI_NORMAL) {
+     return true;
+   }
+   return false;
+@@ -1037,10 +1037,10 @@ LayoutDeviceIntMargin nsNativeThemeWin::GetWidgetBorder(
+   }
+ 
+   LayoutDeviceIntMargin result;
+-  mozilla::Maybe<UXThemeClass> themeClass = GetThemeClass(aAppearance);
+-  HTHEME theme = nullptr;
+-  if (themeClass.isSome()) {
+-    theme = nsLookAndFeel::GetTheme(themeClass.value());
++  mozilla::Maybe<nsUXThemeClass> themeClass = GetThemeClass(aAppearance);
++  HTHEME theme = NULL;
++  if (!themeClass.isNothing()) {
++    theme = nsUXThemeData::GetTheme(themeClass.value());
+   }
+   if (!theme) {
+     result = ClassicGetWidgetBorder(aContext, aFrame, aAppearance);
+@@ -1176,10 +1176,10 @@ LayoutDeviceIntSize nsNativeThemeWin::GetMinimumWidgetSize(
+     return Theme::GetMinimumWidgetSize(aPresContext, aFrame, aAppearance);
+   }
+ 
+-  mozilla::Maybe<UXThemeClass> themeClass = GetThemeClass(aAppearance);
++  mozilla::Maybe<nsUXThemeClass> themeClass = GetThemeClass(aAppearance);
+   HTHEME theme = NULL;
+   if (!themeClass.isNothing()) {
+-    theme = nsLookAndFeel::GetTheme(themeClass.value());
++    theme = nsUXThemeData::GetTheme(themeClass.value());
+   }
+   if (!theme) {
+     auto result = ClassicGetMinimumWidgetSize(aFrame, aAppearance);
+@@ -1272,6 +1272,7 @@ bool nsNativeThemeWin::WidgetAttributeChangeRequiresRepaint(
+ }
+ 
+ void nsNativeThemeWin::ThemeChanged() {
++  nsUXThemeData::Invalidate();
+   memset(mBorderCacheValid, 0, sizeof(mBorderCacheValid));
+   memset(mMinimumWidgetSizeCacheValid, 0, sizeof(mMinimumWidgetSizeCacheValid));
+   mGutterSizeCacheValid = false;
+diff --git a/widget/windows/nsNativeThemeWin.h b/widget/windows/nsNativeThemeWin.h
+index 231f58bcabca..e6eb1622856f 100644
+--- a/widget/windows/nsNativeThemeWin.h
++++ b/widget/windows/nsNativeThemeWin.h
+@@ -12,14 +12,14 @@
+ #include "mozilla/Maybe.h"
+ #include "mozilla/TimeStamp.h"
+ #include "Theme.h"
+-#include "nsLookAndFeel.h"
+ #include "nsUXThemeConstants.h"
++#include "nsUXThemeData.h"
+ 
+ namespace mozilla::widget {
+ 
+-class nsNativeThemeWin final : public Theme {
++class nsNativeThemeWin : public Theme {
+  protected:
+-  virtual ~nsNativeThemeWin() = default;
++  virtual ~nsNativeThemeWin();
+ 
+  public:
+   // Whether we draw a non-native widget.
+@@ -86,7 +86,7 @@ class nsNativeThemeWin final : public Theme {
+   nsNativeThemeWin();
+ 
+  protected:
+-  Maybe<UXThemeClass> GetThemeClass(StyleAppearance aAppearance);
++  Maybe<nsUXThemeClass> GetThemeClass(StyleAppearance aAppearance);
+   HANDLE GetTheme(StyleAppearance aAppearance);
+   nsresult GetThemePartAndState(nsIFrame* aFrame, StyleAppearance aAppearance,
+                                 int32_t& aPart, int32_t& aState);
+@@ -121,14 +121,14 @@ class nsNativeThemeWin final : public Theme {
+                                RECT* aWidgetRect, RECT* aClipRect);
+ 
+   [[nodiscard]] LayoutDeviceIntMargin GetCachedWidgetBorder(
+-      HANDLE aTheme, UXThemeClass aThemeClass, StyleAppearance aAppearance,
++      HANDLE aTheme, nsUXThemeClass aThemeClass, StyleAppearance aAppearance,
+       int32_t aPart, int32_t aState);
+ 
+   nsresult GetCachedMinimumWidgetSize(nsIFrame* aFrame, HANDLE aTheme,
+-                                      UXThemeClass aThemeClass,
++                                      nsUXThemeClass aThemeClass,
+                                       StyleAppearance aAppearance,
+                                       int32_t aPart, int32_t aState,
+-                                      int32_t aSizeReq,
++                                      THEMESIZE aSizeReq,
+                                       LayoutDeviceIntSize* aResult);
+ 
+   SIZE GetCachedGutterSize(HANDLE theme);
+@@ -137,28 +137,24 @@ class nsNativeThemeWin final : public Theme {
+   TimeStamp mProgressDeterminateTimeStamp;
+   TimeStamp mProgressIndeterminateTimeStamp;
+ 
+-  // UXThemeClass::NumClasses * THEME_PART_DISTINCT_VALUE_COUNT is about 800 at
+-  // the time of writing this, and nsIntMargin is 16 bytes wide, which makes
+-  // this cache (1/8 + 16) * 800 bytes, or about ~12KB. We could probably
+-  // reduce this cache to 3KB by caching on the aAppearance value instead,
+-  // but there would be some uncacheable values, since we derive some theme
+-  // parts from other arguments.
+-  uint8_t mBorderCacheValid[(size_t(UXThemeClass::NumClasses) *
+-                                 THEME_PART_DISTINCT_VALUE_COUNT +
+-                             7) /
+-                            8];
+-  LayoutDeviceIntMargin mBorderCache[size_t(UXThemeClass::NumClasses) *
+-                                     THEME_PART_DISTINCT_VALUE_COUNT];
++  // eUXNumClasses * THEME_PART_DISTINCT_VALUE_COUNT is about 800 at the time of
++  // writing this, and nsIntMargin is 16 bytes wide, which makes this cache (1/8
++  // + 16) * 800 bytes, or about ~12KB. We could probably reduce this cache to
++  // 3KB by caching on the aAppearance value instead, but there would be some
++  // uncacheable values, since we derive some theme parts from other arguments.
++  uint8_t
++      mBorderCacheValid[(eUXNumClasses * THEME_PART_DISTINCT_VALUE_COUNT + 7) /
++                        8];
++  LayoutDeviceIntMargin
++      mBorderCache[eUXNumClasses * THEME_PART_DISTINCT_VALUE_COUNT];
+ 
+   // See the above not for mBorderCache and friends. However
+   // LayoutDeviceIntSize is half the size of nsIntMargin, making the
+   // cache roughly half as large. In total the caches should come to about 18KB.
+-  uint8_t mMinimumWidgetSizeCacheValid[(size_t(UXThemeClass::NumClasses) *
+-                                            THEME_PART_DISTINCT_VALUE_COUNT +
+-                                        7) /
+-                                       8];
+-  LayoutDeviceIntSize mMinimumWidgetSizeCache[size_t(UXThemeClass::NumClasses) *
+-                                              THEME_PART_DISTINCT_VALUE_COUNT];
++  uint8_t mMinimumWidgetSizeCacheValid
++      [(eUXNumClasses * THEME_PART_DISTINCT_VALUE_COUNT + 7) / 8];
++  LayoutDeviceIntSize
++      mMinimumWidgetSizeCache[eUXNumClasses * THEME_PART_DISTINCT_VALUE_COUNT];
+ 
+   bool mGutterSizeCacheValid;
+   SIZE mGutterSizeCache;
+diff --git a/widget/windows/nsToolkit.cpp b/widget/windows/nsToolkit.cpp
+index 179a77441cfc..6eea9c958f97 100644
+--- a/widget/windows/nsToolkit.cpp
++++ b/widget/windows/nsToolkit.cpp
+@@ -13,6 +13,8 @@
+ #include <objbase.h>
+ #include "WinUtils.h"
+ 
++#include "nsUXThemeData.h"
++
+ // unknwn.h is needed to build with WIN32_LEAN_AND_MEAN
+ #include <unknwn.h>
+ 
+diff --git a/widget/windows/nsUXThemeData.cpp b/widget/windows/nsUXThemeData.cpp
+new file mode 100644
+index 000000000000..fb0a1c89ab45
+--- /dev/null
++++ b/widget/windows/nsUXThemeData.cpp
+@@ -0,0 +1,94 @@
++/* vim: se cin sw=2 ts=2 et : */
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "mozilla/ArrayUtils.h"
++#include "mozilla/WindowsVersion.h"
++
++#include "nsUXThemeData.h"
++#include "nsDebug.h"
++#include "nsToolkit.h"
++#include "nsUXThemeConstants.h"
++#include "gfxWindowsPlatform.h"
++
++using namespace mozilla;
++using namespace mozilla::widget;
++
++constinit nsUXThemeData::ThemeHandle nsUXThemeData::sThemes[eUXNumClasses];
++
++nsUXThemeData::ThemeHandle::~ThemeHandle() { Close(); }
++
++void nsUXThemeData::ThemeHandle::OpenOnce(HWND aWindow, LPCWSTR aClassList) {
++  if (mHandle.isSome()) {
++    return;
++  }
++
++  mHandle = Some(OpenThemeData(aWindow, aClassList));
++}
++
++void nsUXThemeData::ThemeHandle::Close() {
++  if (mHandle.isNothing()) {
++    return;
++  }
++
++  if (HANDLE rawHandle = mHandle.extract()) {
++    CloseThemeData(rawHandle);
++  }
++}
++
++nsUXThemeData::ThemeHandle::operator HANDLE() {
++  return mHandle.valueOr(nullptr);
++}
++
++void nsUXThemeData::Invalidate() {
++  for (auto& theme : sThemes) {
++    theme.Close();
++  }
++}
++
++HANDLE
++nsUXThemeData::GetTheme(nsUXThemeClass cls) {
++  NS_ASSERTION(cls < eUXNumClasses, "Invalid theme class!");
++  sThemes[cls].OpenOnce(nullptr, GetClassName(cls));
++  return sThemes[cls];
++}
++
++const wchar_t* nsUXThemeData::GetClassName(nsUXThemeClass cls) {
++  switch (cls) {
++    case eUXButton:
++      return L"Button";
++    case eUXEdit:
++      return L"Edit";
++    case eUXToolbar:
++      return L"Toolbar";
++    case eUXProgress:
++      return L"Progress";
++    case eUXTab:
++      return L"Tab";
++    case eUXTrackbar:
++      return L"Trackbar";
++    case eUXCombobox:
++      return L"Combobox";
++    case eUXListview:
++      return L"Listview";
++    case eUXMenu:
++      return L"Menu";
++    default:
++      MOZ_ASSERT_UNREACHABLE("unknown uxtheme class");
++      return L"";
++  }
++}
++
++bool nsUXThemeData::sIsHighContrastOn = false;
++
++// static
++void nsUXThemeData::UpdateNativeThemeInfo() {
++  HIGHCONTRAST highContrastInfo;
++  highContrastInfo.cbSize = sizeof(HIGHCONTRAST);
++  sIsHighContrastOn =
++      SystemParametersInfo(SPI_GETHIGHCONTRAST, 0, &highContrastInfo, 0) &&
++      highContrastInfo.dwFlags & HCF_HIGHCONTRASTON;
++}
+diff --git a/widget/windows/nsUXThemeData.h b/widget/windows/nsUXThemeData.h
+new file mode 100644
+index 000000000000..b59c2aae045e
+--- /dev/null
++++ b/widget/windows/nsUXThemeData.h
+@@ -0,0 +1,67 @@
++/* vim: se cin sw=2 ts=2 et : */
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
++ *
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++#ifndef __UXThemeData_h__
++#define __UXThemeData_h__
++#include <windows.h>
++#include <uxtheme.h>
++
++#include "nscore.h"
++#include "mozilla/LookAndFeel.h"
++#include "mozilla/Maybe.h"
++#include "WinUtils.h"
++
++#include "nsWindowDefs.h"
++
++enum nsUXThemeClass {
++  eUXButton = 0,
++  eUXEdit,
++  eUXToolbar,
++  eUXProgress,
++  eUXTab,
++  eUXTrackbar,
++  eUXCombobox,
++  eUXListview,
++  eUXMenu,
++  eUXNumClasses
++};
++
++class nsUXThemeData {
++  // This class makes sure we don't attempt to open a theme if the previous
++  // loading attempt has failed because OpenThemeData is a heavy task and
++  // it's less likely that the API returns a different result.
++  class ThemeHandle final {
++    mozilla::Maybe<HANDLE> mHandle;
++
++   public:
++    ThemeHandle() = default;
++    ~ThemeHandle();
++
++    // Disallow copy and move
++    ThemeHandle(const ThemeHandle&) = delete;
++    ThemeHandle(ThemeHandle&&) = delete;
++    ThemeHandle& operator=(const ThemeHandle&) = delete;
++    ThemeHandle& operator=(ThemeHandle&&) = delete;
++
++    operator HANDLE();
++    void OpenOnce(HWND aWindow, LPCWSTR aClassList);
++    void Close();
++  };
++
++  static ThemeHandle sThemes[eUXNumClasses];
++  static const wchar_t* GetClassName(nsUXThemeClass);
++
++ public:
++  static bool sIsHighContrastOn;
++
++  static void Invalidate();
++  static HANDLE GetTheme(nsUXThemeClass cls);
++  static HMODULE GetThemeDLL();
++
++  static void UpdateNativeThemeInfo();
++  static bool IsHighContrastOn() { return sIsHighContrastOn; }
++};
++#endif  // __UXThemeData_h__
+diff --git a/widget/windows/nsWinGesture.cpp b/widget/windows/nsWinGesture.cpp
+index 0341072ed0cd..8fd00b3ff0af 100644
+--- a/widget/windows/nsWinGesture.cpp
++++ b/widget/windows/nsWinGesture.cpp
+@@ -9,6 +9,7 @@
+ 
+ #include "nscore.h"
+ #include "nsWinGesture.h"
++#include "nsUXThemeData.h"
+ #include "mozilla/Logging.h"
+ #include "mozilla/MouseEvents.h"
+ #include "mozilla/Preferences.h"
+@@ -17,7 +18,6 @@
+ #include "mozilla/dom/SimpleGestureEventBinding.h"
+ #include "mozilla/dom/WheelEventBinding.h"
+ 
+-#include <uxtheme.h>
+ 
+ using namespace mozilla;
+ using namespace mozilla::widget;
+diff --git a/widget/windows/nsWindow.cpp b/widget/windows/nsWindow.cpp
+index 750acbedc24d..0c3dd0d99931 100644
+--- a/widget/windows/nsWindow.cpp
++++ b/widget/windows/nsWindow.cpp
+@@ -701,6 +701,8 @@ nsWindow::nsWindow(bool aIsChildWindow)
+     }
+     NS_ASSERTION(sIsOleInitialized, "***** OLE is not initialized!\n");
+     MouseScrollHandler::Initialize();
++    // Init theme data
++    nsUXThemeData::UpdateNativeThemeInfo();
+     RedirectedKeyDownMessageManager::Forget();
+   }  // !sInstanceCount
+ 
+@@ -4849,7 +4851,10 @@ bool nsWindow::ProcessMessageInternal(UINT msg, WPARAM& wParam, LPARAM& lParam,
+     case WM_THEMECHANGED: {
+       // Update non-client margin offsets
+       UpdateNonClientMargins();
+-      // Invalidate the window so that the repaint will pick up the new theme.
++      nsUXThemeData::UpdateNativeThemeInfo();
++
++      // Invalidate the window so that the repaint will
++      // pick up the new theme.
+       Invalidate(true, true, true);
+     } break;
+ 
+diff --git a/widget/windows/nsWindow.h b/widget/windows/nsWindow.h
+index a8c8631c38ff..27a234c3bc5a 100644
+--- a/widget/windows/nsWindow.h
++++ b/widget/windows/nsWindow.h
+@@ -49,6 +49,7 @@
+ #  include "mozilla/a11y/LocalAccessible.h"
+ #endif
+ 
++#include "nsUXThemeData.h"
+ #include "nsIUserIdleServiceInternal.h"
+ 
+ #include "IMMHandler.h"
+diff --git a/widget/windows/nsWindowGfx.cpp b/widget/windows/nsWindowGfx.cpp
+index b1e3b2eead80..4e2d8e1e0490 100644
+--- a/widget/windows/nsWindowGfx.cpp
++++ b/widget/windows/nsWindowGfx.cpp
+@@ -52,6 +52,9 @@
+ #include "mozilla/webrender/RenderThread.h"
+ #include "InProcessWinCompositorWidget.h"
+ 
++#include "nsUXThemeData.h"
++#include "nsUXThemeConstants.h"
++
+ using namespace mozilla;
+ using namespace mozilla::gfx;
+ using namespace mozilla::layers;

@@ -1,0 +1,1 @@
+Bug 1863636 - Part 2: Added native code changes for taskbar tabs r=win-reviewers,mhughes,gstoll    2024-01-23 06:00:13    21b3aee4793313de63f02e8ded7205ded669bd60

@@ -1,0 +1,13 @@
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 48e97bfbc6cb..8f46b244e74e 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -17118,7 +17118,7 @@
+   # using a pref to give users a work-around if they have issues.
+ -   name: security.sandbox.content.close-ksecdd-handle
+     type: RelaxedAtomicBool
+-    value: true
++    value: false
+     mirror: always
+ #endif
+ 

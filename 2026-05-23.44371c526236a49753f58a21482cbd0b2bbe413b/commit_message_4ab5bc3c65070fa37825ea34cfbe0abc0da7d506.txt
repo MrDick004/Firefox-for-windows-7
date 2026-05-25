@@ -1,0 +1,1 @@
+Bug 2007883 - Remove some unused nsNativeTheme XUL code. r=layout-reviewers,TYLin    2025-12-30 18:26:50    4ab5bc3c65070fa37825ea34cfbe0abc0da7d506

@@ -1,0 +1,234 @@
+diff --git a/dom/base/Document.cpp b/dom/base/Document.cpp
+index ccb50f06c828..c6bc5677b58c 100644
+--- a/dom/base/Document.cpp
++++ b/dom/base/Document.cpp
+@@ -3591,6 +3591,11 @@ void Document::ApplySettingsFromCSP(bool aSpeculative) {
+              "CSP must be initialized before mScriptGlobalObject is set!");
+   MOZ_ASSERT(mPolicyContainer,
+              "Policy container must be initialized before CSP!");
++  if (!StaticPrefs::security_csp_enable()) {
++    MOZ_LOG(gCspPRLog, LogLevel::Debug,
++            ("CSP is disabled, skipping CSP init for document %p", this));
++    return NS_OK;
++  }
+ 
+   // If this is a data document - no need to set CSP.
+   if (mLoadedAsData) {
+diff --git a/dom/base/test/browser_bug593387.js b/dom/base/test/browser_bug593387.js
+new file mode 100644
+index 000000000000..c91ed9e04ede
+--- /dev/null
++++ b/dom/base/test/browser_bug593387.js
+@@ -0,0 +1,111 @@
++/*
++ * Test for bug 593387
++ * Loads a chrome document in a content docshell and then inserts a
++ * X-Frame-Options: DENY iframe into the document and verifies that the document
++ * loads. The policy we are enforcing is outlined here:
++ * https://bugzilla.mozilla.org/show_bug.cgi?id=593387#c17
++ */
++
++add_task(async function test() {
++  // We have to disable CSP for this test otherwise the CSP of about:plugins will
++  // block the dynamic frame creation.
++  await SpecialPowers.pushPrefEnv({
++    set: [
++      ["security.csp.enable", false],
++      ["dom.security.skip_about_page_has_csp_assert", true],
++      ["dom.security.https_first", false],
++    ],
++  });
++
++  await BrowserTestUtils.withNewTab(
++    { gBrowser, url: "about:plugins" },
++    async function(newBrowser) {
++      // ---------------------------------------------------
++      // Test 1: We load the about: page in the parent process, so this will work.
++      await SpecialPowers.spawn(newBrowser, [], async function() {
++        // Insert an iframe that specifies "X-Frame-Options: DENY" and verify
++        // that it loads, since the top context is chrome
++        var frame = content.document.createElement("iframe");
++        frame.src =
++          "http://mochi.test:8888/browser/dom/base/test/file_x-frame-options_page.sjs?testid=deny&xfo=deny";
++        content.document.body.appendChild(frame);
++
++        // wait till the iframe is load
++        await new content.Promise(done => {
++          frame.addEventListener(
++            "load",
++            function() {
++              done();
++            },
++            { capture: true, once: true }
++          );
++        });
++
++        await SpecialPowers.spawn(frame, [], () => {
++          var testFrame = content.document.getElementById("test");
++          Assert.equal(testFrame.tagName, "H1", "wrong element type");
++          Assert.equal(testFrame.textContent, "deny", "wrong textContent");
++        });
++      });
++
++      // ---------------------------------------------------
++      // Test 2: Try the same with a content top-level context)
++
++      BrowserTestUtils.loadURI(newBrowser, "http://example.com/");
++      await BrowserTestUtils.browserLoaded(newBrowser);
++
++      let observerData = await SpecialPowers.spawn(
++        newBrowser,
++        [],
++        async function() {
++          var observerDeferred = {};
++          observerDeferred.promise = new Promise(resolve => {
++            observerDeferred.resolve = resolve;
++          });
++
++          // X-Frame-Options checks happen in the parent, hence we have to
++          // proxy the csp violation notifications.
++          SpecialPowers.registerObservers("xfo-on-violate-policy");
++
++          function examiner() {
++            SpecialPowers.addObserver(
++              this,
++              "specialpowers-xfo-on-violate-policy"
++            );
++          }
++          examiner.prototype = {
++            observe(subject, topic, data) {
++              var asciiSpec = SpecialPowers.getPrivilegedProps(
++                SpecialPowers.do_QueryInterface(subject, "nsIURI"),
++                "asciiSpec"
++              );
++
++              myExaminer.remove();
++              observerDeferred.resolve({ asciiSpec, topic, data });
++            },
++            remove() {
++              SpecialPowers.removeObserver(
++                this,
++                "specialpowers-xfo-on-violate-policy"
++              );
++            },
++          };
++          let myExaminer = new examiner();
++
++          var frame = content.document.createElement("iframe");
++          frame.src =
++            "http://mochi.test:8888/browser/dom/base/test/file_x-frame-options_page.sjs?testid=deny&xfo=deny";
++          content.document.body.appendChild(frame);
++          return observerDeferred.promise;
++        }
++      );
++      is(
++        observerData.asciiSpec,
++        "http://mochi.test:8888/browser/dom/base/test/file_x-frame-options_page.sjs?testid=deny&xfo=deny",
++        "correct subject"
++      );
++      ok(observerData.topic.endsWith("xfo-on-violate-policy"), "correct topic");
++      is(observerData.data, "DENY", "correct data");
++    }
++  );
++});
+diff --git a/dom/security/nsCSPService.cpp b/dom/security/nsCSPService.cpp
+index 82091cca662b..16fb9fa9754f 100644
+--- a/dom/security/nsCSPService.cpp
++++ b/dom/security/nsCSPService.cpp
+@@ -132,7 +132,8 @@ bool subjectToCSP(nsIURI* aURI, nsContentPolicyType aContentType) {
+   // to CSP. Please note, the correct way to opt-out of CSP using a custom
+   // protocolHandler is to set one of the nsIProtocolHandler flags
+   // that are allowlistet in subjectToCSP()
+-  if (!SubjectToCSP(aLoadInfo, aContentLocation, contentType)) {
++  if (!StaticPrefs::security_csp_enable() ||
++      !SubjectToCSP(aLoadInfo, aContentLocation, contentType)) {
+     return NS_OK;
+   }
+ 
+@@ -341,7 +342,8 @@ nsresult CSPService::ConsultCSPForRedirect(nsIURI* aOriginalURI,
+   // protocolHandler is to set one of the nsIProtocolHandler flags
+   // that are allowlistet in subjectToCSP()
+   nsContentPolicyType policyType = aLoadInfo->InternalContentPolicyType();
+-  if (!SubjectToCSP(aLoadInfo, aNewURI, policyType)) {
++  if (!StaticPrefs::security_csp_enable() ||
++      !SubjectToCSP(aLoadInfo, aNewURI, policyType)) {
+     return NS_OK;
+   }
+ 
+diff --git a/dom/security/nsCSPUtils.cpp b/dom/security/nsCSPUtils.cpp
+index 7c270d908b14..554d83e29d13 100644
+--- a/dom/security/nsCSPUtils.cpp
++++ b/dom/security/nsCSPUtils.cpp
+@@ -123,7 +123,7 @@ bool CSP_ShouldResponseInheritCSP(nsIChannel* aChannel) {
+ 
+ void CSP_ApplyMetaCSPToDoc(mozilla::dom::Document& aDoc,
+                            const nsAString& aPolicyStr) {
+-  if (aDoc.IsLoadedAsData()) {
++  if (!mozilla::StaticPrefs::security_csp_enable() || aDoc.IsLoadedAsData()) {
+     return;
+   }
+ 
+diff --git a/dom/workers/loader/NetworkLoadHandler.cpp b/dom/workers/loader/NetworkLoadHandler.cpp
+index 512d0499a99d..9632c30f754e 100644
+--- a/dom/workers/loader/NetworkLoadHandler.cpp
++++ b/dom/workers/loader/NetworkLoadHandler.cpp
+@@ -16,6 +16,7 @@
+ #include "js/loader/ScriptLoadRequest.h"
+ #include "mozilla/Encoding.h"
+ #include "mozilla/StaticPrefs_javascript.h"
++#include "mozilla/StaticPrefs_security.h"
+ #include "mozilla/dom/BlobURLProtocolHandler.h"
+ #include "mozilla/dom/InternalResponse.h"
+ #include "mozilla/dom/Response.h"
+@@ -1338,12 +1338,14 @@ class ScriptLoaderRunnable final : public nsIRunnable, public nsINamed {
+     nsCOMPtr<nsIContentSecurityPolicy> csp = mWorkerRef->Private()->GetCsp();
+       // We did inherit CSP in bug 1223647. If we do not already have a CSP, we
+       // should get it from the HTTP headers on the worker script.
+-      if (!csp) {
+-      rv = mWorkerRef->Private()->SetCSPFromHeaderValues(tCspHeaderValue,
+-                                                         tCspROHeaderValue);
+-        NS_ENSURE_SUCCESS(rv, rv);
+-      } else {
+-        csp->EnsureEventTarget(mWorkerRef->Private()->MainThreadEventTarget());
++      if (StaticPrefs::security_csp_enable()) {
++        if (!csp) {
++          rv = mWorkerRef->Private()->SetCSPFromHeaderValues(tCspHeaderValue,
++                                                             tCspROHeaderValue);
++          NS_ENSURE_SUCCESS(rv, rv);
++        } else {
++          csp->EnsureEventTarget(mWorkerRef->Private()->MainThreadEventTarget());
++        }
+       }
+ 
+     mWorkerRef->Private()->UpdateReferrerInfoFromHeader(tRPHeaderCValue);
+diff --git a/modules/libpref/init/StaticPrefList.yaml b/modules/libpref/init/StaticPrefList.yaml
+index 31ab49bac055..83fbd9c1a8de 100644
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -11450,6 +11450,11 @@
+   value: 2
+   mirror: always
+ 
++- name: security.csp.enable
++  type: bool
++  value: true
++  mirror: always
++
+ - name: security.csp.reporting.script-sample.max-length
+   type: int32_t
+   value: 40
+diff --git a/parser/html/nsHtml5TreeOpExecutor.cpp b/parser/html/nsHtml5TreeOpExecutor.cpp
+index 4b2c29491dab..747b85af93f6 100644
+--- a/parser/html/nsHtml5TreeOpExecutor.cpp
++++ b/parser/html/nsHtml5TreeOpExecutor.cpp
+@@ -1283,6 +1283,10 @@ void nsHtml5TreeOpExecutor::UpdateReferrerInfoFromMeta(
+ }
+ 
+ void nsHtml5TreeOpExecutor::AddSpeculationCSP(const nsAString& aCSP) {
++  if (!StaticPrefs::security_csp_enable()) {
++    return;
++  }
++
+   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+ 
+   nsresult rv = NS_OK;

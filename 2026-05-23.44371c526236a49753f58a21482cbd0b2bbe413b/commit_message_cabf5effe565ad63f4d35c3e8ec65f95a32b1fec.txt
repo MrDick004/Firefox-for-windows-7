@@ -1,0 +1,1 @@
+Bug 2007374 - Only create RemoteBackbuffer threads for SWGL on Windows. r=gfx-reviewers,lsalzman    2025-12-23 13:20:16    cabf5effe565ad63f4d35c3e8ec65f95a32b1fec

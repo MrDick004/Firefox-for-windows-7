@@ -1,0 +1,1 @@
+Bug 2002232 - Clean up top level widget painting. r=jwatt    2025-11-27 16:49:59    d7598a4a4a878f626044056ba651d3dc3d1e2d8c

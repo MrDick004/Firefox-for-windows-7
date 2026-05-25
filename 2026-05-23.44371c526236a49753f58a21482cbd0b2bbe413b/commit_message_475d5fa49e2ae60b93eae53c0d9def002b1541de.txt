@@ -1,0 +1,1 @@
+Bug 1960254 - Remove D3D11ShareHandleImage::MaybeCreateNV12ImageAndSetData() r=gfx-reviewers,lsalzman    2025-04-14 13:05:47    475d5fa49e2ae60b93eae53c0d9def002b1541de

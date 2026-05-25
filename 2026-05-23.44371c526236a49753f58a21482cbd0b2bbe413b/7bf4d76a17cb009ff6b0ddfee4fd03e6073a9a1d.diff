@@ -1,0 +1,12 @@
+diff --git a/gfx/thebes/gfxFontEntry.h b/gfx/thebes/gfxFontEntry.h
+index d86b4d9d19c9..26d1391fe246 100644
+--- a/gfx/thebes/gfxFontEntry.h
++++ b/gfx/thebes/gfxFontEntry.h
+@@ -933,7 +929,6 @@ class gfxFontFamily {
+ 
+   // mark this family as being in the "bad" underline offset blocklist
+   void SetBadUnderlineFamily() {
+-    mozilla::AutoWriteLock lock(mLock);
+     mIsBadUnderlineFamily = true;
+     if (mHasStyles) {
+       SetBadUnderlineFonts();
